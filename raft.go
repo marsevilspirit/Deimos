@@ -198,12 +198,13 @@ func (sm *stateMachine) theN() int {
 }
 
 // 更新已提交的日志索引
-func (sm *stateMachine) maybeAdvanceCommit() int {
+func (sm *stateMachine) nextEnts() (ents []Entry) {
 	ci := sm.theN()
 	if ci > sm.commit {
+		ents = sm.log[sm.commit+1 : ci]
 		sm.commit = ci
 	}
-	return sm.commit
+	return ents
 }
 
 func (sm *stateMachine) reset() {
