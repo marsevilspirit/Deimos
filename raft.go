@@ -101,7 +101,7 @@ type stateMachine struct {
 	term   int          // 任期
 	vote   int          // 投票给谁
 	log    []Entry      // 日志条目
-	ins    []*index     // 每个节点的日志同步状态
+	indexs []*index     // 每个节点的日志同步状态
 	state  stateType    // 状态
 	commit int          // 已提交的日志条目索引
 	votes  map[int]bool // 收到的投票记录
@@ -169,13 +169,13 @@ func (sm *stateMachine) sendAppend() {
 		if i == sm.addr {
 			continue
 		}
-		in := sm.ins[i]
+		index := sm.indexs[i]
 		m := Message{
 			Type:    msgApp,
 			To:      i,
-			Index:   in.next - 1,
-			LogTerm: sm.log[in.next-1].Term,
-			Entries: sm.log[in.next:],
+			Index:   index.next - 1,
+			LogTerm: sm.log[index.next-1].Term,
+			Entries: sm.log[index.next:],
 		}
 		sm.send(m)
 	}
@@ -183,15 +183,14 @@ func (sm *stateMachine) sendAppend() {
 
 // 找到在当前任期中复制到多数节点的最大日志索引
 func (sm *stateMachine) theN() int {
-	mis := make([]int, len(sm.ins))
-	for i := range sm.ins {
-		mis[i] = sm.ins[i].match
+	matchIndexs := make([]int, len(sm.indexs))
+	for i := range sm.indexs {
+		matchIndexs[i] = sm.indexs[i].match
 	}
-	sort.Ints(mis)
-	for _, mi := range mis[sm.k/2+1:] {
-		if sm.log[mi].Term == sm.term {
-			return mi
-		}
+	sort.Sort(sort.Reverse(sort.IntSlice(matchIndexs)))
+	matchIndex := matchIndexs[sm.q()-1]
+	if sm.log[matchIndex].Term == sm.term {
+		return matchIndex
 	}
 
 	return -1
@@ -199,10 +198,10 @@ func (sm *stateMachine) theN() int {
 
 // 更新已提交的日志索引
 func (sm *stateMachine) nextEnts() (ents []Entry) {
-	ci := sm.theN()
-	if ci > sm.commit {
-		ents = sm.log[sm.commit+1 : ci]
-		sm.commit = ci
+	commitIndex := sm.theN()
+	if commitIndex > sm.commit {
+		ents = sm.log[sm.commit+1 : commitIndex]
+		sm.commit = commitIndex
 	}
 	return ents
 }
@@ -211,9 +210,9 @@ func (sm *stateMachine) reset() {
 	sm.lead = none
 	sm.vote = none
 	sm.votes = make(map[int]bool)
-	sm.ins = make([]*index, sm.k)
-	for i := range sm.ins {
-		sm.ins[i] = &index{next: len(sm.log)}
+	sm.indexs = make([]*index, sm.k)
+	for i := range sm.indexs {
+		sm.indexs[i] = &index{next: len(sm.log)}
 	}
 }
 
@@ -290,7 +289,7 @@ func (sm *stateMachine) Step(m Message) {
 	case stateLeader:
 		switch m.Type {
 		case msgAppResp:
-			in := sm.ins[m.From]
+			in := sm.indexs[m.From]
 			if m.Index < 0 {
 				in.decr()
 				sm.sendAppend()
