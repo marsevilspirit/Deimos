@@ -105,11 +105,11 @@ type stateMachine struct {
 	state  stateType    // 状态
 	commit int          // 已提交的日志条目索引
 	votes  map[int]bool // 收到的投票记录
-	next   stepper      // 下一步处理
+	next   Interface    // 下一步处理
 	lead   int          // 领导者
 }
 
-func newStateMachine(k, addr int, next stepper) *stateMachine {
+func newStateMachine(k, addr int, next Interface) *stateMachine {
 	sm := &stateMachine{
 		k:    k,
 		addr: addr,
@@ -160,7 +160,7 @@ func (sm *stateMachine) isLogOk(i, term int) bool {
 func (sm *stateMachine) send(m Message) {
 	m.From = sm.addr
 	m.Term = sm.term
-	sm.next.step(m)
+	sm.next.Step(m)
 }
 
 // 发送附加日志消息
@@ -239,7 +239,7 @@ func (sm *stateMachine) becomeFollower(term, lead int) {
 	sm.state = stateFollower
 }
 
-func (sm *stateMachine) step(m Message) {
+func (sm *stateMachine) Step(m Message) {
 	switch m.Type {
 	case msgHup:
 		sm.term++
