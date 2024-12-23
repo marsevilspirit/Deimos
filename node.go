@@ -13,7 +13,7 @@ type Node struct {
 
 func New(k, addr int, next Interface) *Node {
 	n := &Node{
-		sm: newStateMachine(k, addr, next),
+		sm: newStateMachine(k, addr),
 	}
 	return n
 }
@@ -28,7 +28,7 @@ func (n *Node) Step(m Message) {
 
 func (n *Node) Propose(data []byte) {
 	m := Message{
-		Type: msgHup,
+		Type: msgProp,
 		Data: data,
 	}
 	n.Step(m)

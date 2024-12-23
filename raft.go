@@ -105,15 +105,14 @@ type stateMachine struct {
 	state  stateType    // 状态
 	commit int          // 已提交的日志条目索引
 	votes  map[int]bool // 收到的投票记录
-	next   Interface    // 下一步处理
+	msgs   []Message    // 消息
 	lead   int          // 领导者
 }
 
-func newStateMachine(k, addr int, next Interface) *stateMachine {
+func newStateMachine(k, addr int) *stateMachine {
 	sm := &stateMachine{
 		k:    k,
 		addr: addr,
-		next: next,
 		log:  make([]Entry, 1, 1024),
 	}
 	sm.reset()
@@ -149,6 +148,14 @@ func (sm *stateMachine) append(after int, ents ...Entry) int {
 	return len(sm.log) - 1
 }
 
+func (sm *stateMachine) maybeAppend(index, logTerm int, ents ...Entry) bool {
+	if sm.isLogOk(index, logTerm) {
+		sm.append(index, ents...)
+		return true
+	}
+	return false
+}
+
 func (sm *stateMachine) isLogOk(i, term int) bool {
 	if i > sm.li() {
 		return false
@@ -160,7 +167,7 @@ func (sm *stateMachine) isLogOk(i, term int) bool {
 func (sm *stateMachine) send(m Message) {
 	m.From = sm.addr
 	m.Term = sm.term
-	sm.next.Step(m)
+	sm.msgs = append(sm.msgs, m)
 }
 
 // 发送附加日志消息
@@ -239,14 +246,36 @@ func (sm *stateMachine) becomeFollower(term, lead int) {
 	sm.state = stateFollower
 }
 
+func (sm *stateMachine) becomeCandidate() {
+	if sm.state == stateLeader {
+		panic("invalid transition [leader -> candidate]")
+	}
+	sm.reset()
+	sm.term++
+	sm.vote = sm.addr
+	sm.state = stateCandidate
+	sm.poll(sm.addr, true)
+}
+
+func (sm *stateMachine) becomeLeader() {
+	if sm.state == stateFollower {
+		panic("invalid transition [follower -> leader]")
+	}
+	sm.reset()
+	sm.lead = sm.addr
+	sm.state = stateLeader
+}
+
+func (sm *stateMachine) Msgs() []Message {
+	msgs := sm.msgs
+	sm.msgs = make([]Message, 0)
+	return msgs
+}
+
 func (sm *stateMachine) Step(m Message) {
 	switch m.Type {
 	case msgHup:
-		sm.term++
-		sm.reset()
-		sm.state = stateCandidate
-		sm.vote = sm.addr
-		sm.poll(sm.addr, true)
+		sm.becomeCandidate()
 		for i := 0; i < sm.k; i++ {
 			if i == sm.addr {
 				continue
@@ -306,11 +335,10 @@ func (sm *stateMachine) Step(m Message) {
 			gr := sm.poll(m.From, m.Index >= 0)
 			switch sm.q() {
 			case gr:
-				sm.state = stateLeader
-				sm.lead = sm.addr
+				sm.becomeLeader()
 				sm.sendAppend()
 			case len(sm.votes) - gr:
-				sm.state = stateFollower
+				sm.becomeFollower(sm.term, none)
 			}
 		}
 	case stateFollower:
