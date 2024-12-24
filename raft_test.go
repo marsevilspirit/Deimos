@@ -62,8 +62,8 @@ func TestLeaderElection(t *testing.T) {
 func TestLogReplication(t *testing.T) {
 	tests := []struct {
 		*network
-		msgs    []Message
-		wcommit int
+		msgs       []Message
+		wcommitted int
 	}{
 		{
 			newNetwork(nil, nil, nil),
@@ -82,19 +82,24 @@ func TestLogReplication(t *testing.T) {
 			2,
 		},
 	}
+
 	for i, tt := range tests {
 		tt.tee = stepperFunc(func(m Message) {
 			t.Logf("#%d: m = %+v", i, m)
 		})
 		tt.Step(Message{To: 0, Type: msgHup})
+
 		for _, m := range tt.msgs {
 			tt.Step(m)
 		}
+
 		for j, ism := range tt.ss {
 			sm := ism.(*nsm)
-			if sm.log.committed != tt.wcommit {
-				t.Errorf("#%d.%d: commit = %d, want %d", i, j, sm.log.committed, tt.wcommit)
+
+			if sm.log.committed != tt.wcommitted {
+				t.Errorf("#%d.%d: committed = %d, want %d", i, j, sm.log.committed, tt.wcommitted)
 			}
+
 			ents := sm.nextEnts()
 			props := make([]Message, 0)
 			for _, m := range tt.msgs {
@@ -330,9 +335,9 @@ func TestCommit(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		ins := make([]*index, len(tt.matches))
+		ins := make([]index, len(tt.matches))
 		for j := 0; j < len(ins); j++ {
-			ins[j] = &index{tt.matches[j], tt.matches[j] + 1}
+			ins[j] = index{tt.matches[j], tt.matches[j] + 1}
 		}
 		sm := &stateMachine{log: &log{ents: tt.logs}, indexs: ins, k: len(ins), term: tt.smTerm}
 		sm.maybeCommit()

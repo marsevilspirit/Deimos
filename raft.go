@@ -95,7 +95,7 @@ type stateMachine struct {
 	term   int          // 任期
 	vote   int          // 投票给谁
 	log    *log         // 日志条目
-	indexs []*index     // 每个节点的日志同步状态
+	indexs []index      // 每个节点的日志同步状态
 	state  stateType    // 状态
 	votes  map[int]bool // 收到的投票记录
 	msgs   []Message    // 消息
@@ -183,9 +183,9 @@ func (sm *stateMachine) reset() {
 	sm.lead = none
 	sm.vote = none
 	sm.votes = make(map[int]bool)
-	sm.indexs = make([]*index, sm.k)
+	sm.indexs = make([]index, sm.k)
 	for i := range sm.indexs {
-		sm.indexs[i] = &index{next: sm.log.lastIndex() + 1}
+		sm.indexs[i] = index{next: sm.log.lastIndex() + 1}
 	}
 }
 
@@ -275,12 +275,11 @@ func (sm *stateMachine) Step(m Message) {
 	case stateLeader:
 		switch m.Type {
 		case msgAppResp:
-			in := sm.indexs[m.From]
 			if m.Index < 0 {
-				in.decr()
+				sm.indexs[m.From].decr()
 				sm.sendAppend()
 			} else {
-				in.update(m.Index)
+				sm.indexs[m.From].update(m.Index)
 				if sm.maybeCommit() {
 					sm.sendAppend()
 				}
