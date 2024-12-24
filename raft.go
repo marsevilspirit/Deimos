@@ -96,17 +96,18 @@ func (in *index) decr() {
 }
 
 type stateMachine struct {
-	k      int          // 节点总数
-	addr   int          // 节点地址
-	term   int          // 任期
-	vote   int          // 投票给谁
-	log    []Entry      // 日志条目
-	indexs []*index     // 每个节点的日志同步状态
-	state  stateType    // 状态
-	commit int          // 已提交的日志条目索引
-	votes  map[int]bool // 收到的投票记录
-	msgs   []Message    // 消息
-	lead   int          // 领导者
+	k       int          // 节点总数
+	addr    int          // 节点地址
+	term    int          // 任期
+	vote    int          // 投票给谁
+	log     []Entry      // 日志条目
+	indexs  []*index     // 每个节点的日志同步状态
+	state   stateType    // 状态
+	commit  int          // 已提交的日志条目索引
+	applied int          // 已应用的日志条目索引
+	votes   map[int]bool // 收到的投票记录
+	msgs    []Message    // 消息
+	lead    int          // 领导者
 }
 
 func newStateMachine(k, addr int) *stateMachine {
@@ -148,14 +149,6 @@ func (sm *stateMachine) append(after int, ents ...Entry) int {
 	return len(sm.log) - 1
 }
 
-func (sm *stateMachine) maybeAppend(index, logTerm int, ents ...Entry) bool {
-	if sm.isLogOk(index, logTerm) {
-		sm.append(index, ents...)
-		return true
-	}
-	return false
-}
-
 func (sm *stateMachine) isLogOk(i, term int) bool {
 	if i > sm.li() {
 		return false
@@ -183,32 +176,34 @@ func (sm *stateMachine) sendAppend() {
 			Index:   index.next - 1,
 			LogTerm: sm.log[index.next-1].Term,
 			Entries: sm.log[index.next:],
+			Commit:  sm.commit,
 		}
 		sm.send(m)
 	}
 }
 
-// 找到在当前任期中复制到多数节点的最大日志索引
-func (sm *stateMachine) theN() int {
+// 判断是否可以提交日志
+// 同时更新commit
+func (sm *stateMachine) maybeCommit() bool {
 	matchIndexs := make([]int, len(sm.indexs))
 	for i := range sm.indexs {
 		matchIndexs[i] = sm.indexs[i].match
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(matchIndexs)))
 	matchIndex := matchIndexs[sm.q()-1]
-	if sm.log[matchIndex].Term == sm.term {
-		return matchIndex
+	if matchIndex > sm.commit && sm.log[matchIndex].Term == sm.term {
+		sm.commit = matchIndex
+		return true
 	}
 
-	return -1
+	return false
 }
 
-// 更新已提交的日志索引
+// return the applied entries and update applied index
 func (sm *stateMachine) nextEnts() (ents []Entry) {
-	commitIndex := sm.theN()
-	if commitIndex > sm.commit {
-		ents = sm.log[sm.commit+1 : commitIndex]
-		sm.commit = commitIndex
+	if sm.commit > sm.applied {
+		ents = sm.log[sm.applied+1 : sm.commit+1]
+		sm.applied = sm.commit
 	}
 	return ents
 }
@@ -307,6 +302,7 @@ func (sm *stateMachine) Step(m Message) {
 
 	handleAppendEntries := func() {
 		if sm.isLogOk(m.Index, m.LogTerm) {
+			sm.commit = m.Commit
 			sm.append(m.Index, m.Entries...)
 			sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.li()})
 		} else {
@@ -324,6 +320,9 @@ func (sm *stateMachine) Step(m Message) {
 				sm.sendAppend()
 			} else {
 				in.update(m.Index)
+				if sm.maybeCommit() {
+					sm.sendAppend()
+				}
 			}
 		}
 	case stateCandidate:

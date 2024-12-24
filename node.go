@@ -18,7 +18,7 @@ func New(k, addr int, next Interface) *Node {
 	return n
 }
 
-// 并发安全
+// 注意并发安全
 func (n *Node) Step(m Message) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -26,6 +26,7 @@ func (n *Node) Step(m Message) {
 	n.sm.Step(m)
 }
 
+// Propose 方法向集群提议一条数据
 func (n *Node) Propose(data []byte) {
 	m := Message{
 		Type: msgProp,
