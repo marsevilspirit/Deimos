@@ -135,10 +135,6 @@ func (sm *stateMachine) poll(addr int, v bool) (granted int) {
 	return granted
 }
 
-func (sm *stateMachine) isLogOk(i, term int) bool {
-	return sm.log.isOk(i, term)
-}
-
 // 发送消息
 func (sm *stateMachine) send(m Message) {
 	m.From = sm.addr
@@ -159,7 +155,7 @@ func (sm *stateMachine) sendAppend() {
 			Index:   index.next - 1,
 			LogTerm: sm.log.term(index.next - 1),
 			Entries: sm.log.entries(index.next),
-			Commit:  sm.log.commit,
+			Commit:  sm.log.committed,
 		}
 		sm.send(m)
 	}
@@ -174,12 +170,8 @@ func (sm *stateMachine) maybeCommit() bool {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(matchIndexs)))
 	matchIndex := matchIndexs[sm.q()-1]
-	if matchIndex > sm.log.commit && sm.log.term(matchIndex) == sm.term {
-		sm.log.commit = matchIndex
-		return true
-	}
 
-	return false
+	return sm.log.maybeCommit(matchIndex, sm.term)
 }
 
 // return the applied entries and update applied index
@@ -193,23 +185,13 @@ func (sm *stateMachine) reset() {
 	sm.votes = make(map[int]bool)
 	sm.indexs = make([]*index, sm.k)
 	for i := range sm.indexs {
-		sm.indexs[i] = &index{next: sm.log.len() + 1}
+		sm.indexs[i] = &index{next: sm.log.lastIndex() + 1}
 	}
 }
 
 // 计算多数所需的节点数
 func (sm *stateMachine) q() int {
 	return sm.k/2 + 1
-}
-
-// 判断投票请求是否值得投票
-func (sm *stateMachine) voteWorthy(i, term int) bool {
-	return sm.log.isUpToDate(i, term)
-}
-
-// 获取最后一个日志条目的索引
-func (sm *stateMachine) li() int {
-	return sm.log.len()
 }
 
 func (sm *stateMachine) becomeFollower(term, lead int) {
@@ -253,14 +235,14 @@ func (sm *stateMachine) Step(m Message) {
 			if i == sm.addr {
 				continue
 			}
-			lasti := sm.li()
+			lasti := sm.log.lastIndex()
 			sm.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: sm.log.term(lasti)})
 		}
 		return
 	case msgProp:
 		switch sm.lead {
 		case sm.addr:
-			sm.log.append(sm.log.len(), Entry{Term: sm.term, Data: m.Data})
+			sm.log.append(sm.log.lastIndex(), Entry{Term: sm.term, Data: m.Data})
 			sm.sendAppend()
 		case none:
 			panic("msgProp given without leader")
@@ -279,10 +261,8 @@ func (sm *stateMachine) Step(m Message) {
 	}
 
 	handleAppendEntries := func() {
-		if sm.isLogOk(m.Index, m.LogTerm) {
-			sm.log.commit = m.Commit
-			sm.log.append(m.Index, m.Entries...)
-			sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.li()})
+		if sm.log.mayAppend(m.Index, m.PrevTerm, m.Commit, m.Entries...) {
+			sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.log.lastIndex()})
 		} else {
 			sm.send(Message{To: m.From, Type: msgAppResp, Index: -1})
 		}
@@ -323,8 +303,8 @@ func (sm *stateMachine) Step(m Message) {
 		case msgApp:
 			handleAppendEntries()
 		case msgVote:
-			if sm.voteWorthy(m.Index, m.LogTerm) {
-				sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.li()})
+			if sm.log.isUpToDate(m.Index, m.LogTerm) {
+				sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.log.lastIndex()})
 			} else {
 				sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 			}

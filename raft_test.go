@@ -92,8 +92,8 @@ func TestLogReplication(t *testing.T) {
 		}
 		for j, ism := range tt.ss {
 			sm := ism.(*nsm)
-			if sm.log.commit != tt.wcommit {
-				t.Errorf("#%d.%d: commit = %d, want %d", i, j, sm.log.commit, tt.wcommit)
+			if sm.log.committed != tt.wcommit {
+				t.Errorf("#%d.%d: commit = %d, want %d", i, j, sm.log.committed, tt.wcommit)
 			}
 			ents := sm.nextEnts()
 			props := make([]Message, 0)
@@ -326,7 +326,7 @@ func TestCommit(t *testing.T) {
 		}
 		sm := &stateMachine{log: &log{ents: tt.logs}, indexs: ins, k: len(ins), term: tt.smTerm}
 		sm.maybeCommit()
-		if g := sm.log.commit; g != tt.w {
+		if g := sm.log.committed; g != tt.w {
 			t.Errorf("#%d: commit = %d, want %d", i, g, tt.w)
 		}
 	}
