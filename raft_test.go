@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-var defaultLog = []Entry{{}}
-
 // leader选举测试
 func TestLeaderElection(t *testing.T) {
 	tests := []struct {
@@ -25,9 +23,9 @@ func TestLeaderElection(t *testing.T) {
 		{
 			newNetwork(
 				nil,
-				&nsm{stateMachine{log: []Entry{{}, {Term: 1}}}, nil},
-				&nsm{stateMachine{log: []Entry{{}, {Term: 2}}}, nil},
-				&nsm{stateMachine{log: []Entry{{}, {Term: 1}, {Term: 3}}}, nil},
+				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}}}}, nil},
+				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 2}}}}, nil},
+				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}, {Term: 3}}}}, nil},
 				nil,
 			),
 			stateFollower,
@@ -36,10 +34,10 @@ func TestLeaderElection(t *testing.T) {
 		// logs converge
 		{
 			newNetwork(
-				&nsm{stateMachine{log: []Entry{{}, {Term: 1}}}, nil},
+				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}}}}, nil},
 				nil,
-				&nsm{stateMachine{log: []Entry{{}, {Term: 2}}}, nil},
-				&nsm{stateMachine{log: []Entry{{}, {Term: 1}}}, nil},
+				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 2}}}}, nil},
+				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}}}}, nil},
 				nil,
 			),
 			stateLeader,
@@ -47,6 +45,9 @@ func TestLeaderElection(t *testing.T) {
 	}
 
 	for i, tt := range tests {
+		tt.tee = stepperFunc(func(m Message) {
+			t.Logf("#%d: m = %+v", i, m)
+		})
 		tt.Step(Message{To: 0, Type: msgHup})
 		sm := tt.network.ss[0].(*nsm)
 		if sm.state != tt.state {
@@ -91,8 +92,8 @@ func TestLogReplication(t *testing.T) {
 		}
 		for j, ism := range tt.ss {
 			sm := ism.(*nsm)
-			if sm.commit != tt.wcommit {
-				t.Errorf("#%d.%d: commit = %d, want %d", i, j, sm.commit, tt.wcommit)
+			if sm.log.commit != tt.wcommit {
+				t.Errorf("#%d.%d: commit = %d, want %d", i, j, sm.log.commit, tt.wcommit)
 			}
 			ents := sm.nextEnts()
 			props := make([]Message, 0)
@@ -112,8 +113,8 @@ func TestLogReplication(t *testing.T) {
 
 // 测试在分布式系统中两个候选者节点同时发起选举的情况
 func TestDualingCandidates(t *testing.T) {
-	a := &nsm{stateMachine{log: defaultLog}, nil}
-	c := &nsm{stateMachine{log: defaultLog}, nil}
+	a := &nsm{stateMachine{log: defaultLog()}, nil}
+	c := &nsm{stateMachine{log: defaultLog()}, nil}
 
 	tt := newNetwork(a, nil, c)
 
@@ -153,7 +154,7 @@ func TestDualingCandidates(t *testing.T) {
 			t.Errorf("#%d: term = %d, want %d", i, g, tt.term)
 		}
 	}
-	if g := diffLogs(defaultLog, tt.logs()); g != nil {
+	if g := diffLogs(defaultLog().ents, tt.logs()); g != nil {
 		for _, diff := range g {
 			t.Errorf("bag log:\n%s", diff)
 		}
@@ -161,7 +162,7 @@ func TestDualingCandidates(t *testing.T) {
 }
 
 func TestCandidateConcede(t *testing.T) {
-	a := &nsm{stateMachine{log: defaultLog}, nil}
+	a := &nsm{stateMachine{log: defaultLog()}, nil}
 
 	tt := newNetwork(a, nil, nil)
 	tt.tee = stepperFunc(func(m Message) {
@@ -202,7 +203,7 @@ func TestOldMessages(t *testing.T) {
 	tt.Step(Message{To: 0, Type: msgHup})
 	// pretend we're an old leader trying to make progress; this entry is expected to be ignored.
 	tt.Step(Message{To: 0, Type: msgApp, Term: 1, Entries: []Entry{{Term: 1}}})
-	if g := diffLogs(defaultLog, tt.logs()); g != nil {
+	if g := diffLogs(defaultLog().ents, tt.logs()); g != nil {
 		for _, diff := range g {
 			t.Errorf("bad log:\n%s", diff)
 		}
@@ -250,7 +251,7 @@ func TestProposal(t *testing.T) {
 		if tt.success {
 			wantLog = []Entry{{}, {Term: 1, Data: data}}
 		} else {
-			wantLog = defaultLog
+			wantLog = defaultLog().ents
 		}
 		if g := diffLogs(wantLog, tt.logs()); g != nil {
 			for _, diff := range g {
@@ -323,9 +324,9 @@ func TestCommit(t *testing.T) {
 		for j := 0; j < len(ins); j++ {
 			ins[j] = &index{tt.matches[j], tt.matches[j] + 1}
 		}
-		sm := &stateMachine{log: tt.logs, indexs: ins, k: len(ins), term: tt.smTerm}
+		sm := &stateMachine{log: &log{ents: tt.logs}, indexs: ins, k: len(ins), term: tt.smTerm}
 		sm.maybeCommit()
-		if g := sm.commit; g != tt.w {
+		if g := sm.log.commit; g != tt.w {
 			t.Errorf("#%d: commit = %d, want %d", i, g, tt.w)
 		}
 	}
@@ -360,7 +361,7 @@ func TestVote(t *testing.T) {
 
 	for i, tt := range tests {
 		called := false
-		sm := &nsm{stateMachine{log: []Entry{{}, {Term: 2}, {Term: 2}}}, nil}
+		sm := &nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 2}, {Term: 2}}}}, nil}
 		sm.next = stepperFunc(func(m Message) {
 			called = true
 			if m.Index != tt.want {
@@ -370,6 +371,46 @@ func TestVote(t *testing.T) {
 		sm.Step(Message{Type: msgVote, Index: tt.i, LogTerm: tt.term})
 		if !called {
 			t.Fatalf("#%d: not called", i)
+		}
+	}
+}
+
+func TestAllServerStepdown(t *testing.T) {
+	tests := []stateType{stateFollower, stateCandidate, stateLeader}
+
+	want := struct {
+		state stateType
+		term  int
+		index int
+	}{stateFollower, 3, 1}
+
+	tmsgTypes := [...]messageType{msgVote, msgApp}
+	tterm := 3
+
+	for i, tt := range tests {
+		sm := newStateMachine(3, 0)
+		switch tt {
+		case stateFollower:
+			sm.becomeFollower(1, 0)
+		case stateCandidate:
+			sm.becomeCandidate()
+		case stateLeader:
+			sm.becomeCandidate()
+			sm.becomeLeader()
+		}
+
+		for j, msgType := range tmsgTypes {
+			sm.Step(Message{Type: msgType, Term: tterm, LogTerm: tterm})
+
+			if sm.state != want.state {
+				t.Errorf("#%d.%d state = %v , want %v", i, j, sm.state, want.state)
+			}
+			if sm.term != want.term {
+				t.Errorf("#%d.%d term = %v , want %v", i, j, sm.term, want.term)
+			}
+			if len(sm.log.ents) != want.index {
+				t.Errorf("#%d.%d index = %v , want %v", i, j, len(sm.log.ents), want.index)
+			}
 		}
 	}
 }
@@ -431,7 +472,7 @@ func (nt network) logs() [][]Entry {
 	ls := make([][]Entry, len(nt.ss))
 	for i, node := range nt.ss {
 		if sm, ok := node.(*nsm); ok {
-			ls[i] = sm.log
+			ls[i] = sm.log.ents
 		}
 	}
 	return ls
@@ -529,4 +570,8 @@ func (n *nsm) Step(m Message) {
 	for _, msg := range msgs {
 		n.next.Step(msg)
 	}
+}
+
+func defaultLog() *log {
+	return &log{ents: []Entry{{}}}
 }

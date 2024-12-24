@@ -54,12 +54,6 @@ func (st stateType) String() string {
 	return stmap[st]
 }
 
-// 日志条目
-type Entry struct {
-	Term int    // 任期
-	Data []byte // 数据
-}
-
 type Message struct {
 	Type     messageType // 消息类型
 	From     int         // 发送者
@@ -96,25 +90,23 @@ func (in *index) decr() {
 }
 
 type stateMachine struct {
-	k       int          // 节点总数
-	addr    int          // 节点地址
-	term    int          // 任期
-	vote    int          // 投票给谁
-	log     []Entry      // 日志条目
-	indexs  []*index     // 每个节点的日志同步状态
-	state   stateType    // 状态
-	commit  int          // 已提交的日志条目索引
-	applied int          // 已应用的日志条目索引
-	votes   map[int]bool // 收到的投票记录
-	msgs    []Message    // 消息
-	lead    int          // 领导者
+	k      int          // 节点总数
+	addr   int          // 节点地址
+	term   int          // 任期
+	vote   int          // 投票给谁
+	log    *log         // 日志条目
+	indexs []*index     // 每个节点的日志同步状态
+	state  stateType    // 状态
+	votes  map[int]bool // 收到的投票记录
+	msgs   []Message    // 消息
+	lead   int          // 领导者
 }
 
 func newStateMachine(k, addr int) *stateMachine {
 	sm := &stateMachine{
 		k:    k,
 		addr: addr,
-		log:  make([]Entry, 1, 1024),
+		log:  newLog(),
 	}
 	sm.reset()
 	return sm
@@ -143,17 +135,8 @@ func (sm *stateMachine) poll(addr int, v bool) (granted int) {
 	return granted
 }
 
-// 在日志中追加新的条目
-func (sm *stateMachine) append(after int, ents ...Entry) int {
-	sm.log = append(sm.log[:after+1], ents...)
-	return len(sm.log) - 1
-}
-
 func (sm *stateMachine) isLogOk(i, term int) bool {
-	if i > sm.li() {
-		return false
-	}
-	return sm.log[i].Term == term
+	return sm.log.isOk(i, term)
 }
 
 // 发送消息
@@ -174,9 +157,9 @@ func (sm *stateMachine) sendAppend() {
 			Type:    msgApp,
 			To:      i,
 			Index:   index.next - 1,
-			LogTerm: sm.log[index.next-1].Term,
-			Entries: sm.log[index.next:],
-			Commit:  sm.commit,
+			LogTerm: sm.log.term(index.next - 1),
+			Entries: sm.log.entries(index.next),
+			Commit:  sm.log.commit,
 		}
 		sm.send(m)
 	}
@@ -191,8 +174,8 @@ func (sm *stateMachine) maybeCommit() bool {
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(matchIndexs)))
 	matchIndex := matchIndexs[sm.q()-1]
-	if matchIndex > sm.commit && sm.log[matchIndex].Term == sm.term {
-		sm.commit = matchIndex
+	if matchIndex > sm.log.commit && sm.log.term(matchIndex) == sm.term {
+		sm.log.commit = matchIndex
 		return true
 	}
 
@@ -201,11 +184,7 @@ func (sm *stateMachine) maybeCommit() bool {
 
 // return the applied entries and update applied index
 func (sm *stateMachine) nextEnts() (ents []Entry) {
-	if sm.commit > sm.applied {
-		ents = sm.log[sm.applied+1 : sm.commit+1]
-		sm.applied = sm.commit
-	}
-	return ents
+	return sm.log.nextEnts()
 }
 
 func (sm *stateMachine) reset() {
@@ -214,7 +193,7 @@ func (sm *stateMachine) reset() {
 	sm.votes = make(map[int]bool)
 	sm.indexs = make([]*index, sm.k)
 	for i := range sm.indexs {
-		sm.indexs[i] = &index{next: len(sm.log)}
+		sm.indexs[i] = &index{next: sm.log.len() + 1}
 	}
 }
 
@@ -225,13 +204,12 @@ func (sm *stateMachine) q() int {
 
 // 判断投票请求是否值得投票
 func (sm *stateMachine) voteWorthy(i, term int) bool {
-	e := sm.log[sm.li()]
-	return term > e.Term || (term == e.Term && i >= sm.li())
+	return sm.log.isUpToDate(i, term)
 }
 
 // 获取最后一个日志条目的索引
 func (sm *stateMachine) li() int {
-	return len(sm.log) - 1
+	return sm.log.len()
 }
 
 func (sm *stateMachine) becomeFollower(term, lead int) {
@@ -276,13 +254,13 @@ func (sm *stateMachine) Step(m Message) {
 				continue
 			}
 			lasti := sm.li()
-			sm.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: sm.log[lasti].Term})
+			sm.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: sm.log.term(lasti)})
 		}
 		return
 	case msgProp:
 		switch sm.lead {
 		case sm.addr:
-			sm.append(sm.li(), Entry{Term: sm.term, Data: m.Data})
+			sm.log.append(sm.log.len(), Entry{Term: sm.term, Data: m.Data})
 			sm.sendAppend()
 		case none:
 			panic("msgProp given without leader")
@@ -302,8 +280,8 @@ func (sm *stateMachine) Step(m Message) {
 
 	handleAppendEntries := func() {
 		if sm.isLogOk(m.Index, m.LogTerm) {
-			sm.commit = m.Commit
-			sm.append(m.Index, m.Entries...)
+			sm.log.commit = m.Commit
+			sm.log.append(m.Index, m.Entries...)
 			sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.li()})
 		} else {
 			sm.send(Message{To: m.From, Type: msgAppResp, Index: -1})
