@@ -49,7 +49,7 @@ func (l *log) matchTerm(index, term int) bool {
 	return l.term(index) == term
 }
 
-func (l *log) mayAppend(index, logTerm int, commit int, ents ...Entry) bool {
+func (l *log) maybeAppend(index, logTerm int, commit int, ents ...Entry) bool {
 	if l.matchTerm(index, logTerm) {
 		l.append(index, ents...)
 		l.committed = commit
