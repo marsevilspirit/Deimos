@@ -103,6 +103,48 @@ func TestSingleNodeCommit(t *testing.T) {
 	}
 }
 
+func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
+	tt := newNetwork(nil, nil, nil, nil, nil)
+	tt.send(Message{To: 0, Type: msgHup})
+
+	// 0 cannot reach 2,3,4
+	tt.drop(0, 2, 1.0)
+	tt.drop(0, 2, 1.0)
+
+	tt.drop(0, 3, 1.0)
+	tt.drop(0, 3, 1.0)
+
+	tt.drop(0, 4, 1.0)
+	tt.drop(0, 4, 1.0)
+
+	tt.send(Message{To: 0, Type: msgProp, Data: []byte("some data")})
+	tt.send(Message{To: 0, Type: msgProp, Data: []byte("some data")})
+
+	sm := tt.peers[0].(*stateMachine)
+
+	if sm.log.committed != 0 {
+		t.Errorf("committed = %d, want %d", sm.log.committed, 0)
+	}
+
+	tt.recover()
+
+	// elect 1 as the leader with a new term
+	tt.send(Message{To: 1, Type: msgHup})
+	// send heartbeat; reset wait
+	tt.send(Message{To: 1, Type: msgBeat})
+
+	// no log entries from previous term should be committed
+	sm = tt.peers[1].(*stateMachine)
+	if sm.log.committed != 0 {
+		t.Errorf("committed = %d, want %d", sm.log.committed, 0)
+	}
+
+	tt.send(Message{To: 1, Type: msgProp, Data: []byte("some data")})
+	if sm.log.committed != 3 {
+		t.Errorf("committed = %d, want %d", sm.log.committed, 3)
+	}
+}
+
 // 测试在分布式系统中两个候选者节点同时发起选举的情况
 func TestDualingCandidates(t *testing.T) {
 	a := newStateMachine(0, 0) // k, addr are set later
