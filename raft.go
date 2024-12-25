@@ -263,6 +263,8 @@ func (sm *stateMachine) Step(m Message) {
 		return
 	}
 
+	// 以下的的处理逻辑都是在当前任期下进行的
+
 	handleAppendEntries := func() {
 		if sm.log.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...) {
 			sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.log.lastIndex()})
@@ -284,12 +286,17 @@ func (sm *stateMachine) Step(m Message) {
 					sm.sendAppend()
 				}
 			}
+		case msgVote:
+			// leader在相同任期下收到投票请求拒接
+			sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 		}
 	case stateCandidate:
 		switch m.Type {
 		case msgApp:
 			sm.becomeFollower(sm.term, m.From)
 			handleAppendEntries()
+		case msgVote:
+			sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 		case msgVoteResp:
 			gr := sm.poll(m.From, m.Index >= 0)
 			switch sm.q() {
@@ -305,11 +312,18 @@ func (sm *stateMachine) Step(m Message) {
 		case msgApp:
 			handleAppendEntries()
 		case msgVote:
-			if sm.log.isUpToDate(m.Index, m.LogTerm) {
+			switch sm.vote {
+			case m.From:
 				sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.log.lastIndex()})
-			} else {
-				sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
+				return
+			case none:
+				if sm.log.isUpToDate(m.Index, m.LogTerm) {
+					sm.vote = m.From
+					sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.log.lastIndex()})
+					return
+				}
 			}
+			sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 		}
 	}
 }
