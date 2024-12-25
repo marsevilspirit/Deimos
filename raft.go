@@ -142,22 +142,26 @@ func (sm *stateMachine) send(m Message) {
 	sm.msgs = append(sm.msgs, m)
 }
 
-// 发送附加日志消息
-func (sm *stateMachine) sendAppend() {
+func (sm *stateMachine) sendAppend(to int) {
+	index := sm.indexs[to]
+	m := Message{
+		Type:    msgApp,
+		To:      to,
+		Index:   index.next - 1,
+		LogTerm: sm.log.term(index.next - 1),
+		Entries: sm.log.entries(index.next),
+		Commit:  sm.log.committed,
+	}
+	sm.send(m)
+}
+
+// 广播附加日志消息
+func (sm *stateMachine) bcastAppend() {
 	for i := 0; i < sm.k; i++ {
 		if i == sm.addr {
 			continue
 		}
-		index := sm.indexs[i]
-		m := Message{
-			Type:    msgApp,
-			To:      i,
-			Index:   index.next - 1,
-			LogTerm: sm.log.term(index.next - 1),
-			Entries: sm.log.entries(index.next),
-			Commit:  sm.log.committed,
-		}
-		sm.send(m)
+		sm.sendAppend(i)
 	}
 }
 
@@ -186,6 +190,9 @@ func (sm *stateMachine) reset() {
 	sm.indexs = make([]index, sm.k)
 	for i := range sm.indexs {
 		sm.indexs[i] = index{next: sm.log.lastIndex() + 1}
+		if i == sm.addr {
+			sm.indexs[i].match = sm.log.lastIndex()
+		}
 	}
 }
 
@@ -246,7 +253,7 @@ func (sm *stateMachine) Step(m Message) {
 		switch sm.lead {
 		case sm.addr:
 			sm.log.append(sm.log.lastIndex(), Entry{Term: sm.term, Data: m.Data})
-			sm.sendAppend()
+			sm.bcastAppend()
 		case none:
 			panic("msgProp given without leader")
 		default:
@@ -279,11 +286,11 @@ func (sm *stateMachine) Step(m Message) {
 		case msgAppResp:
 			if m.Index < 0 {
 				sm.indexs[m.From].decr()
-				sm.sendAppend()
+				sm.sendAppend(m.From)
 			} else {
 				sm.indexs[m.From].update(m.Index)
 				if sm.maybeCommit() {
-					sm.sendAppend()
+					sm.bcastAppend()
 				}
 			}
 		case msgVote:
@@ -302,7 +309,7 @@ func (sm *stateMachine) Step(m Message) {
 			switch sm.q() {
 			case gr:
 				sm.becomeLeader()
-				sm.sendAppend()
+				sm.bcastAppend()
 			case len(sm.votes) - gr:
 				sm.becomeFollower(sm.term, none)
 			}
@@ -312,18 +319,12 @@ func (sm *stateMachine) Step(m Message) {
 		case msgApp:
 			handleAppendEntries()
 		case msgVote:
-			switch sm.vote {
-			case m.From:
+			if (sm.vote == none || sm.vote == m.From) && sm.log.isUpToDate(m.Index, m.LogTerm) {
+				sm.vote = m.From
 				sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.log.lastIndex()})
-				return
-			case none:
-				if sm.log.isUpToDate(m.Index, m.LogTerm) {
-					sm.vote = m.From
-					sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.log.lastIndex()})
-					return
-				}
+			} else {
+				sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 			}
-			sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 		}
 	}
 }
