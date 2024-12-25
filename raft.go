@@ -236,6 +236,7 @@ func (sm *stateMachine) Msgs() []Message {
 }
 
 func (sm *stateMachine) Step(m Message) {
+	// fmt.Printf("node %d received %+v\n", sm.addr, m)
 	switch m.Type {
 	case msgHup:
 		sm.becomeCandidate()

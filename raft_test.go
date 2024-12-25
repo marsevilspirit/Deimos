@@ -2,8 +2,7 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
-	"reflect"
+	"math/rand"
 	"testing"
 )
 
@@ -19,37 +18,16 @@ func TestLeaderElection(t *testing.T) {
 		{newNetwork(nil, nopStepper, nopStepper, nil), stateCandidate},
 		{newNetwork(nil, nopStepper, nopStepper, nil, nil), stateLeader},
 
-		// three nodes are have logs further along than 0
-		{
-			newNetwork(
-				nil,
-				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}}}}, nil},
-				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 2}}}}, nil},
-				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}, {Term: 3}}}}, nil},
-				nil,
-			),
-			stateFollower,
-		},
+		// three logs further along than 0
+		{newNetwork(nil, ents(1), ents(2), ents(1, 3), nil), stateFollower},
 
 		// logs converge
-		{
-			newNetwork(
-				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}}}}, nil},
-				nil,
-				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 2}}}}, nil},
-				&nsm{stateMachine{log: &log{ents: []Entry{{}, {Term: 1}}}}, nil},
-				nil,
-			),
-			stateLeader,
-		},
+		{newNetwork(ents(1), nil, ents(2), ents(1), nil), stateLeader},
 	}
 
 	for i, tt := range tests {
-		tt.tee = stepperFunc(func(m Message) {
-			t.Logf("#%d: m = %+v", i, m)
-		})
-		tt.Step(Message{To: 0, Type: msgHup})
-		sm := tt.network.ss[0].(*nsm)
+		tt.send(Message{To: 0, Type: msgHup})
+		sm := tt.network.peers[0].(*stateMachine)
 		if sm.state != tt.state {
 			t.Errorf("#%d: state = %s, want %s", i, sm.state, tt.state)
 		}
@@ -84,17 +62,14 @@ func TestLogReplication(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		tt.tee = stepperFunc(func(m Message) {
-			t.Logf("#%d: m = %+v", i, m)
-		})
-		tt.Step(Message{To: 0, Type: msgHup})
+		tt.send(Message{To: 0, Type: msgHup})
 
 		for _, m := range tt.msgs {
-			tt.Step(m)
+			tt.send(m)
 		}
 
-		for j, ism := range tt.ss {
-			sm := ism.(*nsm)
+		for j, x := range tt.network.peers {
+			sm := x.(*stateMachine)
 
 			if sm.log.committed != tt.wcommitted {
 				t.Errorf("#%d.%d: committed = %d, want %d", i, j, sm.log.committed, tt.wcommitted)
@@ -118,11 +93,11 @@ func TestLogReplication(t *testing.T) {
 
 func TestSingleNodeCommit(t *testing.T) {
 	tt := newNetwork(nil)
-	tt.Step(Message{To: 0, Type: msgHup})
-	tt.Step(Message{To: 0, Type: msgProp, Data: []byte("some data")})
-	tt.Step(Message{To: 0, Type: msgProp, Data: []byte("some data")})
+	tt.send(Message{To: 0, Type: msgHup})
+	tt.send(Message{To: 0, Type: msgProp, Data: []byte("some data")})
+	tt.send(Message{To: 0, Type: msgProp, Data: []byte("some data")})
 
-	sm := tt.ss[0].(*nsm)
+	sm := tt.peers[0].(*stateMachine)
 	if sm.log.committed != 2 {
 		t.Errorf("committed = %d, want %d", sm.log.committed, 2)
 	}
@@ -130,32 +105,22 @@ func TestSingleNodeCommit(t *testing.T) {
 
 // 测试在分布式系统中两个候选者节点同时发起选举的情况
 func TestDualingCandidates(t *testing.T) {
-	a := &nsm{stateMachine{log: defaultLog()}, nil}
-	c := &nsm{stateMachine{log: defaultLog()}, nil}
+	a := newStateMachine(0, 0) // k, addr are set later
+	c := newStateMachine(0, 0)
 
 	tt := newNetwork(a, nil, c)
+	tt.drop(0, 2, 1.0)
+	tt.drop(2, 0, 1.0)
 
-	heal := false
-	next := stepperFunc(func(m Message) {
-		if heal {
-			tt.Step(m)
-		}
-	})
-	a.next = next
-	c.next = next
+	tt.send(Message{To: 0, Type: msgHup})
+	tt.send(Message{To: 2, Type: msgHup})
 
-	tt.tee = stepperFunc(func(m Message) {
-		t.Logf("m = %+v", m)
-	})
-	tt.Step(Message{To: 0, Type: msgHup})
-	tt.Step(Message{To: 2, Type: msgHup})
-
-	t.Log("healing")
-	heal = true
-	tt.Step(Message{To: 2, Type: msgHup})
+	tt.drop(0, 2, 0)
+	tt.drop(2, 0, 0)
+	tt.send(Message{To: 2, Type: msgHup})
 
 	tests := []struct {
-		sm    *nsm
+		sm    *stateMachine
 		state stateType
 		term  int
 	}{
@@ -171,52 +136,60 @@ func TestDualingCandidates(t *testing.T) {
 			t.Errorf("#%d: term = %d, want %d", i, g, tt.term)
 		}
 	}
-	if g := diffLogs(defaultLog().ents, tt.logs()); g != nil {
-		for _, diff := range g {
-			t.Errorf("bag log:\n%s", diff)
+
+	base := ltoa(newLog())
+	for i, p := range tt.peers {
+		if sm, ok := p.(*stateMachine); ok {
+			l := ltoa(sm.log)
+			if g := diffu(base, l); g != "" {
+				t.Errorf("#%d: diff: \n%s", i, g)
+			}
+		} else {
+			t.Logf("#%d: empty log", i)
 		}
 	}
 }
 
 func TestCandidateConcede(t *testing.T) {
-	a := &nsm{stateMachine{log: defaultLog()}, nil}
+	tt := newNetwork(nil, nil, nil)
+	tt.isolate(0)
 
-	tt := newNetwork(a, nil, nil)
-	tt.tee = stepperFunc(func(m Message) {
-		t.Logf("m = %+v", m)
-	})
-
-	a.next = nopStepper
-
-	tt.Step(Message{To: 0, Type: msgHup})
-	tt.Step(Message{To: 2, Type: msgHup})
+	tt.send(Message{To: 0, Type: msgHup})
+	tt.send(Message{To: 2, Type: msgHup})
 
 	// heal the partition
-	a.next = tt
+	tt.recover()
 
 	data := []byte("force follower")
 	// send a proposal to 2 to flush out a msgApp to 0
-	tt.Step(Message{To: 2, Type: msgProp, Data: data})
+	tt.send(Message{To: 2, Type: msgProp, Data: data})
 
+	a := tt.peers[0].(*stateMachine)
 	if g := a.state; g != stateFollower {
 		t.Errorf("state = %s, want %s", g, stateFollower)
 	}
 	if g := a.term; g != 1 {
 		t.Errorf("term = %d, want %d", g, 1)
 	}
-	wantLog := []Entry{{}, {Term: 1, Data: data}}
-	if g := diffLogs(wantLog, tt.logs()); g != nil {
-		for _, diff := range g {
-			t.Errorf("bag log:\n%s", diff)
+
+	wantLog := ltoa(&log{ents: []Entry{{}, {Term: 1, Data: data}}, committed: 1})
+	for i, p := range tt.peers {
+		if sm, ok := p.(*stateMachine); ok {
+			l := ltoa(sm.log)
+			if g := diffu(wantLog, l); g != "" {
+				t.Errorf("#%d: diff: \n%s", i, g)
+			}
+		} else {
+			t.Logf("#%d: empty log", i)
 		}
 	}
 }
 
 func TestSingleNodeCandidate(t *testing.T) {
 	tt := newNetwork(nil)
-	tt.Step(Message{To: 0, Type: msgHup})
+	tt.send(Message{To: 0, Type: msgHup})
 
-	sm := tt.ss[0].(*nsm)
+	sm := tt.peers[0].(*stateMachine)
 	if sm.state != stateLeader {
 		t.Errorf("state = %s, want %s", sm.state, stateLeader)
 	}
@@ -225,14 +198,21 @@ func TestSingleNodeCandidate(t *testing.T) {
 func TestOldMessages(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
 	// make 0 leader @ term 3
-	tt.Step(Message{To: 0, Type: msgHup})
-	tt.Step(Message{To: 1, Type: msgHup})
-	tt.Step(Message{To: 0, Type: msgHup})
+	tt.send(Message{To: 0, Type: msgHup})
+	tt.send(Message{To: 1, Type: msgHup})
+	tt.send(Message{To: 0, Type: msgHup})
 	// pretend we're an old leader trying to make progress; this entry is expected to be ignored.
-	tt.Step(Message{To: 0, Type: msgApp, Term: 1, Entries: []Entry{{Term: 1}}})
-	if g := diffLogs(defaultLog().ents, tt.logs()); g != nil {
-		for _, diff := range g {
-			t.Errorf("bad log:\n%s", diff)
+	tt.send(Message{To: 0, Type: msgApp, Term: 1, Entries: []Entry{{Term: 1}}})
+
+	base := ltoa(newLog())
+	for i, p := range tt.peers {
+		if sm, ok := p.(*stateMachine); ok {
+			l := ltoa(sm.log)
+			if g := diffu(base, l); g != "" {
+				t.Errorf("#%d: diff: \n%s", i, g)
+			}
+		} else {
+			t.Logf("#%d: empty log", i)
 		}
 	}
 }
@@ -250,11 +230,7 @@ func TestProposal(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		tt.tee = stepperFunc(func(m Message) {
-			t.Logf("#%d: m = %+v", i, m)
-		})
-
-		step := stepperFunc(func(m Message) {
+		send := func(m Message) {
 			defer func() {
 				// only recover is we expect it to panic so
 				// panics we don't expect go up.
@@ -265,27 +241,33 @@ func TestProposal(t *testing.T) {
 					}
 				}
 			}()
-			tt.Step(m)
-		})
+			tt.send(m)
+		}
 
 		data := []byte("somedata")
 
 		// promote 0 the leader
-		step(Message{To: 0, Type: msgHup})
-		step(Message{To: 0, Type: msgProp, Data: data})
+		send(Message{To: 0, Type: msgHup})
+		send(Message{To: 0, Type: msgProp, Data: data})
 
-		var wantLog []Entry
+		wantLog := newLog()
 		if tt.success {
-			wantLog = []Entry{{}, {Term: 1, Data: data}}
-		} else {
-			wantLog = defaultLog().ents
+			wantLog = &log{ents: []Entry{{}, {Term: 1, Data: data}}, committed: 1}
 		}
-		if g := diffLogs(wantLog, tt.logs()); g != nil {
-			for _, diff := range g {
-				t.Errorf("#%d: diff:%s", i, diff)
+
+		base := ltoa(wantLog)
+		for i, p := range tt.peers {
+			if sm, ok := p.(*stateMachine); ok {
+				l := ltoa(sm.log)
+				if g := diffu(base, l); g != "" {
+					t.Errorf("#%d: diff: \n%s", i, g)
+				}
+			} else {
+				t.Logf("#%d: empty log", i)
 			}
 		}
-		sm := tt.network.ss[0].(*nsm)
+
+		sm := tt.peers[0].(*stateMachine)
 		if g := sm.term; g != 1 {
 			t.Errorf("#%d: term = %d, want %d", i, g, 1)
 		}
@@ -301,23 +283,25 @@ func TestProposalByProxy(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		tt.tee = stepperFunc(func(m Message) {
-			t.Logf("#%d: m = %+v", i, m)
-		})
-
 		// promote 0 the leader
-		tt.Step(Message{To: 0, Type: msgHup})
+		tt.send(Message{To: 0, Type: msgHup})
 
 		// propose via follower
-		tt.Step(Message{To: 1, Type: msgProp, Data: []byte("somedata")})
+		tt.send(Message{To: 1, Type: msgProp, Data: []byte("somedata")})
 
-		wantLog := []Entry{{}, {Term: 1, Data: data}}
-		if g := diffLogs(wantLog, tt.logs()); g != nil {
-			for _, diff := range g {
-				t.Errorf("#%d: bad entry: %s", i, diff)
+		wantLog := &log{ents: []Entry{{}, {Term: 1, Data: data}}, committed: 1}
+		base := ltoa(wantLog)
+		for i, p := range tt.peers {
+			if sm, ok := p.(*stateMachine); ok {
+				l := ltoa(sm.log)
+				if g := diffu(base, l); g != "" {
+					t.Errorf("#%d: diff:\n%s", i, g)
+				}
+			} else {
+				t.Logf("#%d: empty log", i)
 			}
 		}
-		sm := tt.ss[0].(*nsm)
+		sm := tt.peers[0].(*stateMachine)
 		if g := sm.term; g != 1 {
 			t.Errorf("#%d: term = %d, want %d", i, g, 1)
 		}
@@ -395,22 +379,20 @@ func TestVote(t *testing.T) {
 
 	for i, tt := range tests {
 		called := false
-		sm := &nsm{
-			stateMachine{
-				state: tt.state,
-				vote:  tt.voteFor,
-				log:   &log{ents: []Entry{{}, {Term: 2}, {Term: 2}}},
-			},
-			nil,
+		sm := &stateMachine{
+			state: tt.state,
+			vote:  tt.voteFor,
+			log:   &log{ents: []Entry{{}, {Term: 2}, {Term: 2}}},
 		}
 
-		sm.next = stepperFunc(func(m Message) {
+		sm.Step(Message{Type: msgVote, From: 1, Index: tt.i, LogTerm: tt.term})
+
+		for _, m := range sm.Msgs() {
 			called = true
 			if m.Index != tt.w {
 				t.Errorf("#%d, m.Index = %d, want %d", i, m.Index, tt.w)
 			}
-		})
-		sm.Step(Message{Type: msgVote, From: 1, Index: tt.i, LogTerm: tt.term})
+		}
 		if !called {
 			t.Fatalf("#%d: not called", i)
 		}
@@ -491,163 +473,87 @@ func TestLeaderAppResp(t *testing.T) {
 	}
 }
 
-func TestLogDiff(t *testing.T) {
-	a := []Entry{{}, {Term: 1}, {Term: 2}}
-	b := []Entry{{}, {Term: 1}, {Term: 2}}
-	c := []Entry{{}, {Term: 2}}
-	d := []Entry(nil)
-
-	w := []diff{
-		{1, []*Entry{{Term: 1}, {Term: 1}, {Term: 2}, nilLogEntry}},
-		{2, []*Entry{{Term: 2}, {Term: 2}, noEntry, nilLogEntry}},
+func ents(terms ...int) *stateMachine {
+	ents := []Entry{{}}
+	for _, term := range terms {
+		ents = append(ents, Entry{Term: term})
 	}
 
-	t.Logf("diff log:\n%s", diffLogs(a, [][]Entry{b, c, d}))
-
-	if g := diffLogs(a, [][]Entry{b, c, d}); !reflect.DeepEqual(w, g) {
-		t.Errorf("g = %s", g)
-		t.Errorf("want %s", w)
-	}
+	sm := &stateMachine{log: &log{ents: ents}}
+	sm.reset()
+	return sm
 }
 
 type network struct {
-	tee Interface
-	ss  []Interface
+	peers []Interface
+	dropm map[connem]float64
 }
 
-func newNetwork(nodes ...Interface) *network {
-	nt := &network{ss: nodes}
-	for i, n := range nodes {
-		switch v := n.(type) {
+func newNetwork(peers ...Interface) *network {
+	for addr, p := range peers {
+		switch v := p.(type) {
 		case nil:
-			nt.ss[i] = &nsm{*newStateMachine(len(nodes), i), nt}
-		case *nsm:
-			v.k = len(nodes)
-			v.addr = i
-			if v.next == nil {
-				v.next = nt
-			}
+			sm := newStateMachine(len(peers), addr)
+			peers[addr] = sm
+		case *stateMachine:
+			v.k = len(peers)
+			v.addr = addr
+		}
+	}
+	return &network{peers: peers, dropm: make(map[connem]float64)}
+}
+
+func (nw *network) send(msgs ...Message) {
+	for len(msgs) > 0 {
+		m := msgs[0]
+		p := nw.peers[m.To]
+		p.Step(m)
+		msgs = append(msgs[1:], nw.filter(p.Msgs())...)
+	}
+}
+
+func (nw *network) drop(from, to int, perc float64) {
+	nw.dropm[connem{from, to}] = perc
+}
+
+func (nw *network) isolate(addr int) {
+	for i := 0; i < len(nw.peers); i++ {
+		if i != addr {
+			nw.drop(addr, i, 1.0)
+			nw.drop(i, addr, 1.0)
+		}
+	}
+}
+
+func (nw *network) recover() {
+	nw.dropm = make(map[connem]float64)
+}
+
+func (nw *network) filter(msgs []Message) []Message {
+	mm := make([]Message, 0)
+	for _, m := range msgs {
+		switch m.Type {
+		case msgHup:
+			panic("unexpected msgHup")
 		default:
-			nt.ss[i] = v
-		}
-	}
-	return nt
-}
-
-// 实现stepper接口
-func (nt network) Step(m Message) {
-	if nt.tee != nil {
-		nt.tee.Step(m)
-	}
-	nt.ss[m.To].Step(m)
-}
-
-// 获取当前节点的日志
-// 如何不是stateMachine类型的节点，log为nil
-func (nt network) logs() [][]Entry {
-	ls := make([][]Entry, len(nt.ss))
-	for i, node := range nt.ss {
-		if sm, ok := node.(*nsm); ok {
-			ls[i] = sm.log.ents
-		}
-	}
-	return ls
-}
-
-type diff struct {
-	i    int
-	ents []*Entry
-}
-
-var noEntry = &Entry{}
-var nilLogEntry = &Entry{}
-
-func (d diff) String() string {
-	s := fmt.Sprintf("[%d] ", d.i)
-	for i, e := range d.ents {
-		switch e {
-		case nilLogEntry:
-			s += fmt.Sprintf("o")
-		case noEntry:
-			s += fmt.Sprintf("-")
-		case nil:
-			s += fmt.Sprintf("<nil>")
-		default:
-			s += fmt.Sprintf("<%d:%q>", e.Term, string(e.Data))
-		}
-		if i != len(d.ents)-1 {
-			s += "\t\t"
-		}
-	}
-	return s
-}
-
-func diffLogs(base []Entry, logs [][]Entry) []diff {
-	var (
-		d   []diff
-		max int
-	)
-	logs = append([][]Entry{base}, logs...)
-	for _, log := range logs {
-		if l := len(log); l > max {
-			max = l
-		}
-	}
-	ediff := func(i int) (result []*Entry) {
-		e := make([]*Entry, len(logs))
-		found := false
-		for j, log := range logs {
-			if log == nil {
-				e[j] = nilLogEntry
+			perc := nw.dropm[connem{m.From, m.To}]
+			if n := rand.Float64(); n < perc {
 				continue
 			}
-			if len(log) <= i {
-				e[j] = noEntry
-				found = true
-				continue
-			}
-			e[j] = &log[i]
-			if j > 0 {
-				switch prev := e[j-1]; {
-				case prev == nilLogEntry:
-				case prev == noEntry:
-				case !reflect.DeepEqual(prev, e[j]):
-					found = true
-				}
-			}
 		}
-		if found {
-			return e
-		}
-		return nil
+		mm = append(mm, m)
 	}
-	for i := 0; i < max; i++ {
-		if e := ediff(i); e != nil {
-			d = append(d, diff{i, e})
-		}
-	}
-	return d
+	return mm
 }
 
-type stepperFunc func(Message)
-
-func (f stepperFunc) Step(m Message) { f(m) }
-
-var nopStepper = stepperFunc(func(Message) {})
-
-type nsm struct {
-	stateMachine
-	next Interface
+type connem struct {
+	from int
+	to   int
 }
 
-func (n *nsm) Step(m Message) {
-	(&n.stateMachine).Step(m)
-	msgs := n.Msgs()
-	for _, msg := range msgs {
-		n.next.Step(msg)
-	}
-}
+type blackHole struct{}
 
-func defaultLog() *log {
-	return &log{ents: []Entry{{}}}
-}
+func (blackHole) Step(Message)    {}
+func (blackHole) Msgs() []Message { return nil }
+
+var nopStepper = &blackHole{}

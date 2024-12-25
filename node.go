@@ -1,10 +1,11 @@
 package raft
 
-type tick int
-
 type Interface interface {
 	Step(m Message)
+	Msgs() []Message
 }
+
+type tick int
 
 type Node struct {
 	election  tick
@@ -12,18 +13,15 @@ type Node struct {
 
 	elapsed tick // 用来跟踪选举超时时间的计数器
 	sm      *stateMachine
-
-	next Interface
 }
 
-func New(k, addr int, heartbeat, election tick, next Interface) *Node {
+func New(k, addr int, heartbeat, election tick) *Node {
 	if election < heartbeat*3 {
 		panic("election is least three times as heartbeat [election: %d, heartbeat: %d]")
 	}
 
 	n := &Node{
 		sm:        newStateMachine(k, addr),
-		next:      next,
 		heartbeat: heartbeat,
 		election:  election,
 	}
@@ -31,10 +29,14 @@ func New(k, addr int, heartbeat, election tick, next Interface) *Node {
 	return n
 }
 
+func (n *Node) Msgs() []Message {
+	return n.sm.Msgs()
+}
+
 func (n *Node) Step(m Message) {
+	l := len(n.sm.msgs)
 	n.sm.Step(m)
-	ms := n.sm.Msgs()
-	for _, m := range ms {
+	for _, m := range n.sm.msgs[l:] {
 		switch m.Type {
 		case msgAppResp:
 			n.elapsed = 0
@@ -43,16 +45,12 @@ func (n *Node) Step(m Message) {
 				n.elapsed = 0
 			}
 		}
-		n.next.Step(m)
 	}
 }
 
 // Propose 方法向集群提议一条数据
 func (n *Node) Propose(data []byte) {
-	m := Message{
-		Type: msgProp,
-		Data: data,
-	}
+	m := Message{Type: msgProp, Data: data}
 	n.Step(m)
 }
 
@@ -67,8 +65,8 @@ func (n *Node) Tick() {
 		timeout, msgType = n.heartbeat, msgBeat
 	}
 	if n.elapsed >= timeout {
-		n.elapsed = 0
 		n.Step(Message{Type: msgType})
+		n.elapsed = 0
 	} else {
 		n.elapsed++
 	}
