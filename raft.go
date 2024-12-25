@@ -12,6 +12,7 @@ type messageType int
 
 const (
 	msgHup      messageType = iota // 开始选举
+	msgBeat                        // 心跳
 	msgProp                        // 提议
 	msgApp                         // 附加日志
 	msgAppResp                     // 附加日志响应
@@ -22,6 +23,7 @@ const (
 // 消息类型的字符串表示
 var mtmap = [...]string{
 	msgHup:      "msgHup",
+	msgBeat:     "msgBeat",
 	msgProp:     "msgProp",
 	msgApp:      "msgApp",
 	msgAppResp:  "msgAppResp",
@@ -249,6 +251,12 @@ func (sm *stateMachine) Step(m Message) {
 			sm.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: sm.log.term(lasti)})
 		}
 		return
+	case msgBeat:
+		if sm.state != stateLeader {
+			return
+		}
+		// NOTE: fix
+		sm.bcastAppend()
 	case msgProp:
 		switch sm.lead {
 		case sm.addr:
