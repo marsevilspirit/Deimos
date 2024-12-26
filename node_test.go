@@ -82,3 +82,37 @@ func TestResetElapse(t *testing.T) {
 		}
 	}
 }
+
+func TestAdd(t *testing.T) {
+	n := New(0, []int{0}, defaultHeartbeat, defaultElection)
+
+	n.sm.becomeCandidate()
+	n.sm.becomeLeader()
+	n.Add(1)
+	n.Next()
+
+	if len(n.sm.indexs) != 2 {
+		t.Errorf("k = %d, want 2", len(n.sm.indexs))
+	}
+}
+
+func TestRemove(t *testing.T) {
+	n := New(0, []int{0}, defaultHeartbeat, defaultElection)
+
+	n.sm.becomeCandidate()
+	n.sm.becomeLeader()
+
+	n.Add(1)
+	n.Next()
+	n.Remove(0)
+	n.Step(Message{Type: msgAppResp, From: 1, Term: 1, Index: 3})
+	n.Next()
+
+	if len(n.sm.indexs) != 1 {
+		t.Errorf("k = %d, want 1", len(n.sm.indexs))
+	}
+
+	if n.sm.addr != 0 {
+		t.Errorf("addr = %d, want 0", n.sm.addr)
+	}
+}

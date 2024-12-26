@@ -1,5 +1,9 @@
 package raft
 
+import (
+	"encoding/json"
+)
+
 type Interface interface {
 	Step(m Message)
 	Msgs() []Message
@@ -7,12 +11,20 @@ type Interface interface {
 
 type tick int
 
+type ConfigCmd struct {
+	Type string
+	Addr int
+}
+
 type Node struct {
 	election  tick
 	heartbeat tick
 
-	elapsed tick // 用来跟踪选举超时时间的计数器
+	// 用来跟踪选举超时时间的计数器
+	elapsed tick
 	sm      *stateMachine
+
+	addr int
 }
 
 func New(addr int, peers []int, heartbeat, election tick) *Node {
@@ -24,9 +36,18 @@ func New(addr int, peers []int, heartbeat, election tick) *Node {
 		sm:        newStateMachine(addr, peers),
 		heartbeat: heartbeat,
 		election:  election,
+		addr:      addr,
 	}
 
 	return n
+}
+
+func (n *Node) Add(addr int) {
+	n.Step(n.confMessage(&ConfigCmd{Type: "add", Addr: addr}))
+}
+
+func (n *Node) Remove(addr int) {
+	n.Step(n.confMessage(&ConfigCmd{Type: "remove", Addr: addr}))
 }
 
 func (n *Node) Msgs() []Message {
@@ -54,9 +75,25 @@ func (n *Node) Propose(data []byte) {
 	n.Step(m)
 }
 
-// Next 方法推进提交索引并返回任何新的可提交条目
-func (n *Node) Next() []Entry {
-	return n.sm.nextEnts()
+// Next applies all available committed commands.
+func (n *Node) Next() {
+	ents := n.sm.nextEnts()
+	for i := range ents {
+		switch ents[i].Type {
+		case normal:
+			// dispatch to the application state machine
+		case config:
+			c := new(ConfigCmd)
+			err := json.Unmarshal(ents[i].Data, c)
+			if err != nil {
+				// warning
+				continue
+			}
+			n.updateConf(c)
+		default:
+			panic("unexpected entry type")
+		}
+	}
 }
 
 // Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
@@ -70,5 +107,28 @@ func (n *Node) Tick() {
 		n.elapsed = 0
 	} else {
 		n.elapsed++
+	}
+}
+
+func (n *Node) confMessage(c *ConfigCmd) Message {
+	data, err := json.Marshal(c)
+	if err != nil {
+		panic(err)
+	}
+
+	return Message{
+		Type:    msgProp,
+		Entries: []Entry{{Type: config, Data: data}},
+	}
+}
+
+func (n *Node) updateConf(c *ConfigCmd) {
+	switch c.Type {
+	case "add":
+		n.sm.Add(c.Addr)
+	case "remove":
+		n.sm.Remove(c.Addr)
+	default:
+		// warn
 	}
 }
