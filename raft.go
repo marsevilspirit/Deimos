@@ -66,7 +66,6 @@ type Message struct {
 	PrevTerm int         // 前一个日志条目的任期
 	Entries  []Entry     // 日志条目
 	Commit   int         // 已提交的日志条目索引
-	Data     []byte      // 数据
 }
 
 type stepper interface {
@@ -92,15 +91,29 @@ func (in *index) decr() {
 }
 
 type stateMachine struct {
-	addr   int            // 节点地址
-	term   int            // 任期
-	vote   int            // 投票给谁
-	log    *log           // 日志条目
-	indexs map[int]*index // 每个节点的日志同步状态
-	state  stateType      // 状态
-	votes  map[int]bool   // 收到的投票记录
-	msgs   []Message      // 消息
-	lead   int            // 领导者
+	addr int
+
+	term int
+
+	vote int
+
+	log *log
+
+	// 每个节点的日志同步状态
+	indexs map[int]*index
+
+	state stateType
+
+	// 收到的投票记录
+	votes map[int]bool
+
+	msgs []Message
+
+	// the leader addr
+	lead int
+
+	// peding reconfiguration
+	pendingConf bool
 }
 
 func newStateMachine(addr int, peer []int) *stateMachine {
@@ -260,9 +273,22 @@ func (sm *stateMachine) Step(m Message) {
 		sm.bcastAppend()
 		return
 	case msgProp:
+		if len(m.Entries) == 0 {
+			panic("unexpected length(entries) of a msgProp")
+		}
+
 		switch sm.lead {
 		case sm.addr:
-			sm.log.append(sm.log.lastIndex(), Entry{Term: sm.term, Data: m.Data})
+			e := m.Entries[0]
+			if e.Type == config {
+				if sm.pendingConf {
+					// TODO: deny
+					return
+				}
+				sm.pendingConf = true
+			}
+			e.Term = sm.term
+			sm.log.append(sm.log.lastIndex(), e)
 			sm.indexs[sm.addr].update(sm.log.lastIndex())
 			sm.maybeCommit()
 			sm.bcastAppend()

@@ -50,7 +50,7 @@ func (n *Node) Step(m Message) {
 
 // Propose 方法向集群提议一条数据
 func (n *Node) Propose(data []byte) {
-	m := Message{Type: msgProp, Data: data}
+	m := Message{Type: msgProp, Entries: []Entry{{Data: data}}}
 	n.Step(m)
 }
 
