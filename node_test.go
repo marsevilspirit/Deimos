@@ -8,7 +8,8 @@ const (
 )
 
 func TestTickMsgHub(t *testing.T) {
-	n := New(0, []int{0, 1, 2}, defaultHeartbeat, defaultElection)
+	n := New(0, defaultHeartbeat, defaultElection)
+	n.sm = newStateMachine(0, []int{0, 1, 2})
 
 	for i := 0; i < defaultElection+1; i++ {
 		n.Tick()
@@ -29,7 +30,8 @@ func TestTickMsgHub(t *testing.T) {
 
 func TestTickMsgBeat(t *testing.T) {
 	k := 3
-	n := New(0, []int{0, 1, 2}, defaultHeartbeat, defaultElection)
+	n := New(0, defaultHeartbeat, defaultElection)
+	n.sm = newStateMachine(0, []int{0, 1, 2})
 
 	n.Step(Message{Type: msgHup}) // become leader please
 	for _, m := range n.Msgs() {
@@ -68,7 +70,8 @@ func TestResetElapse(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		n := New(1, []int{0, 1, 2}, defaultHeartbeat, defaultElection)
+		n := New(0, defaultHeartbeat, defaultElection)
+		n.sm = newStateMachine(0, []int{0, 1, 2})
 		n.sm.term = 2
 
 		n.Tick()
@@ -83,24 +86,39 @@ func TestResetElapse(t *testing.T) {
 	}
 }
 
-func TestAdd(t *testing.T) {
-	n := New(0, []int{0}, defaultHeartbeat, defaultElection)
+func TestStartCluster(t *testing.T) {
+	n := New(0, defaultHeartbeat, defaultElection)
+	n.StartCluster()
 
-	n.sm.becomeCandidate()
-	n.sm.becomeLeader()
+	if len(n.sm.indexs) != 1 {
+		t.Errorf("k = %d, want 1", len(n.sm.indexs))
+	}
+	if n.sm.addr != 0 {
+		t.Errorf("addr = %d, want 0", n.sm.addr)
+	}
+	if n.sm.state != stateLeader {
+		t.Errorf("state = %d, want %d", n.sm.state, stateLeader)
+	}
+}
+
+func TestAdd(t *testing.T) {
+	n := New(0, defaultHeartbeat, defaultElection)
+	n.StartCluster()
+
 	n.Add(1)
 	n.Next()
 
 	if len(n.sm.indexs) != 2 {
 		t.Errorf("k = %d, want 2", len(n.sm.indexs))
 	}
+	if n.sm.addr != 0 {
+		t.Errorf("addr = %d, want 0", n.sm.addr)
+	}
 }
 
 func TestRemove(t *testing.T) {
-	n := New(0, []int{0}, defaultHeartbeat, defaultElection)
-
-	n.sm.becomeCandidate()
-	n.sm.becomeLeader()
+	n := New(0, defaultHeartbeat, defaultElection)
+	n.StartCluster()
 
 	n.Add(1)
 	n.Next()

@@ -27,13 +27,12 @@ type Node struct {
 	addr int
 }
 
-func New(addr int, peers []int, heartbeat, election tick) *Node {
+func New(addr int, heartbeat, election tick) *Node {
 	if election < heartbeat*3 {
 		panic("election is least three times as heartbeat [election: %d, heartbeat: %d]")
 	}
 
 	n := &Node{
-		sm:        newStateMachine(addr, peers),
 		heartbeat: heartbeat,
 		election:  election,
 		addr:      addr,
@@ -42,12 +41,30 @@ func New(addr int, peers []int, heartbeat, election tick) *Node {
 	return n
 }
 
+func (n *Node) StartCluster() {
+	if n.sm != nil {
+		panic("node is started")
+	}
+
+	n.sm = newStateMachine(n.addr, []int{n.addr})
+	n.Step(Message{Type: msgHup})
+	n.Step(n.newConfMessage(&ConfigCmd{Type: "add", Addr: n.addr}))
+	n.Next()
+}
+
+func (n *Node) Start() {
+	if n.sm != nil {
+		panic("node is started")
+	}
+	n.sm = newStateMachine(n.addr, nil)
+}
+
 func (n *Node) Add(addr int) {
-	n.Step(n.confMessage(&ConfigCmd{Type: "add", Addr: addr}))
+	n.Step(n.newConfMessage(&ConfigCmd{Type: "add", Addr: addr}))
 }
 
 func (n *Node) Remove(addr int) {
-	n.Step(n.confMessage(&ConfigCmd{Type: "remove", Addr: addr}))
+	n.Step(n.newConfMessage(&ConfigCmd{Type: "remove", Addr: addr}))
 }
 
 func (n *Node) Msgs() []Message {
@@ -76,12 +93,14 @@ func (n *Node) Propose(data []byte) {
 }
 
 // Next applies all available committed commands.
-func (n *Node) Next() {
+func (n *Node) Next() []Entry {
 	ents := n.sm.nextEnts()
+	nents := make([]Entry, 0)
 	for i := range ents {
 		switch ents[i].Type {
 		case normal:
 			// dispatch to the application state machine
+			nents = append(nents, ents[i])
 		case config:
 			c := new(ConfigCmd)
 			err := json.Unmarshal(ents[i].Data, c)
@@ -94,6 +113,7 @@ func (n *Node) Next() {
 			panic("unexpected entry type")
 		}
 	}
+	return nents
 }
 
 // Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
@@ -110,7 +130,7 @@ func (n *Node) Tick() {
 	}
 }
 
-func (n *Node) confMessage(c *ConfigCmd) Message {
+func (n *Node) newConfMessage(c *ConfigCmd) Message {
 	data, err := json.Marshal(c)
 	if err != nil {
 		panic(err)
