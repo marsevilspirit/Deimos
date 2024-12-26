@@ -116,13 +116,13 @@ type stateMachine struct {
 	pendingConf bool
 }
 
-func newStateMachine(addr int, peer []int) *stateMachine {
+func newStateMachine(addr int, peers []int) *stateMachine {
 	sm := &stateMachine{
 		addr:   addr,
 		log:    newLog(),
 		indexs: make(map[int]*index),
 	}
-	for p := range peer {
+	for p := range peers {
 		sm.indexs[p] = &index{}
 	}
 	sm.reset()
@@ -372,4 +372,14 @@ func (sm *stateMachine) Step(m Message) {
 			}
 		}
 	}
+}
+
+func (sm *stateMachine) Add(addr int) {
+	sm.indexs[addr] = &index{next: sm.log.lastIndex() + 1}
+	sm.pendingConf = false
+}
+
+func (sm *stateMachine) Remove(addr int) {
+	delete(sm.indexs, addr)
+	sm.pendingConf = false
 }
