@@ -92,23 +92,25 @@ func (in *index) decr() {
 }
 
 type stateMachine struct {
-	k      int          // 节点总数
-	addr   int          // 节点地址
-	term   int          // 任期
-	vote   int          // 投票给谁
-	log    *log         // 日志条目
-	indexs []index      // 每个节点的日志同步状态
-	state  stateType    // 状态
-	votes  map[int]bool // 收到的投票记录
-	msgs   []Message    // 消息
-	lead   int          // 领导者
+	addr   int            // 节点地址
+	term   int            // 任期
+	vote   int            // 投票给谁
+	log    *log           // 日志条目
+	indexs map[int]*index // 每个节点的日志同步状态
+	state  stateType      // 状态
+	votes  map[int]bool   // 收到的投票记录
+	msgs   []Message      // 消息
+	lead   int            // 领导者
 }
 
-func newStateMachine(k, addr int) *stateMachine {
+func newStateMachine(addr int, peer []int) *stateMachine {
 	sm := &stateMachine{
-		k:    k,
-		addr: addr,
-		log:  newLog(),
+		addr:   addr,
+		log:    newLog(),
+		indexs: make(map[int]*index),
+	}
+	for p := range peer {
+		sm.indexs[p] = &index{}
 	}
 	sm.reset()
 	return sm
@@ -159,7 +161,7 @@ func (sm *stateMachine) sendAppend(to int) {
 
 // 广播附加日志消息
 func (sm *stateMachine) bcastAppend() {
-	for i := 0; i < sm.k; i++ {
+	for i := range sm.indexs {
 		if i == sm.addr {
 			continue
 		}
@@ -189,9 +191,8 @@ func (sm *stateMachine) reset() {
 	sm.lead = none
 	sm.vote = none
 	sm.votes = make(map[int]bool)
-	sm.indexs = make([]index, sm.k)
 	for i := range sm.indexs {
-		sm.indexs[i] = index{next: sm.log.lastIndex() + 1}
+		sm.indexs[i] = &index{next: sm.log.lastIndex() + 1}
 		if i == sm.addr {
 			sm.indexs[i].match = sm.log.lastIndex()
 		}
@@ -200,7 +201,7 @@ func (sm *stateMachine) reset() {
 
 // 计算多数所需的节点数
 func (sm *stateMachine) q() int {
-	return sm.k/2 + 1
+	return len(sm.indexs)/2 + 1
 }
 
 func (sm *stateMachine) becomeFollower(term, lead int) {
@@ -244,7 +245,7 @@ func (sm *stateMachine) Step(m Message) {
 			sm.becomeLeader()
 			return
 		}
-		for i := 0; i < sm.k; i++ {
+		for i := range sm.indexs {
 			if i == sm.addr {
 				continue
 			}
@@ -257,6 +258,7 @@ func (sm *stateMachine) Step(m Message) {
 			return
 		}
 		sm.bcastAppend()
+		return
 	case msgProp:
 		switch sm.lead {
 		case sm.addr:

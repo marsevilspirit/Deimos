@@ -15,13 +15,13 @@ type Node struct {
 	sm      *stateMachine
 }
 
-func New(k, addr int, heartbeat, election tick) *Node {
+func New(addr int, peer []int, heartbeat, election tick) *Node {
 	if election < heartbeat*3 {
 		panic("election is least three times as heartbeat [election: %d, heartbeat: %d]")
 	}
 
 	n := &Node{
-		sm:        newStateMachine(k, addr),
+		sm:        newStateMachine(addr, peer),
 		heartbeat: heartbeat,
 		election:  election,
 	}
@@ -59,6 +59,7 @@ func (n *Node) Next() []Entry {
 	return n.sm.nextEnts()
 }
 
+// Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
 func (n *Node) Tick() {
 	timeout, msgType := n.election, msgHup
 	if n.sm.state == stateLeader {
