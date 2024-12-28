@@ -244,7 +244,7 @@ func (sm *stateMachine) becomeLeader() {
 	sm.state = stateLeader
 
 	for _, e := range sm.log.ents[sm.log.committed:] {
-		if e.Type == config {
+		if e.Type == configAdd || e.Type == configRemove {
 			sm.pendingConf = true
 		}
 	}
@@ -257,7 +257,6 @@ func (sm *stateMachine) Msgs() []Message {
 }
 
 func (sm *stateMachine) Step(m Message) {
-	// fmt.Printf("node %d received %+v\n", sm.addr, m)
 	switch m.Type {
 	case msgHup:
 		sm.becomeCandidate()
@@ -287,7 +286,7 @@ func (sm *stateMachine) Step(m Message) {
 		switch sm.lead {
 		case sm.addr:
 			e := m.Entries[0]
-			if e.Type == config {
+			if e.Type == configAdd || e.Type == configRemove {
 				if sm.pendingConf {
 					// TODO: deny
 					return

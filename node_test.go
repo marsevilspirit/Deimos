@@ -105,6 +105,13 @@ func TestAdd(t *testing.T) {
 	n := New(0, defaultHeartbeat, defaultElection)
 	n.StartCluster()
 
+	if len(n.sm.indexs) != 1 {
+		t.Errorf("k = %d, want 1", len(n.sm.indexs))
+	}
+	if n.sm.addr != 0 {
+		t.Errorf("addr = %d, want 0", n.sm.addr)
+	}
+
 	n.Add(1)
 	n.Next()
 
