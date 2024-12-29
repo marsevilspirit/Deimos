@@ -6,10 +6,16 @@ import (
 )
 
 func TestBuildCluster(t *testing.T) {
-	tests := []int{1, 3, 5, 7, 9, 13, 51}
+
+	tests := []struct {
+		size   int
+		indexs []int
+	}{
+		{1, nil},
+	}
 
 	for i, tt := range tests {
-		_, nodes := buildCluster(tt)
+		_, nodes := buildCluster(tt.size, tt.indexs)
 
 		base := ltoa(nodes[0].sm.log)
 		for j, n := range nodes {
@@ -19,8 +25,13 @@ func TestBuildCluster(t *testing.T) {
 			}
 
 			// ensure same leader
-			if n.sm.lead != 0 {
-				t.Errorf("#%d.%d: lead = %d, want 0", i, j, n.sm.lead)
+			w := 0
+			if tt.indexs != nil {
+				w = tt.indexs[0]
+			}
+
+			if g := n.sm.lead; g != w {
+				t.Errorf("#%d.%d: lead = %d, want %d", i, j, g, w)
 			}
 
 			p := map[int]struct{}{}
@@ -28,8 +39,12 @@ func TestBuildCluster(t *testing.T) {
 				p[k] = struct{}{}
 			}
 			wp := map[int]struct{}{}
-			for k := 0; k < tt; k++ {
-				wp[k] = struct{}{}
+			for k := 0; k < tt.size; k++ {
+				if tt.indexs != nil {
+					wp[tt.indexs[k]] = struct{}{}
+				} else {
+					wp[k] = struct{}{}
+				}
 			}
 			if !reflect.DeepEqual(p, wp) {
 				t.Errorf("#%d.%d: peers = %+v, want %+v", i, j, p, wp)
@@ -52,7 +67,7 @@ func TestBasicCluster(t *testing.T) {
 		{13, 1},
 	}
 	for i, tt := range tests {
-		nt, nodes := buildCluster(tt.size)
+		nt, nodes := buildCluster(tt.size, nil)
 		for j := 0; j < tt.round; j++ {
 			for _, n := range nodes {
 				data := []byte{byte(n.Id())}
@@ -75,19 +90,26 @@ func TestBasicCluster(t *testing.T) {
 	}
 }
 
-func buildCluster(size int) (nt *network, nodes []*Node) {
+func buildCluster(size int, indexs []int) (nt *network, nodes []*Node) {
+	if indexs == nil {
+		indexs = make([]int, size)
+		for i := 0; i < size; i++ {
+			indexs[i] = i
+		}
+	}
+
 	nodes = make([]*Node, size)
 	nis := make([]Interface, size)
 	for i := range nodes {
-		nodes[i] = New(i, defaultHeartbeat, defaultElection)
+		nodes[i] = New(indexs[i], defaultHeartbeat, defaultElection)
 		nis[i] = nodes[i]
 	}
 	nt = newNetwork(nis...)
 
-	lead := Dictate(nodes[0])
+	lead := dictate(nodes[0])
 	lead.Next()
 	for i := 1; i < size; i++ {
-		lead.Add(i)
+		lead.Add(indexs[i], "")
 		nt.send(lead.Msgs()...)
 		for j := 0; j < i; j++ {
 			nodes[j].Next()

@@ -128,19 +128,11 @@ func newStateMachine(id int, peers []int) *stateMachine {
 		log:    newLog(),
 		indexs: make(map[int]*index),
 	}
-	for p := range peers {
+	for _, p := range peers {
 		sm.indexs[p] = &index{}
 	}
-	sm.reset()
+	sm.reset(0)
 	return sm
-}
-
-// 判断是否可以处理消息
-func (sm *stateMachine) canStep(m Message) bool {
-	if m.Type == msgProp {
-		return sm.lead != none
-	}
-	return true
 }
 
 // 记录投票结果并计算票数
@@ -191,9 +183,10 @@ func (sm *stateMachine) bcastAppend() {
 // 判断是否可以提交日志
 // 同时更新commit
 func (sm *stateMachine) maybeCommit() bool {
-	matchIndexs := make([]int, len(sm.indexs))
+	// 不需要0初始化，所以使用0
+	matchIndexs := make([]int, 0, len(sm.indexs))
 	for i := range sm.indexs {
-		matchIndexs[i] = sm.indexs[i].match
+		matchIndexs = append(matchIndexs, sm.indexs[i].match)
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(matchIndexs)))
 	matchIndex := matchIndexs[sm.q()-1]
@@ -206,7 +199,8 @@ func (sm *stateMachine) nextEnts() (ents []Entry) {
 	return sm.log.nextEnts()
 }
 
-func (sm *stateMachine) reset() {
+func (sm *stateMachine) reset(term int) {
+	sm.term = term
 	sm.lead = none
 	sm.vote = none
 	sm.votes = make(map[int]bool)
@@ -224,8 +218,7 @@ func (sm *stateMachine) q() int {
 }
 
 func (sm *stateMachine) becomeFollower(term, lead int) {
-	sm.reset()
-	sm.term = term
+	sm.reset(term)
 	sm.lead = lead
 	sm.state = stateFollower
 	sm.pendingConf = false
@@ -235,8 +228,7 @@ func (sm *stateMachine) becomeCandidate() {
 	if sm.state == stateLeader {
 		panic("invalid transition [leader -> candidate]")
 	}
-	sm.reset()
-	sm.term++
+	sm.reset(sm.term + 1)
 	sm.vote = sm.id
 	sm.state = stateCandidate
 }
@@ -245,7 +237,7 @@ func (sm *stateMachine) becomeLeader() {
 	if sm.state == stateFollower {
 		panic("invalid transition [follower -> leader]")
 	}
-	sm.reset()
+	sm.reset(sm.term)
 	sm.lead = sm.id
 	sm.state = stateLeader
 
@@ -263,6 +255,7 @@ func (sm *stateMachine) Msgs() []Message {
 }
 
 func (sm *stateMachine) Step(m Message) (ok bool) {
+	// fmt.Printf("node %d receive message %s from %d\n", sm.id, m.Type, m.From)
 	if m.Type == msgHup {
 		sm.becomeCandidate()
 		if sm.q() == sm.poll(sm.id, true) {

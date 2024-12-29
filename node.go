@@ -13,8 +13,8 @@ type Interface interface {
 type tick int
 
 type config struct {
-	NodeId  int
-	Address int
+	NodeId int
+	Addr   string
 }
 
 type Node struct {
@@ -40,17 +40,11 @@ func New(id int, heartbeat, election tick) *Node {
 	return n
 }
 
-func Dictate(n *Node) *Node {
-	n.Step(Message{Type: msgHup})
-	n.Add(n.Id())
-	return n
-}
-
 func (n *Node) Id() int { return n.sm.id }
 
 func (n *Node) HasLeader() bool { return n.sm.lead != none }
 
-func (n *Node) Add(id int) { n.updateConf(AddNode, &config{NodeId: id}) }
+func (n *Node) Add(id int, addr string) { n.updateConf(AddNode, &config{NodeId: id, Addr: addr}) }
 
 func (n *Node) Remove(id int) { n.updateConf(RemoveNode, &config{NodeId: id}) }
 

@@ -87,7 +87,7 @@ func TestResetElapse(t *testing.T) {
 }
 
 func TestStartCluster(t *testing.T) {
-	n := Dictate(New(0, defaultHeartbeat, defaultElection))
+	n := dictate(New(0, defaultHeartbeat, defaultElection))
 	n.Next()
 
 	if len(n.sm.indexs) != 1 {
@@ -102,7 +102,7 @@ func TestStartCluster(t *testing.T) {
 }
 
 func TestAdd(t *testing.T) {
-	n := Dictate(New(0, defaultHeartbeat, defaultElection))
+	n := dictate(New(0, defaultHeartbeat, defaultElection))
 	n.Next()
 
 	if len(n.sm.indexs) != 1 {
@@ -112,7 +112,7 @@ func TestAdd(t *testing.T) {
 		t.Errorf("id = %d, want 0", n.sm.id)
 	}
 
-	n.Add(1)
+	n.Add(1, "")
 	n.Next()
 
 	if len(n.sm.indexs) != 2 {
@@ -124,10 +124,10 @@ func TestAdd(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	n := Dictate(New(0, defaultHeartbeat, defaultElection))
+	n := dictate(New(0, defaultHeartbeat, defaultElection))
 	n.Next()
 
-	n.Add(1)
+	n.Add(1, "")
 	n.Next()
 	n.Remove(0)
 	n.Step(Message{Type: msgAppResp, From: 1, Term: 1, Index: 3})
@@ -140,4 +140,10 @@ func TestRemove(t *testing.T) {
 	if n.sm.id != 0 {
 		t.Errorf("id = %d, want 0", n.sm.id)
 	}
+}
+
+func dictate(n *Node) *Node {
+	n.Step(Message{Type: msgHup})
+	n.Add(n.Id(), "")
+	return n
 }
