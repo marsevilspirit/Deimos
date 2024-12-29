@@ -11,6 +11,9 @@ func TestTickMsgHup(t *testing.T) {
 	n := New(0, defaultHeartbeat, defaultElection)
 	n.sm = newStateMachine(0, []int{0, 1, 2})
 
+	// simulate to patch the join log
+	n.Step(Message{Type: msgApp, Commit: 1, Entries: []Entry{{}}})
+
 	for i := 0; i < defaultElection+1; i++ {
 		n.Tick()
 	}
@@ -30,14 +33,18 @@ func TestTickMsgHup(t *testing.T) {
 
 func TestTickMsgBeat(t *testing.T) {
 	k := 3
-	n := New(0, defaultHeartbeat, defaultElection)
-	n.sm = newStateMachine(0, []int{0, 1, 2})
 
-	n.Step(Message{Type: msgHup}) // become leader please
-	for _, m := range n.Msgs() {
-		if m.Type == msgVote {
-			n.Step(Message{From: 1, Type: msgVoteResp, Index: 1, Term: 1})
+	n := dictate(New(0, defaultHeartbeat, defaultElection))
+	n.Next()
+	for i := 1; i < k; i++ {
+		n.Add(i, "")
+		for _, m := range n.Msgs() {
+			if m.Type == msgApp {
+				n.Step(Message{From: m.To, Type: msgAppResp, Index: i + 1})
+			}
 		}
+		n.Msgs()
+		n.Next()
 	}
 
 	for i := 0; i < defaultHeartbeat+1; i++ {
@@ -50,9 +57,8 @@ func TestTickMsgBeat(t *testing.T) {
 			called++
 		}
 	}
-	// becomeLeader -> k-1 append
 	// msgBeat -> k-1 append
-	w := (k - 1) * 2
+	w := k - 1
 	if called != w {
 		t.Errorf("called = %v, want %v", called, w)
 	}
@@ -73,6 +79,7 @@ func TestResetElapse(t *testing.T) {
 		n := New(0, defaultHeartbeat, defaultElection)
 		n.sm = newStateMachine(0, []int{0, 1, 2})
 		n.sm.term = 2
+		n.sm.log.committed = 1
 
 		n.Tick()
 		if n.elapsed != 1 {

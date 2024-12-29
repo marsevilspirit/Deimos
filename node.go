@@ -104,6 +104,10 @@ func (n *Node) Next() []Entry {
 
 // Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
 func (n *Node) Tick() {
+	if !n.sm.promotable() {
+		return
+	}
+
 	timeout, msgType := n.election, msgHup
 	if n.sm.state == stateLeader {
 		timeout, msgType = n.heartbeat, msgBeat
