@@ -385,7 +385,7 @@ func TestCommit(t *testing.T) {
 	}
 }
 
-func TestVote(t *testing.T) {
+func TestRecvMsgVote(t *testing.T) {
 	tests := []struct {
 		state   stateType
 		i, term int
@@ -420,7 +420,6 @@ func TestVote(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		called := false
 		sm := &stateMachine{
 			state: tt.state,
 			vote:  tt.voteFor,
@@ -429,14 +428,14 @@ func TestVote(t *testing.T) {
 
 		sm.Step(Message{Type: msgVote, From: 1, Index: tt.i, LogTerm: tt.term})
 
-		for _, m := range sm.Msgs() {
-			called = true
-			if m.Index != tt.w {
-				t.Errorf("#%d, m.Index = %d, want %d", i, m.Index, tt.w)
-			}
+		msgs := sm.Msgs()
+		if len(msgs) != 1 {
+			t.Errorf("#%d: msg count = %d, want %d", i, len(msgs), 1)
+			continue
 		}
-		if !called {
-			t.Fatalf("#%d: not called", i)
+		g := msgs[0].Index
+		if g != tt.w {
+			t.Errorf("#%d: m.Index = %d, want %d", i, g, tt.w)
 		}
 	}
 }

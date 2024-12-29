@@ -12,6 +12,15 @@ func TestBuildCluster(t *testing.T) {
 		indexs []int
 	}{
 		{1, nil},
+		{3, nil},
+		{5, nil},
+		{7, nil},
+		{9, nil},
+		{13, nil},
+		{51, nil},
+		{1, []int{1}},
+		{3, []int{1, 3, 5}},
+		{5, []int{1, 4, 7, 10, 13}},
 	}
 
 	for i, tt := range tests {
