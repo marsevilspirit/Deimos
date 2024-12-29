@@ -55,8 +55,8 @@ func TestBasicCluster(t *testing.T) {
 		nt, nodes := buildCluster(tt.size)
 		for j := 0; j < tt.round; j++ {
 			for _, n := range nodes {
-				data := []byte{byte(n.addr)}
-				nt.send(Message{Type: msgProp, To: n.addr, Entries: []Entry{{Data: data}}})
+				data := []byte{byte(n.Id())}
+				nt.send(Message{Type: msgProp, To: n.Id(), Entries: []Entry{{Data: data}}})
 				base := nodes[0].Next()
 				if len(base) != 1 {
 					t.Fatalf("#%d: len(ents) = %d, want 1", i, len(base))
@@ -84,10 +84,11 @@ func buildCluster(size int) (nt *network, nodes []*Node) {
 	}
 	nt = newNetwork(nis...)
 
-	nodes[0].StartCluster()
+	lead := Dictate(nodes[0])
+	lead.Next()
 	for i := 1; i < size; i++ {
-		nt.send(nodes[0].newConfMessage(configAdd, &Config{NodeId: i}))
-		nodes[i].Start()
+		lead.Add(i)
+		nt.send(lead.Msgs()...)
 		for j := 0; j < i; j++ {
 			nodes[j].Next()
 		}

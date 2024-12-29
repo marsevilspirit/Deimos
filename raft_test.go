@@ -142,7 +142,7 @@ func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 
 // 测试在分布式系统中两个候选者节点同时发起选举的情况
 func TestDualingCandidates(t *testing.T) {
-	a := newStateMachine(0, nil) // k, addr are set later
+	a := newStateMachine(0, nil) // k, id are set later
 	c := newStateMachine(0, nil)
 
 	tt := newNetwork(a, nil, c)
@@ -641,13 +641,13 @@ func newNetwork(peers ...Interface) *network {
 		peerAddrs[i] = i
 	}
 
-	for addr, p := range peers {
+	for id, p := range peers {
 		switch v := p.(type) {
 		case nil:
-			sm := newStateMachine(addr, peerAddrs)
-			peers[addr] = sm
+			sm := newStateMachine(id, peerAddrs)
+			peers[id] = sm
 		case *stateMachine:
-			v.addr = addr
+			v.id = id
 			v.indexs = make(map[int]*index)
 			for i := range peerAddrs {
 				v.indexs[i] = &index{}
@@ -676,11 +676,11 @@ func (nw *network) cut(from, to int) {
 	nw.drop(to, from, 1.0)
 }
 
-func (nw *network) isolate(addr int) {
+func (nw *network) isolate(id int) {
 	for i := 0; i < len(nw.peers); i++ {
-		if i != addr {
-			nw.drop(addr, i, 1.0)
-			nw.drop(i, addr, 1.0)
+		if i != id {
+			nw.drop(id, i, 1.0)
+			nw.drop(i, id, 1.0)
 		}
 	}
 }

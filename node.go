@@ -12,24 +12,21 @@ type Interface interface {
 
 type tick int
 
-type Config struct {
-	NodeId    int
-	ClusterId int
-	Address   int
+type config struct {
+	NodeId  int
+	Address int
 }
 
 type Node struct {
-	election  tick
-	heartbeat tick
+	sm *stateMachine
 
 	// 用来跟踪选举超时时间的计数器
-	elapsed tick
-	sm      *stateMachine
-
-	addr int
+	elapsed   tick
+	election  tick
+	heartbeat tick
 }
 
-func New(addr int, heartbeat, election tick) *Node {
+func New(id int, heartbeat, election tick) *Node {
 	if election < heartbeat*3 {
 		panic("election is least three times as heartbeat [election: %d, heartbeat: %d]")
 	}
@@ -37,41 +34,25 @@ func New(addr int, heartbeat, election tick) *Node {
 	n := &Node{
 		heartbeat: heartbeat,
 		election:  election,
-		addr:      addr,
+		sm:        newStateMachine(id, []int{id}),
 	}
 
 	return n
 }
 
-func (n *Node) StartCluster() {
-	if n.sm != nil {
-		panic("node is started")
-	}
-
-	n.sm = newStateMachine(n.addr, []int{n.addr})
+func Dictate(n *Node) *Node {
 	n.Step(Message{Type: msgHup})
-	n.Step(n.newConfMessage(configAdd, &Config{NodeId: n.addr}))
-	n.Next()
+	n.Add(n.Id())
+	return n
 }
 
-func (n *Node) Start() {
-	if n.sm != nil {
-		panic("node is started")
-	}
-	n.sm = newStateMachine(n.addr, nil)
-}
+func (n *Node) Id() int { return n.sm.id }
 
-func (n *Node) Add(addr int) {
-	n.Step(n.newConfMessage(configAdd, &Config{NodeId: addr}))
-}
+func (n *Node) Add(id int) { n.updateConf(configAdd, &config{NodeId: id}) }
 
-func (n *Node) Remove(addr int) {
-	n.Step(n.newConfMessage(configRemove, &Config{NodeId: addr}))
-}
+func (n *Node) Remove(id int) { n.updateConf(configRemove, &config{NodeId: id}) }
 
-func (n *Node) Msgs() []Message {
-	return n.sm.Msgs()
-}
+func (n *Node) Msgs() []Message { return n.sm.Msgs() }
 
 func (n *Node) Step(m Message) {
 	l := len(n.sm.msgs)
@@ -89,29 +70,25 @@ func (n *Node) Step(m Message) {
 }
 
 // Propose 方法向集群提议一条数据
-func (n *Node) Propose(data []byte) {
-	m := Message{Type: msgProp, Entries: []Entry{{Data: data}}}
-	n.Step(m)
+func (n *Node) Propose(t int, data []byte) {
+	n.Step(Message{Type: msgProp, Entries: []Entry{{Type: t, Data: data}}})
 }
 
-// Next applies all available committed commands.
+// Next return all available entries.
 func (n *Node) Next() []Entry {
 	ents := n.sm.nextEnts()
-	nents := make([]Entry, 0)
 	for i := range ents {
 		switch ents[i].Type {
 		case normal:
-			// dispatch to the application state machine
-			nents = append(nents, ents[i])
 		case configAdd:
-			c := new(Config)
+			c := new(config)
 			if err := json.Unmarshal(ents[i].Data, c); err != nil {
 				golog.Println(err)
 				continue
 			}
 			n.sm.Add(c.NodeId)
 		case configRemove:
-			c := new(Config)
+			c := new(config)
 			if err := json.Unmarshal(ents[i].Data, c); err != nil {
 				golog.Println(err)
 				continue
@@ -121,7 +98,7 @@ func (n *Node) Next() []Entry {
 			panic("unexpected entry type")
 		}
 	}
-	return nents
+	return ents
 }
 
 // Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
@@ -138,15 +115,11 @@ func (n *Node) Tick() {
 	}
 }
 
-func (n *Node) newConfMessage(t int, c *Config) Message {
+func (n *Node) updateConf(t int, c *config) {
 	data, err := json.Marshal(c)
 	if err != nil {
 		panic(err)
 	}
 
-	return Message{
-		Type:    msgProp,
-		To:      n.addr,
-		Entries: []Entry{{Type: t, Data: data}},
-	}
+	n.Propose(t, data)
 }

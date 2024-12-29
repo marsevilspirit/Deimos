@@ -91,7 +91,7 @@ func (in *index) decr() {
 }
 
 type stateMachine struct {
-	addr int
+	id int
 
 	term int
 
@@ -109,16 +109,16 @@ type stateMachine struct {
 
 	msgs []Message
 
-	// the leader addr
+	// the leader id
 	lead int
 
 	// peding reconfiguration
 	pendingConf bool
 }
 
-func newStateMachine(addr int, peers []int) *stateMachine {
+func newStateMachine(id int, peers []int) *stateMachine {
 	sm := &stateMachine{
-		addr:   addr,
+		id:     id,
 		log:    newLog(),
 		indexs: make(map[int]*index),
 	}
@@ -138,9 +138,9 @@ func (sm *stateMachine) canStep(m Message) bool {
 }
 
 // 记录投票结果并计算票数
-func (sm *stateMachine) poll(addr int, v bool) (granted int) {
-	if _, ok := sm.votes[addr]; !ok {
-		sm.votes[addr] = v
+func (sm *stateMachine) poll(id int, v bool) (granted int) {
+	if _, ok := sm.votes[id]; !ok {
+		sm.votes[id] = v
 	}
 
 	for _, vv := range sm.votes {
@@ -154,7 +154,7 @@ func (sm *stateMachine) poll(addr int, v bool) (granted int) {
 
 // 发送消息
 func (sm *stateMachine) send(m Message) {
-	m.From = sm.addr
+	m.From = sm.id
 	m.Term = sm.term
 	sm.msgs = append(sm.msgs, m)
 }
@@ -175,7 +175,7 @@ func (sm *stateMachine) sendAppend(to int) {
 // 广播附加日志消息
 func (sm *stateMachine) bcastAppend() {
 	for i := range sm.indexs {
-		if i == sm.addr {
+		if i == sm.id {
 			continue
 		}
 		sm.sendAppend(i)
@@ -206,7 +206,7 @@ func (sm *stateMachine) reset() {
 	sm.votes = make(map[int]bool)
 	for i := range sm.indexs {
 		sm.indexs[i] = &index{next: sm.log.lastIndex() + 1}
-		if i == sm.addr {
+		if i == sm.id {
 			sm.indexs[i].match = sm.log.lastIndex()
 		}
 	}
@@ -231,7 +231,7 @@ func (sm *stateMachine) becomeCandidate() {
 	}
 	sm.reset()
 	sm.term++
-	sm.vote = sm.addr
+	sm.vote = sm.id
 	sm.state = stateCandidate
 }
 
@@ -240,7 +240,7 @@ func (sm *stateMachine) becomeLeader() {
 		panic("invalid transition [follower -> leader]")
 	}
 	sm.reset()
-	sm.lead = sm.addr
+	sm.lead = sm.id
 	sm.state = stateLeader
 
 	for _, e := range sm.log.ents[sm.log.committed:] {
@@ -260,12 +260,12 @@ func (sm *stateMachine) Step(m Message) {
 	switch m.Type {
 	case msgHup:
 		sm.becomeCandidate()
-		if sm.q() == sm.poll(sm.addr, true) {
+		if sm.q() == sm.poll(sm.id, true) {
 			sm.becomeLeader()
 			return
 		}
 		for i := range sm.indexs {
-			if i == sm.addr {
+			if i == sm.id {
 				continue
 			}
 			lasti := sm.log.lastIndex()
@@ -284,7 +284,7 @@ func (sm *stateMachine) Step(m Message) {
 		}
 
 		switch sm.lead {
-		case sm.addr:
+		case sm.id:
 			e := m.Entries[0]
 			if e.Type == configAdd || e.Type == configRemove {
 				if sm.pendingConf {
@@ -295,7 +295,7 @@ func (sm *stateMachine) Step(m Message) {
 			}
 			e.Term = sm.term
 			sm.log.append(sm.log.lastIndex(), e)
-			sm.indexs[sm.addr].update(sm.log.lastIndex())
+			sm.indexs[sm.id].update(sm.log.lastIndex())
 			sm.maybeCommit()
 			sm.bcastAppend()
 		case none:
@@ -373,12 +373,12 @@ func (sm *stateMachine) Step(m Message) {
 	}
 }
 
-func (sm *stateMachine) Add(addr int) {
-	sm.indexs[addr] = &index{next: sm.log.lastIndex() + 1}
+func (sm *stateMachine) Add(id int) {
+	sm.indexs[id] = &index{next: sm.log.lastIndex() + 1}
 	sm.pendingConf = false
 }
 
-func (sm *stateMachine) Remove(addr int) {
-	delete(sm.indexs, addr)
+func (sm *stateMachine) Remove(id int) {
+	delete(sm.indexs, id)
 	sm.pendingConf = false
 }
