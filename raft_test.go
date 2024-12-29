@@ -497,20 +497,43 @@ func TestConf(t *testing.T) {
 	sm := newStateMachine(0, []int{0})
 	sm.becomeCandidate()
 	sm.becomeLeader()
-	sm.Step(Message{Type: msgProp, Entries: []Entry{{Type: configAdd}}})
+	sm.Step(Message{Type: msgProp, Entries: []Entry{{Type: AddNode}}})
 	if sm.log.lastIndex() != 1 {
 		t.Errorf("lastindex = %d, want %d", sm.log.lastIndex(), 1)
 	}
 	if !sm.pendingConf {
 		t.Errorf("pendingConf = %v, want %v", sm.pendingConf, true)
 	}
-	if sm.log.ents[1].Type != configAdd {
-		t.Errorf("type = %d, want %d", sm.log.ents[1].Type, configAdd)
+	if sm.log.ents[1].Type != AddNode {
+		t.Errorf("type = %d, want %d", sm.log.ents[1].Type, AddNode)
 	}
 	// deny the second configuration change request if there is a pending one
-	sm.Step(Message{Type: msgProp, Entries: []Entry{{Type: configAdd}}})
+	sm.Step(Message{Type: msgProp, Entries: []Entry{{Type: AddNode}}})
 	if sm.log.lastIndex() != 1 {
 		t.Errorf("lastindex = %d, want %d", sm.log.lastIndex(), 1)
+	}
+}
+
+func TestConfChangeLeader(t *testing.T) {
+	tests := []struct {
+		et       int
+		wPending bool
+	}{
+		{Normal, false},
+		{AddNode, true},
+		{RemoveNode, true},
+	}
+
+	for i, tt := range tests {
+		sm := newStateMachine(0, []int{0})
+		sm.log = &log{ents: []Entry{{}, {Type: tt.et}}}
+
+		sm.becomeCandidate()
+		sm.becomeLeader()
+
+		if sm.pendingConf != tt.wPending {
+			t.Errorf("#%d: pendingConf = %v, want %v", i, sm.pendingConf, tt.wPending)
+		}
 	}
 }
 
@@ -713,7 +736,7 @@ type connem struct {
 
 type blackHole struct{}
 
-func (blackHole) Step(Message)    {}
-func (blackHole) Msgs() []Message { return nil }
+func (blackHole) Step(Message) bool { return true }
+func (blackHole) Msgs() []Message   { return nil }
 
 var nopStepper = &blackHole{}

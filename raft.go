@@ -244,7 +244,7 @@ func (sm *stateMachine) becomeLeader() {
 	sm.state = stateLeader
 
 	for _, e := range sm.log.ents[sm.log.committed:] {
-		if e.Type == configAdd || e.Type == configRemove {
+		if e.Type == AddNode || e.Type == RemoveNode {
 			sm.pendingConf = true
 		}
 	}
@@ -256,13 +256,13 @@ func (sm *stateMachine) Msgs() []Message {
 	return msgs
 }
 
-func (sm *stateMachine) Step(m Message) {
+func (sm *stateMachine) Step(m Message) (ok bool) {
 	switch m.Type {
 	case msgHup:
 		sm.becomeCandidate()
 		if sm.q() == sm.poll(sm.id, true) {
 			sm.becomeLeader()
-			return
+			return true
 		}
 		for i := range sm.indexs {
 			if i == sm.id {
@@ -271,10 +271,10 @@ func (sm *stateMachine) Step(m Message) {
 			lasti := sm.log.lastIndex()
 			sm.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: sm.log.term(lasti)})
 		}
-		return
+		return true
 	case msgBeat:
 		if sm.state != stateLeader {
-			return
+			return true
 		}
 		sm.bcastAppend()
 		return
@@ -286,10 +286,10 @@ func (sm *stateMachine) Step(m Message) {
 		switch sm.lead {
 		case sm.id:
 			e := m.Entries[0]
-			if e.Type == configAdd || e.Type == configRemove {
+			if e.Type == AddNode || e.Type == RemoveNode {
 				if sm.pendingConf {
 					// TODO: deny
-					return
+					return false
 				}
 				sm.pendingConf = true
 			}
@@ -300,18 +300,21 @@ func (sm *stateMachine) Step(m Message) {
 			sm.bcastAppend()
 		case none:
 			panic("msgProp given without leader")
+			// msgProp given without leader
+			// return false
 		default:
 			m.To = sm.lead
 			sm.send(m)
 		}
-		return
+		return true
 	}
 
 	switch {
 	case m.Term > sm.term:
 		sm.becomeFollower(m.Term, m.From)
 	case m.Term < sm.term:
-		return
+		// ignore
+		return true
 	}
 
 	// 以下的的处理逻辑都是在当前任期下进行的
@@ -371,14 +374,15 @@ func (sm *stateMachine) Step(m Message) {
 			}
 		}
 	}
+	return true
 }
 
-func (sm *stateMachine) Add(id int) {
+func (sm *stateMachine) addNode(id int) {
 	sm.indexs[id] = &index{next: sm.log.lastIndex() + 1}
 	sm.pendingConf = false
 }
 
-func (sm *stateMachine) Remove(id int) {
+func (sm *stateMachine) removeNode(id int) {
 	delete(sm.indexs, id)
 	sm.pendingConf = false
 }

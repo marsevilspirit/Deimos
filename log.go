@@ -1,16 +1,20 @@
 package raft
 
 const (
-	normal int = iota
+	Normal int = iota
 
-	configAdd
-	configRemove
+	AddNode
+	RemoveNode
 )
 
 type Entry struct {
 	Type int
 	Term int
 	Data []byte
+}
+
+func (e *Entry) isConfig() bool {
+	return e.Type == AddNode || e.Type == RemoveNode
 }
 
 type log struct {
