@@ -12,7 +12,7 @@ type Interface interface {
 
 type tick int
 
-type config struct {
+type Config struct {
 	NodeId int
 	Addr   string
 }
@@ -44,9 +44,11 @@ func (n *Node) Id() int { return n.sm.id }
 
 func (n *Node) HasLeader() bool { return n.sm.lead != none }
 
-func (n *Node) Add(id int, addr string) { n.updateConf(AddNode, &config{NodeId: id, Addr: addr}) }
+func (n *Node) Campaign() { n.Step(Message{Type: msgHup}) }
 
-func (n *Node) Remove(id int) { n.updateConf(RemoveNode, &config{NodeId: id}) }
+func (n *Node) Add(id int, addr string) { n.updateConf(AddNode, &Config{NodeId: id, Addr: addr}) }
+
+func (n *Node) Remove(id int) { n.updateConf(RemoveNode, &Config{NodeId: id}) }
 
 func (n *Node) Msgs() []Message { return n.sm.Msgs() }
 
@@ -82,14 +84,14 @@ func (n *Node) Next() []Entry {
 		switch ents[i].Type {
 		case Normal:
 		case AddNode:
-			c := new(config)
+			c := new(Config)
 			if err := json.Unmarshal(ents[i].Data, c); err != nil {
 				golog.Println(err)
 				continue
 			}
 			n.sm.addNode(c.NodeId)
 		case RemoveNode:
-			c := new(config)
+			c := new(Config)
 			if err := json.Unmarshal(ents[i].Data, c); err != nil {
 				golog.Println(err)
 				continue
@@ -120,7 +122,7 @@ func (n *Node) Tick() {
 	}
 }
 
-func (n *Node) updateConf(t int, c *config) {
+func (n *Node) updateConf(t int, c *Config) {
 	data, err := json.Marshal(c)
 	if err != nil {
 		panic(err)
