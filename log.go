@@ -1,10 +1,19 @@
 package raft
 
+import "fmt"
+
 const (
 	Normal int = iota
 
 	AddNode
 	RemoveNode
+)
+
+const (
+	// when the size of the raft log becomes
+	// larger than the compact threshold,
+	// the log will be truncated by a compaction.
+	defaultCompactThreshold = 10000
 )
 
 type Entry struct {
@@ -22,13 +31,18 @@ type log struct {
 	committed int
 	applied   int
 	offset    int
+
+	// want a compact after the number of log entries
+	// exceeds the compact threshold
+	compactThreshold int
 }
 
 func newLog() *log {
 	return &log{
-		ents:      make([]Entry, 1),
-		committed: 0,
-		applied:   0,
+		ents:             make([]Entry, 1),
+		committed:        0,
+		applied:          0,
+		compactThreshold: defaultCompactThreshold,
 	}
 }
 
@@ -37,7 +51,7 @@ func (l *log) lastIndex() int {
 }
 
 func (l *log) append(after int, ents ...Entry) int {
-	l.ents = append(l.slice(0, after+1), ents...)
+	l.ents = append(l.slice(l.offset, after+1), ents...)
 	return l.lastIndex()
 }
 
@@ -89,6 +103,20 @@ func (l *log) nextEnts() (ents []Entry) {
 		l.applied = l.committed
 	}
 	return ents
+}
+
+// return the number of emtries after the compaction
+func (l *log) compact(i int) int {
+	if l.isOutOfBounds(i) {
+		panic(fmt.Sprintf("compact %d out of bounds [%d:%d]", i, l.offset, l.lastIndex()))
+	}
+	l.ents = l.slice(i, l.lastIndex()+1)
+	l.offset = i
+	return len(l.ents)
+}
+
+func (l *log) shouldCompact() bool {
+	return (l.committed - l.offset) > l.compactThreshold
 }
 
 func (l *log) at(i int) *Entry {
