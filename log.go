@@ -21,6 +21,7 @@ type log struct {
 	ents      []Entry
 	committed int
 	applied   int
+	offset    int
 }
 
 func newLog() *log {
@@ -32,33 +33,30 @@ func newLog() *log {
 }
 
 func (l *log) lastIndex() int {
-	return len(l.ents) - 1
+	return len(l.ents) - 1 + l.offset
 }
 
 func (l *log) append(after int, ents ...Entry) int {
-	l.ents = append(l.ents[:after+1], ents...)
+	l.ents = append(l.slice(0, after+1), ents...)
 	return l.lastIndex()
 }
 
 func (l *log) term(i int) int {
-	if i > l.lastIndex() {
-		return -1
+	if e := l.at(i); e != nil {
+		return e.Term
 	}
-	return l.ents[i].Term
+	return -1
 }
 
 func (l *log) entries(i int) []Entry {
-	if i > l.lastIndex() {
-		return nil
-	}
-	return l.ents[i:]
+	return l.slice(i, l.lastIndex()+1)
 }
 
 func (l *log) matchTerm(index, term int) bool {
-	if index > l.lastIndex() {
-		return false
+	if e := l.at(index); e != nil {
+		return e.Term == term
 	}
-	return l.term(index) == term
+	return false
 }
 
 func (l *log) maybeAppend(index, logTerm int, commit int, ents ...Entry) bool {
@@ -71,7 +69,7 @@ func (l *log) maybeAppend(index, logTerm int, commit int, ents ...Entry) bool {
 }
 
 func (l *log) isUpToDate(index, term int) bool {
-	entry := l.ents[l.lastIndex()]
+	entry := l.at(l.lastIndex())
 	return term > entry.Term || (term == entry.Term && index >= l.lastIndex())
 }
 
@@ -87,8 +85,33 @@ func (l *log) maybeCommit(maxIndex, term int) bool {
 // all the returned entries will be marked as applied.
 func (l *log) nextEnts() (ents []Entry) {
 	if l.committed > l.applied {
-		ents = l.ents[l.applied+1 : l.committed+1]
+		ents = l.slice(l.applied+1, l.committed+1)
 		l.applied = l.committed
 	}
 	return ents
+}
+
+func (l *log) at(i int) *Entry {
+	if l.isOutOfBounds(i) {
+		return nil
+	}
+	return &l.ents[i-l.offset]
+}
+
+// lo(low) is the index of the first possible entry.
+// hi(hight) is the index of the last possible entry + 1.
+// slice returns a slice of log entries from lo through hi-1, inclusive.
+func (l *log) slice(lo, hi int) []Entry {
+	if lo >= hi {
+		return nil
+	}
+	if l.isOutOfBounds(lo) || l.isOutOfBounds(hi-1) {
+		return nil
+	}
+	return l.ents[lo-l.offset : hi-l.offset]
+}
+
+// isOutOfBounds returns if the given index is out of the bound.
+func (l *log) isOutOfBounds(index int) bool {
+	return index < l.offset || index > l.lastIndex()
 }
