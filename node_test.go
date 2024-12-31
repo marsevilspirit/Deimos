@@ -37,7 +37,7 @@ func TestTickMsgBeat(t *testing.T) {
 	n := dictate(New(0, defaultHeartbeat, defaultElection))
 	n.Next()
 	for i := 1; i < k; i++ {
-		n.Add(int64(i), "")
+		n.Add(int64(i), "", nil)
 		for _, m := range n.Msgs() {
 			if m.Type == msgApp {
 				n.Step(Message{From: m.To, Type: msgAppResp, Index: m.Index + len(m.Entries)})
@@ -119,7 +119,7 @@ func TestAdd(t *testing.T) {
 		t.Errorf("id = %d, want 0", n.sm.id)
 	}
 
-	n.Add(1, "")
+	n.Add(1, "", nil)
 	n.Next()
 
 	if len(n.sm.indexs) != 2 {
@@ -134,7 +134,7 @@ func TestRemove(t *testing.T) {
 	n := dictate(New(0, defaultHeartbeat, defaultElection))
 	n.Next()
 
-	n.Add(1, "")
+	n.Add(1, "", nil)
 	n.Next()
 	n.Remove(0)
 	n.Step(Message{Type: msgAppResp, From: 1, Term: 1, Index: 4})
@@ -151,6 +151,6 @@ func TestRemove(t *testing.T) {
 
 func dictate(n *Node) *Node {
 	n.Step(Message{Type: msgHup})
-	n.Add(n.Id(), "")
+	n.Add(n.Id(), "", nil)
 	return n
 }

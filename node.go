@@ -13,8 +13,9 @@ type Interface interface {
 type tick int
 
 type Config struct {
-	NodeId int64
-	Addr   string
+	NodeId  int64
+	Addr    string
+	Context []byte
 }
 
 type Node struct {
@@ -42,11 +43,23 @@ func New(id int64, heartbeat, election tick) *Node {
 
 func (n *Node) Id() int64 { return n.sm.id }
 
+func (n *Node) Index() int { return n.sm.log.lastIndex() }
+
+func (n *Node) Term() int { return n.sm.term }
+
+func (n *Node) Applied() int { return n.sm.log.committed }
+
 func (n *Node) HasLeader() bool { return n.sm.lead != none }
+
+func (n *Node) IsLeader() bool { return n.sm.lead == n.Id() }
+
+func (n *Node) Leader() int64 { return n.sm.lead }
 
 func (n *Node) Campaign() { n.Step(Message{Type: msgHup}) }
 
-func (n *Node) Add(id int64, addr string) { n.updateConf(AddNode, &Config{NodeId: id, Addr: addr}) }
+func (n *Node) Add(id int64, addr string, context []byte) {
+	n.updateConf(AddNode, &Config{NodeId: id, Addr: addr, Context: context})
+}
 
 func (n *Node) Remove(id int64) { n.updateConf(RemoveNode, &Config{NodeId: id}) }
 
