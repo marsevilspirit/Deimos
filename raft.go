@@ -19,6 +19,7 @@ const (
 	msgAppResp                     // 附加日志响应
 	msgVote                        // 请求投票
 	msgVoteResp                    // 请求投票响应
+	msgSnap                        // 快照
 )
 
 // 消息类型的字符串表示
@@ -30,6 +31,7 @@ var mtmap = [...]string{
 	msgAppResp:  "msgAppResp",
 	msgVote:     "msgVote",
 	msgVoteResp: "msgVoteResp",
+	msgSnap:     "msgSnap",
 }
 
 func (mt messageType) String() string {
@@ -73,6 +75,7 @@ type Message struct {
 	PrevTerm int         // 前一个日志条目的任期
 	Entries  []Entry     // 日志条目
 	Commit   int         // 已提交的日志条目索引
+	Snapshot Snapshot    // 快照
 }
 
 type stepper interface {
@@ -167,13 +170,20 @@ func (sm *stateMachine) send(m Message) {
 func (sm *stateMachine) sendAppend(to int) {
 	index := sm.indexs[to]
 	m := Message{
-		Type:    msgApp,
-		To:      to,
-		Index:   index.next - 1,
-		LogTerm: sm.log.term(index.next - 1),
-		Entries: sm.log.entries(index.next),
-		Commit:  sm.log.committed,
+		To:    to,
+		Index: index.next - 1,
 	}
+
+	if sm.needSnapshot(m.Index) {
+		m.Type = msgSnap
+		m.Snapshot = sm.snapshoter.GetSnap()
+	} else {
+		m.Type = msgApp
+		m.LogTerm = sm.log.term(index.next - 1)
+		m.Entries = sm.log.entries(index.next)
+		m.Commit = sm.log.committed
+	}
+
 	sm.send(m)
 }
 
@@ -262,7 +272,7 @@ func (sm *stateMachine) becomeLeader() {
 	sm.lead = sm.id
 	sm.state = stateLeader
 
-	for _, e := range sm.log.ents[sm.log.committed:] {
+	for _, e := range sm.log.entries(sm.log.committed + 1) {
 		if e.Type == AddNode || e.Type == RemoveNode {
 			sm.pendingConf = true
 		}
@@ -313,6 +323,11 @@ func (sm *stateMachine) handleAppendEntries(m Message) {
 	} else {
 		sm.send(Message{To: m.From, Type: msgAppResp, Index: -1})
 	}
+}
+
+func (sm *stateMachine) handleSnapshot(m Message) {
+	sm.restore(m.Snapshot)
+	sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.log.lastIndex()})
 }
 
 func (sm *stateMachine) addNode(id int) {
@@ -367,6 +382,9 @@ func stepCandidate(sm *stateMachine, m Message) bool {
 	case msgApp:
 		sm.becomeFollower(sm.term, m.From)
 		sm.handleAppendEntries(m)
+	case msgSnap:
+		sm.becomeFollower(m.Term, m.From)
+		sm.handleSnapshot(m)
 	case msgVote:
 		sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 	case msgVoteResp:
@@ -392,6 +410,8 @@ func stepFollower(sm *stateMachine, m Message) bool {
 		sm.send(m)
 	case msgApp:
 		sm.handleAppendEntries(m)
+	case msgSnap:
+		sm.handleSnapshot(m)
 	case msgVote:
 		if (sm.vote == none || sm.vote == m.From) && sm.log.isUpToDate(m.Index, m.LogTerm) {
 			sm.vote = m.From
@@ -428,6 +448,16 @@ func (sm *stateMachine) restore(s Snapshot) {
 
 	sm.pendingConf = false
 	sm.snapshoter.Restore(s)
+}
+
+func (sm *stateMachine) needSnapshot(i int) bool {
+	if i < sm.log.offset {
+		if sm.snapshoter == nil {
+			panic("try to generate snapshot, but snapshoter is nil")
+		}
+		return true
+	}
+	return false
 }
 
 func (sm *stateMachine) nodes() []int {
