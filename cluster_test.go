@@ -8,8 +8,8 @@ import (
 func TestBuildCluster(t *testing.T) {
 
 	tests := []struct {
-		size   int
-		indexs []int
+		size int
+		ids  []int64
 	}{
 		{1, nil},
 		{3, nil},
@@ -18,13 +18,13 @@ func TestBuildCluster(t *testing.T) {
 		{9, nil},
 		{13, nil},
 		{51, nil},
-		{1, []int{1}},
-		{3, []int{1, 3, 5}},
-		{5, []int{1, 4, 7, 10, 13}},
+		{1, []int64{1}},
+		{3, []int64{1, 3, 5}},
+		{5, []int64{1, 4, 7, 10, 13}},
 	}
 
 	for i, tt := range tests {
-		_, nodes := buildCluster(tt.size, tt.indexs)
+		_, nodes := buildCluster(tt.size, tt.ids)
 
 		base := ltoa(nodes[0].sm.log)
 		for j, n := range nodes {
@@ -34,25 +34,25 @@ func TestBuildCluster(t *testing.T) {
 			}
 
 			// ensure same leader
-			w := 0
-			if tt.indexs != nil {
-				w = tt.indexs[0]
+			var w int64
+			if tt.ids != nil {
+				w = tt.ids[0]
 			}
 
 			if g := n.sm.lead; g != w {
 				t.Errorf("#%d.%d: lead = %d, want %d", i, j, g, w)
 			}
 
-			p := map[int]struct{}{}
+			p := map[int64]struct{}{}
 			for k := range n.sm.indexs {
 				p[k] = struct{}{}
 			}
-			wp := map[int]struct{}{}
+			wp := map[int64]struct{}{}
 			for k := 0; k < tt.size; k++ {
-				if tt.indexs != nil {
-					wp[tt.indexs[k]] = struct{}{}
+				if tt.ids != nil {
+					wp[tt.ids[k]] = struct{}{}
 				} else {
-					wp[k] = struct{}{}
+					wp[int64(k)] = struct{}{}
 				}
 			}
 			if !reflect.DeepEqual(p, wp) {
@@ -99,11 +99,11 @@ func TestBasicCluster(t *testing.T) {
 	}
 }
 
-func buildCluster(size int, indexs []int) (nt *network, nodes []*Node) {
+func buildCluster(size int, indexs []int64) (nt *network, nodes []*Node) {
 	if indexs == nil {
-		indexs = make([]int, size)
+		indexs = make([]int64, size)
 		for i := 0; i < size; i++ {
-			indexs[i] = i
+			indexs[i] = int64(i)
 		}
 	}
 

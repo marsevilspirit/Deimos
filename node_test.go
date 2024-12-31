@@ -9,7 +9,7 @@ const (
 
 func TestTickMsgHup(t *testing.T) {
 	n := New(0, defaultHeartbeat, defaultElection)
-	n.sm = newStateMachine(0, []int{0, 1, 2})
+	n.sm = newStateMachine(0, []int64{0, 1, 2})
 
 	// simulate to patch the join log
 	n.Step(Message{Type: msgApp, Commit: 1, Entries: []Entry{{}}})
@@ -37,7 +37,7 @@ func TestTickMsgBeat(t *testing.T) {
 	n := dictate(New(0, defaultHeartbeat, defaultElection))
 	n.Next()
 	for i := 1; i < k; i++ {
-		n.Add(i, "")
+		n.Add(int64(i), "")
 		for _, m := range n.Msgs() {
 			if m.Type == msgApp {
 				n.Step(Message{From: m.To, Type: msgAppResp, Index: m.Index + len(m.Entries)})
@@ -77,7 +77,7 @@ func TestResetElapse(t *testing.T) {
 
 	for i, tt := range tests {
 		n := New(0, defaultHeartbeat, defaultElection)
-		n.sm = newStateMachine(0, []int{0, 1, 2})
+		n.sm = newStateMachine(0, []int64{0, 1, 2})
 		n.sm.term = 2
 		n.sm.log.committed = 1
 

@@ -3,7 +3,7 @@ package raft
 type Snapshot struct {
 	Data []byte
 
-	Nodes []int
+	Nodes []int64
 
 	Index int
 
@@ -11,7 +11,7 @@ type Snapshot struct {
 }
 
 type Snapshoter interface {
-	Snap(index, term int, nodes []int)
+	Snap(index, term int, nodes []int64)
 	Restore(snap Snapshot)
 	GetSnap() Snapshot
 }
