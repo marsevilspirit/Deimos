@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	// "fmt"
 	"sort"
 )
 
@@ -47,9 +48,9 @@ const (
 
 // 状态类型的字符串表示
 var stmap = [...]string{
-	stateFollower:  "stateFollower",
-	stateCandidate: "stateCandidate",
-	stateLeader:    "stateLeader",
+	stateFollower:  "Follower",
+	stateCandidate: "Candidate",
+	stateLeader:    "Leader",
 }
 
 var stepmap = [...]stepFunc{
@@ -217,6 +218,13 @@ func (sm *stateMachine) q() int {
 	return len(sm.indexs)/2 + 1
 }
 
+func (sm *stateMachine) appendEntry(e Entry) {
+	e.Term = sm.term
+	sm.log.append(sm.log.lastIndex(), e)
+	sm.indexs[sm.id].update(sm.log.lastIndex())
+	sm.maybeCommit()
+}
+
 // promotable indicates whether state machine could be promoted.
 // New machine has to wait for the first log entry to be committed, or it will
 // always start as a one-node cluster.
@@ -253,6 +261,7 @@ func (sm *stateMachine) becomeLeader() {
 			sm.pendingConf = true
 		}
 	}
+	sm.appendEntry(Entry{Type: Normal, Data: nil})
 }
 
 func (sm *stateMachine) Msgs() []Message {
@@ -262,7 +271,7 @@ func (sm *stateMachine) Msgs() []Message {
 }
 
 func (sm *stateMachine) Step(m Message) (ok bool) {
-	// fmt.Printf("node %d receive message %s from %d\n", sm.id, m.Type, m.From)
+	// fmt.Printf("%s node %d receive %+v\n", sm.state.String(), sm.id, m)
 	if m.Type == msgHup {
 		sm.becomeCandidate()
 		if sm.q() == sm.poll(sm.id, true) {
@@ -327,11 +336,7 @@ func stepLeader(sm *stateMachine, m Message) bool {
 			}
 			sm.pendingConf = true
 		}
-		e.Term = sm.term
-
-		sm.log.append(sm.log.lastIndex(), e)
-		sm.indexs[sm.id].update(sm.log.lastIndex())
-		sm.maybeCommit()
+		sm.appendEntry(e)
 		sm.bcastAppend()
 	case msgAppResp:
 		if m.Index < 0 {
