@@ -121,6 +121,8 @@ type stateMachine struct {
 
 	// peding reconfiguration
 	pendingConf bool
+
+	snapshoter Snapshoter
 }
 
 func newStateMachine(id int, peers []int) *stateMachine {
@@ -134,6 +136,10 @@ func newStateMachine(id int, peers []int) *stateMachine {
 	}
 	sm.reset(0)
 	return sm
+}
+
+func (sm *stateMachine) setSnapshoter(s Snapshoter) {
+	sm.snapshoter = s
 }
 
 // 记录投票结果并计算票数
@@ -395,4 +401,39 @@ func stepFollower(sm *stateMachine, m Message) bool {
 		}
 	}
 	return true
+}
+
+func (sm *stateMachine) maybeCompact() bool {
+	if sm.snapshoter == nil || !sm.log.shouldCompact() {
+		return false
+	}
+	sm.snapshoter.Snap(sm.log.applied, sm.log.term(sm.log.applied), sm.nodes())
+	sm.log.compact(sm.log.applied)
+	return true
+}
+
+func (sm *stateMachine) restore(s Snapshot) {
+	if sm.snapshoter == nil {
+		panic("try to restore from snapshot, but snapshoter is nil")
+	}
+
+	sm.log.restore(s.Index, s.Term)
+	sm.indexs = make(map[int]*index)
+	for _, n := range s.Nodes {
+		sm.indexs[n] = &index{next: sm.log.lastIndex() + 1}
+		if n == sm.id {
+			sm.indexs[n].match = sm.log.lastIndex()
+		}
+	}
+
+	sm.pendingConf = false
+	sm.snapshoter.Restore(s)
+}
+
+func (sm *stateMachine) nodes() []int {
+	nodes := make([]int, 0, len(sm.indexs))
+	for k := range sm.indexs {
+		nodes = append(nodes, k)
+	}
+	return nodes
 }
