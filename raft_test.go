@@ -702,7 +702,7 @@ func TestAllServerStepdown(t *testing.T) {
 		}
 
 		for j, msgType := range tmsgTypes {
-			sm.Step(Message{Type: msgType, Term: tterm, LogTerm: tterm})
+			sm.Step(Message{From: 1, Type: msgType, Term: tterm, LogTerm: tterm})
 
 			if sm.state != tt.wstate {
 				t.Errorf("#%d.%d state = %v , want %v", i, j, sm.state, tt.wstate)
@@ -712,6 +712,13 @@ func TestAllServerStepdown(t *testing.T) {
 			}
 			if int64(len(sm.log.ents)) != tt.windex {
 				t.Errorf("#%d.%d index = %v , want %v", i, j, len(sm.log.ents), tt.windex)
+			}
+			wlead := int64(1)
+			if msgType == msgVote {
+				wlead = none
+			}
+			if sm.lead.Get() != wlead {
+				t.Errorf("#%d.%d lead = %v , want %v", i, j, sm.lead, wlead)
 			}
 		}
 	}

@@ -3,7 +3,9 @@ package raft
 import (
 	"encoding/json"
 	golog "log"
+	"math/rand"
 	"sync/atomic"
+	"time"
 )
 
 type Interface interface {
@@ -37,9 +39,12 @@ func New(id int64, heartbeat, election tick) *Node {
 		panic("election is least three times as heartbeat [election: %d, heartbeat: %d]")
 	}
 
+	// 创建一个局部随机数生成器
+	localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
+
 	n := &Node{
 		heartbeat: heartbeat,
-		election:  election,
+		election:  election + tick(localRand.Int31())%election,
 		sm:        newStateMachine(id, []int64{id}),
 		rmNodes:   make(map[int64]struct{}),
 	}
@@ -68,10 +73,10 @@ func (n *Node) IsRemoved() bool { return n.removed }
 func (n *Node) Campaign() { n.Step(Message{Type: msgHup}) }
 
 func (n *Node) Add(id int64, addr string, context []byte) {
-	n.updateConf(AddNode, &Config{NodeId: id, Addr: addr, Context: context})
+	n.UpdateConf(AddNode, &Config{NodeId: id, Addr: addr, Context: context})
 }
 
-func (n *Node) Remove(id int64) { n.updateConf(RemoveNode, &Config{NodeId: id}) }
+func (n *Node) Remove(id int64) { n.UpdateConf(RemoveNode, &Config{NodeId: id}) }
 
 func (n *Node) Msgs() []Message { return n.sm.Msgs() }
 
@@ -162,7 +167,7 @@ func (n *Node) Tick() {
 	}
 }
 
-func (n *Node) updateConf(t int64, c *Config) {
+func (n *Node) UpdateConf(t int64, c *Config) {
 	data, err := json.Marshal(c)
 	if err != nil {
 		panic(err)
