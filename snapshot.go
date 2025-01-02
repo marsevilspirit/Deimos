@@ -5,13 +5,13 @@ type Snapshot struct {
 
 	Nodes []int64
 
-	Index int
+	Index int64
 
-	Term int
+	Term int64
 }
 
 type Snapshoter interface {
-	Snap(index, term int, nodes []int64)
+	Snap(index, term int64, nodes []int64)
 	Restore(snap Snapshot)
 	GetSnap() Snapshot
 }

@@ -10,7 +10,7 @@ import (
 // 表示缺失的领导者
 const none = -1
 
-type messageType int
+type messageType int64
 
 const (
 	msgHup      messageType = iota // 开始选举
@@ -36,12 +36,12 @@ var mtmap = [...]string{
 }
 
 func (mt messageType) String() string {
-	return mtmap[mt]
+	return mtmap[int64(mt)]
 }
 
 var errNoLeader = errors.New("no leader")
 
-type stateType int
+type stateType int64
 
 const (
 	stateFollower  stateType = iota // 跟随者
@@ -63,19 +63,19 @@ var stepmap = [...]stepFunc{
 }
 
 func (st stateType) String() string {
-	return stmap[st]
+	return stmap[int64(st)]
 }
 
 type Message struct {
 	Type     messageType // 消息类型
 	From     int64       // 发送者
 	To       int64       // 接收者
-	Term     int         // 任期
-	LogTerm  int         // 日志条目的任期
-	Index    int         // 日志条目的索引
-	PrevTerm int         // 前一个日志条目的任期
+	Term     int64       // 任期
+	LogTerm  int64       // 日志条目的任期
+	Index    int64       // 日志条目的索引
+	PrevTerm int64       // 前一个日志条目的任期
 	Entries  []Entry     // 日志条目
-	Commit   int         // 已提交的日志条目索引
+	Commit   int64       // 已提交的日志条目索引
 	Snapshot Snapshot    // 快照
 }
 
@@ -84,12 +84,12 @@ type stepper interface {
 }
 
 type index struct {
-	match int // 已匹配的日志条目索引
-	next  int // 下一个要发送的日志条目索引
+	match int64 // 已匹配的日志条目索引
+	next  int64 // 下一个要发送的日志条目索引
 }
 
 // 更新已匹配的日志条目索引和下一个要发送的日志条目索引
-func (in *index) update(n int) {
+func (in *index) update(n int64) {
 	in.match = n
 	in.next = n + 1
 }
@@ -111,10 +111,17 @@ func (i *atomicInt64) Get() int64 {
 	return atomic.LoadInt64((*int64)(i))
 }
 
+// int64Slice implements sort interface
+type int64Slice []int64
+
+func (p int64Slice) Len() int           { return len(p) }
+func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
+func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
 type stateMachine struct {
 	id int64
 
-	term int
+	term int64
 
 	vote int64
 
@@ -212,11 +219,11 @@ func (sm *stateMachine) bcastAppend() {
 // 同时更新commit
 func (sm *stateMachine) maybeCommit() bool {
 	// 不需要0初始化，所以使用0
-	matchIndexs := make([]int, 0, len(sm.indexs))
+	matchIndexs := make(int64Slice, 0, len(sm.indexs))
 	for i := range sm.indexs {
 		matchIndexs = append(matchIndexs, sm.indexs[i].match)
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(matchIndexs)))
+	sort.Sort(sort.Reverse(matchIndexs))
 	matchIndex := matchIndexs[sm.q()-1]
 
 	return sm.log.maybeCommit(matchIndex, sm.term)
@@ -227,7 +234,7 @@ func (sm *stateMachine) nextEnts() (ents []Entry) {
 	return sm.log.nextEnts()
 }
 
-func (sm *stateMachine) reset(term int) {
+func (sm *stateMachine) reset(term int64) {
 	sm.term = term
 	sm.lead.Set(none)
 	sm.vote = none
@@ -259,7 +266,7 @@ func (sm *stateMachine) promotable() bool {
 	return sm.log.committed != 0
 }
 
-func (sm *stateMachine) becomeFollower(term int, lead int64) {
+func (sm *stateMachine) becomeFollower(term int64, lead int64) {
 	sm.reset(term)
 	sm.lead.Set(lead)
 	sm.state = stateFollower
@@ -461,7 +468,7 @@ func (sm *stateMachine) restore(s Snapshot) {
 	sm.snapshoter.Restore(s)
 }
 
-func (sm *stateMachine) needSnapshot(i int) bool {
+func (sm *stateMachine) needSnapshot(i int64) bool {
 	if i < sm.log.offset {
 		if sm.snapshoter == nil {
 			panic("try to generate snapshot, but snapshoter is nil")

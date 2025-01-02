@@ -11,7 +11,7 @@ type Interface interface {
 	Msgs() []Message
 }
 
-type tick int
+type tick int64
 
 type Config struct {
 	NodeId  int64
@@ -46,11 +46,11 @@ func (n *Node) Id() int64 {
 	return atomic.LoadInt64(&n.sm.id)
 }
 
-func (n *Node) Index() int { return n.sm.log.lastIndex() }
+func (n *Node) Index() int64 { return n.sm.log.lastIndex() }
 
-func (n *Node) Term() int { return n.sm.term }
+func (n *Node) Term() int64 { return n.sm.term }
 
-func (n *Node) Applied() int { return n.sm.log.committed }
+func (n *Node) Applied() int64 { return n.sm.log.committed }
 
 func (n *Node) HasLeader() bool { return n.Leader() != none }
 
@@ -89,7 +89,7 @@ func (n *Node) Step(m Message) bool {
 }
 
 // Propose 方法向集群提议一条数据
-func (n *Node) Propose(t int, data []byte) {
+func (n *Node) Propose(t int64, data []byte) {
 	n.Step(Message{Type: msgProp, Entries: []Entry{{Type: t, Data: data}}})
 }
 
@@ -138,7 +138,7 @@ func (n *Node) Tick() {
 	}
 }
 
-func (n *Node) updateConf(t int, c *Config) {
+func (n *Node) updateConf(t int64, c *Config) {
 	data, err := json.Marshal(c)
 	if err != nil {
 		panic(err)

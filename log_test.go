@@ -8,10 +8,11 @@ import (
 // TestCompactionSideEffects ensures that all the log related funcationality works correctly after
 // a compaction.
 func TestCompactionSideEffects(t *testing.T) {
-	lastIndex := 1000
+	var i int64
+	lastIndex := int64(1000)
 	log := newLog()
-	for i := 0; i < lastIndex; i++ {
-		log.append(i, Entry{Term: i + 1})
+	for i = 0; i < lastIndex; i++ {
+		log.append(int64(i), Entry{Term: int64(i + 1)})
 	}
 	log.compact(500)
 	if log.lastIndex() != lastIndex {
@@ -41,13 +42,13 @@ func TestCompactionSideEffects(t *testing.T) {
 func TestCompaction(t *testing.T) {
 	tests := []struct {
 		app     int
-		compact []int
+		compact []int64
 		wleft   []int
 		wallow  bool
 	}{
-		{1000, []int{1001}, []int{-1}, false},
-		{1000, []int{300, 500, 800, 900}, []int{701, 501, 201, 101}, true},
-		{1000, []int{300, 299}, []int{701, -1}, false},
+		{1000, []int64{1001}, []int{-1}, false},
+		{1000, []int64{300, 500, 800, 900}, []int{701, 501, 201, 101}, true},
+		{1000, []int64{300, 299}, []int{701, -1}, false},
 	}
 
 	for i, tt := range tests {
@@ -61,7 +62,7 @@ func TestCompaction(t *testing.T) {
 
 		log := newLog()
 		for i := 0; i < tt.app; i++ {
-			log.append(i, Entry{})
+			log.append(int64(i), Entry{})
 		}
 
 		for j := 0; j < len(tt.compact); j++ {
@@ -74,12 +75,13 @@ func TestCompaction(t *testing.T) {
 }
 
 func TestLogRestore(t *testing.T) {
+	var i int64
 	log := newLog()
-	for i := 0; i < 100; i++ {
+	for i = 0; i < 100; i++ {
 		log.append(i, Entry{Term: i + 1})
 	}
-	index := 1000
-	term := 1000
+	index := int64(1000)
+	term := int64(1000)
 	log.restore(index, term)
 	// only has the guard entry
 	if len(log.ents) != 1 {
@@ -100,13 +102,13 @@ func TestLogRestore(t *testing.T) {
 }
 
 func TestIsOutOfBounds(t *testing.T) {
-	offset := 100
-	num := 100
+	offset := int64(100)
+	num := int64(100)
 	// from 100 to 199 is valid
 	l := &log{offset: offset, ents: make([]Entry, num)}
 
 	tests := []struct {
-		index int
+		index int64
 		w     bool
 	}{
 		{offset - 1, true},
@@ -124,16 +126,17 @@ func TestIsOutOfBounds(t *testing.T) {
 }
 
 func TestAt(t *testing.T) {
-	offset := 100
-	num := 100
+	var i int64
+	offset := int64(100)
+	num := int64(100)
 	// from 100 to 199 is valid
 	l := &log{offset: offset}
-	for i := 0; i < num; i++ {
+	for i = 0; i < num; i++ {
 		l.ents = append(l.ents, Entry{Term: i})
 	}
 
 	tests := []struct {
-		index int
+		index int64
 		w     *Entry
 	}{
 		{offset - 1, nil},
@@ -151,17 +154,19 @@ func TestAt(t *testing.T) {
 }
 
 func TestSlice(t *testing.T) {
-	offset := 100
-	num := 100
+	var i int64
+	offset := int64(100)
+	num := int64(100)
 	// from 100 to 199 is valid
 	l := &log{offset: offset}
-	for i := 0; i < num; i++ {
+	for i = 0; i < num; i++ {
 		l.ents = append(l.ents, Entry{Term: i})
 	}
 
 	tests := []struct {
-		from, to int
-		w        []Entry
+		from int64
+		to   int64
+		w    []Entry
 	}{
 		{offset - 1, offset + 1, nil},
 		{offset, offset + 1, []Entry{{Term: 0}}},

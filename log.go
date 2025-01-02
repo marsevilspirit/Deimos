@@ -3,7 +3,7 @@ package raft
 import "fmt"
 
 const (
-	Normal int = iota
+	Normal int64 = iota
 
 	AddNode
 	RemoveNode
@@ -17,8 +17,8 @@ const (
 )
 
 type Entry struct {
-	Type int
-	Term int
+	Type int64
+	Term int64
 	Data []byte
 }
 
@@ -28,13 +28,13 @@ func (e *Entry) isConfig() bool {
 
 type log struct {
 	ents      []Entry
-	committed int
-	applied   int
-	offset    int
+	committed int64
+	applied   int64
+	offset    int64
 
 	// want a compact after the number of log entries
 	// exceeds the compact threshold
-	compactThreshold int
+	compactThreshold int64
 }
 
 func newLog() *log {
@@ -46,23 +46,23 @@ func newLog() *log {
 	}
 }
 
-func (l *log) lastIndex() int {
-	return len(l.ents) - 1 + l.offset
+func (l *log) lastIndex() int64 {
+	return int64(len(l.ents)) - 1 + l.offset
 }
 
-func (l *log) append(after int, ents ...Entry) int {
+func (l *log) append(after int64, ents ...Entry) int64 {
 	l.ents = append(l.slice(l.offset, after+1), ents...)
 	return l.lastIndex()
 }
 
-func (l *log) term(i int) int {
+func (l *log) term(i int64) int64 {
 	if e := l.at(i); e != nil {
 		return e.Term
 	}
 	return -1
 }
 
-func (l *log) entries(i int) []Entry {
+func (l *log) entries(i int64) []Entry {
 	// never send out the first entry
 	// first entry is only used for matching
 	// prevLogTerm
@@ -73,28 +73,28 @@ func (l *log) entries(i int) []Entry {
 	return l.slice(i, l.lastIndex()+1)
 }
 
-func (l *log) matchTerm(index, term int) bool {
+func (l *log) matchTerm(index, term int64) bool {
 	if e := l.at(index); e != nil {
 		return e.Term == term
 	}
 	return false
 }
 
-func (l *log) maybeAppend(index, logTerm int, commit int, ents ...Entry) bool {
+func (l *log) maybeAppend(index, logTerm, committed int64, ents ...Entry) bool {
 	if l.matchTerm(index, logTerm) {
 		l.append(index, ents...)
-		l.committed = commit
+		l.committed = committed
 		return true
 	}
 	return false
 }
 
-func (l *log) isUpToDate(index, term int) bool {
+func (l *log) isUpToDate(index, term int64) bool {
 	entry := l.at(l.lastIndex())
 	return term > entry.Term || (term == entry.Term && index >= l.lastIndex())
 }
 
-func (l *log) maybeCommit(maxIndex, term int) bool {
+func (l *log) maybeCommit(maxIndex, term int64) bool {
 	if maxIndex > l.committed && l.matchTerm(maxIndex, term) {
 		l.committed = maxIndex
 		return true
@@ -113,27 +113,27 @@ func (l *log) nextEnts() (ents []Entry) {
 }
 
 // return the number of emtries after the compaction
-func (l *log) compact(i int) int {
+func (l *log) compact(i int64) int64 {
 	if l.isOutOfBounds(i) {
 		panic(fmt.Sprintf("compact %d out of bounds [%d:%d]", i, l.offset, l.lastIndex()))
 	}
 	l.ents = l.slice(i, l.lastIndex()+1)
 	l.offset = i
-	return len(l.ents)
+	return int64(len(l.ents))
 }
 
 func (l *log) shouldCompact() bool {
 	return (l.applied - l.offset) > l.compactThreshold
 }
 
-func (l *log) restore(index, term int) {
+func (l *log) restore(index, term int64) {
 	l.ents = []Entry{{Term: term}}
 	l.committed = index
 	l.applied = index
 	l.offset = index
 }
 
-func (l *log) at(i int) *Entry {
+func (l *log) at(i int64) *Entry {
 	if l.isOutOfBounds(i) {
 		return nil
 	}
@@ -143,7 +143,7 @@ func (l *log) at(i int) *Entry {
 // lo(low) is the index of the first possible entry.
 // hi(hight) is the index of the last possible entry + 1.
 // slice returns a slice of log entries from lo through hi-1, inclusive.
-func (l *log) slice(lo, hi int) []Entry {
+func (l *log) slice(lo, hi int64) []Entry {
 	if lo >= hi {
 		return nil
 	}
@@ -154,6 +154,6 @@ func (l *log) slice(lo, hi int) []Entry {
 }
 
 // isOutOfBounds returns if the given index is out of the bound.
-func (l *log) isOutOfBounds(index int) bool {
+func (l *log) isOutOfBounds(index int64) bool {
 	return index < l.offset || index > l.lastIndex()
 }
