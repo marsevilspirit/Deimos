@@ -69,16 +69,17 @@ func (st stateType) String() string {
 }
 
 type Message struct {
-	Type     messageType // 消息类型
-	From     int64       // 发送者
-	To       int64       // 接收者
-	Term     int64       // 任期
-	LogTerm  int64       // 日志条目的任期
-	Index    int64       // 日志条目的索引
-	PrevTerm int64       // 前一个日志条目的任期
-	Entries  []Entry     // 日志条目
-	Commit   int64       // 已提交的日志条目索引
-	Snapshot Snapshot    // 快照
+	Type      messageType // 消息类型
+	ClusterId int64       // 集群ID
+	From      int64       // 发送者
+	To        int64       // 接收者
+	Term      int64       // 任期
+	LogTerm   int64       // 日志条目的任期
+	Index     int64       // 日志条目的索引
+	PrevTerm  int64       // 前一个日志条目的任期
+	Entries   []Entry     // 日志条目
+	Commit    int64       // 已提交的日志条目索引
+	Snapshot  Snapshot    // 快照
 }
 
 type stepper interface {
@@ -121,7 +122,8 @@ func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
 type stateMachine struct {
-	id int64
+	clusterId int64
+	id        int64
 
 	term atomicInt
 
@@ -151,11 +153,16 @@ type stateMachine struct {
 }
 
 func newStateMachine(id int64, peers []int64) *stateMachine {
+	if id == none {
+		panic("cannot use none id")
+	}
+
 	sm := &stateMachine{
-		id:     id,
-		lead:   none,
-		log:    newLog(),
-		indexs: make(map[int64]*index),
+		id:        id,
+		clusterId: none,
+		lead:      none,
+		log:       newLog(),
+		indexs:    make(map[int64]*index),
 	}
 	for _, p := range peers {
 		sm.indexs[p] = &index{}
@@ -185,6 +192,7 @@ func (sm *stateMachine) poll(id int64, v bool) (granted int) {
 
 // 发送消息
 func (sm *stateMachine) send(m Message) {
+	m.ClusterId = sm.clusterId
 	m.From = sm.id
 	m.Term = sm.term.Get()
 	sm.msgs = append(sm.msgs, m)
