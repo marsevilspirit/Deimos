@@ -62,6 +62,15 @@ func (l *log) term(i int64) int64 {
 	return -1
 }
 
+func (l *log) findConflict(from int64, ents []Entry) int64 {
+	for i, ne := range ents {
+		if oe := l.at(from + int64(i)); oe == nil || oe.Term != ne.Term {
+			return from + int64(i)
+		}
+	}
+	return -1
+}
+
 func (l *log) entries(i int64) []Entry {
 	// never send out the first entry
 	// first entry is only used for matching
@@ -82,8 +91,18 @@ func (l *log) matchTerm(index, term int64) bool {
 
 func (l *log) maybeAppend(index, logTerm, committed int64, ents ...Entry) bool {
 	if l.matchTerm(index, logTerm) {
-		l.append(index, ents...)
-		l.committed = committed
+		from := index + 1
+		ci := l.findConflict(from, ents)
+		switch {
+		case ci == -1:
+		case ci <= l.committed:
+			panic("conflict with committed entry")
+		default:
+			l.append(ci-1, ents[ci-from:]...)
+		}
+		if l.committed < committed {
+			l.committed = min(committed, l.lastIndex())
+		}
 		return true
 	}
 	return false
@@ -156,4 +175,11 @@ func (l *log) slice(lo, hi int64) []Entry {
 // isOutOfBounds returns if the given index is out of the bound.
 func (l *log) isOutOfBounds(index int64) bool {
 	return index < l.offset || index > l.lastIndex()
+}
+
+func min(a, b int64) int64 {
+	if a > b {
+		return b
+	}
+	return a
 }

@@ -123,6 +123,8 @@ type stateMachine struct {
 
 	term atomicInt
 
+	index atomicInt
+
 	vote int64
 
 	log *log
@@ -254,7 +256,7 @@ func (sm *stateMachine) q() int {
 
 func (sm *stateMachine) appendEntry(e Entry) {
 	e.Term = sm.term.Get()
-	sm.log.append(sm.log.lastIndex(), e)
+	sm.index.Set(sm.log.append(sm.log.lastIndex(), e))
 	sm.indexs[sm.id].update(sm.log.lastIndex())
 	sm.maybeCommit()
 }
@@ -337,6 +339,7 @@ func (sm *stateMachine) Step(m Message) (ok bool) {
 
 func (sm *stateMachine) handleAppendEntries(m Message) {
 	if sm.log.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...) {
+		sm.index.Set(sm.log.lastIndex())
 		sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.log.lastIndex()})
 	} else {
 		sm.send(Message{To: m.From, Type: msgAppResp, Index: -1})
@@ -456,6 +459,7 @@ func (sm *stateMachine) restore(s Snapshot) {
 	}
 
 	sm.log.restore(s.Index, s.Term)
+	sm.index.Set(sm.log.lastIndex())
 	sm.indexs = make(map[int64]*index)
 	for _, n := range s.Nodes {
 		sm.indexs[n] = &index{next: sm.log.lastIndex() + 1}
