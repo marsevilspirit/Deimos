@@ -21,6 +21,7 @@ const (
 	msgVote                        // 请求投票
 	msgVoteResp                    // 请求投票响应
 	msgSnap                        // 快照
+	msgDenied                      // 拒绝
 )
 
 // 消息类型的字符串表示
@@ -33,6 +34,7 @@ var mtmap = [...]string{
 	msgVote:     "msgVote",
 	msgVoteResp: "msgVoteResp",
 	msgSnap:     "msgSnap",
+	msgDenied:   "msgDenied",
 }
 
 func (mt messageType) String() string {
@@ -430,6 +432,7 @@ func stepFollower(sm *stateMachine, m Message) bool {
 		m.To = sm.lead.Get()
 		sm.send(m)
 	case msgApp:
+		sm.lead.Set(m.From)
 		sm.handleAppendEntries(m)
 	case msgSnap:
 		sm.handleSnapshot(m)

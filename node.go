@@ -26,6 +26,10 @@ type Node struct {
 	elapsed   tick
 	election  tick
 	heartbeat tick
+
+	// TODO: it needs garbage collection later
+	rmNodes map[int64]struct{}
+	removed bool
 }
 
 func New(id int64, heartbeat, election tick) *Node {
@@ -37,6 +41,7 @@ func New(id int64, heartbeat, election tick) *Node {
 		heartbeat: heartbeat,
 		election:  election,
 		sm:        newStateMachine(id, []int64{id}),
+		rmNodes:   make(map[int64]struct{}),
 	}
 
 	return n
@@ -58,6 +63,8 @@ func (n *Node) IsLeader() bool { return n.Leader() == n.Id() }
 
 func (n *Node) Leader() int64 { return n.sm.lead.Get() }
 
+func (n *Node) IsRemoved() bool { return n.removed }
+
 func (n *Node) Campaign() { n.Step(Message{Type: msgHup}) }
 
 func (n *Node) Add(id int64, addr string, context []byte) {
@@ -69,6 +76,18 @@ func (n *Node) Remove(id int64) { n.updateConf(RemoveNode, &Config{NodeId: id}) 
 func (n *Node) Msgs() []Message { return n.sm.Msgs() }
 
 func (n *Node) Step(m Message) bool {
+	if m.Type == msgDenied {
+		n.removed = true
+		return false
+	}
+
+	if m.Term != 0 {
+		if _, ok := n.rmNodes[m.From]; ok {
+			n.sm.send(Message{To: m.From, Type: msgDenied})
+			return true
+		}
+	}
+
 	l := len(n.sm.msgs)
 	if !n.sm.Step(m) {
 		return false
@@ -106,6 +125,7 @@ func (n *Node) Next() []Entry {
 				continue
 			}
 			n.sm.addNode(c.NodeId)
+			delete(n.rmNodes, c.NodeId)
 		case RemoveNode:
 			c := new(Config)
 			if err := json.Unmarshal(ents[i].Data, c); err != nil {
@@ -113,6 +133,10 @@ func (n *Node) Next() []Entry {
 				continue
 			}
 			n.sm.removeNode(c.NodeId)
+			n.rmNodes[c.NodeId] = struct{}{}
+			if c.NodeId == n.sm.id {
+				n.removed = true
+			}
 		default:
 			panic("unexpected entry type")
 		}

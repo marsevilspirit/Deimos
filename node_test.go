@@ -1,6 +1,9 @@
 package raft
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 const (
 	defaultHeartbeat = 1
@@ -150,6 +153,45 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestDenial(t *testing.T) {
+	logents := []Entry{
+		{Type: AddNode, Term: 1, Data: []byte(`{"NodeId":1}`)},
+		{Type: AddNode, Term: 1, Data: []byte(`{"NodeId":2}`)},
+		{Type: RemoveNode, Term: 1, Data: []byte(`{"NodeId":2}`)},
+	}
+
+	tests := []struct {
+		ent     Entry
+		wdenied map[int64]bool
+	}{
+		{
+			Entry{Type: AddNode, Term: 1, Data: []byte(`{"NodeId":2}`)},
+			map[int64]bool{0: false, 1: false, 2: false},
+		},
+	}
+
+	for i, tt := range tests {
+		n := dictate(New(0, defaultHeartbeat, defaultElection))
+		n.Next()
+		n.Msgs()
+		n.sm.log.append(n.sm.log.committed, append(logents, tt.ent)...)
+		n.sm.log.committed += int64(len(logents) + 1)
+		n.Next()
+
+		for id, denied := range tt.wdenied {
+			n.Step(Message{From: id, To: 0, Type: msgApp, Term: 1})
+			w := []Message{}
+			if denied {
+				w = []Message{{From: 0, To: id, Term: 1, Type: msgDenied}}
+			}
+			if g := n.Msgs(); !reflect.DeepEqual(g, w) {
+				t.Errorf("#%d: msgs for %d = %+v, want %+v", i, id, g, w)
+			}
+		}
+	}
+}
+
+// dictate is a helper function to make a node the leader.
 func dictate(n *Node) *Node {
 	n.Step(Message{Type: msgHup})
 	n.Add(n.Id(), "", nil)
