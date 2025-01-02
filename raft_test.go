@@ -34,7 +34,7 @@ func TestLeaderElection(t *testing.T) {
 		if sm.state != tt.state {
 			t.Errorf("#%d: state = %s, want %s", i, sm.state, tt.state)
 		}
-		if g := sm.term; g != 1 {
+		if g := sm.term.Get(); g != 1 {
 			t.Errorf("#%d: term = %d, want %d", i, g, 1)
 		}
 	}
@@ -214,7 +214,7 @@ func TestDualingCandidates(t *testing.T) {
 		if g := tt.sm.state; g != tt.state {
 			t.Errorf("#%d: state = %s, want %s", i, g, tt.state)
 		}
-		if g := tt.sm.term; g != tt.term {
+		if g := tt.sm.term.Get(); g != tt.term {
 			t.Errorf("#%d: term = %d, want %d", i, g, tt.term)
 		}
 
@@ -355,7 +355,7 @@ func TestProposal(t *testing.T) {
 		}
 
 		sm := tt.peers[0].(*stateMachine)
-		if g := sm.term; g != 1 {
+		if g := sm.term.Get(); g != 1 {
 			t.Errorf("#%d: term = %d, want %d", i, g, 1)
 		}
 	}
@@ -389,7 +389,7 @@ func TestProposalByProxy(t *testing.T) {
 			}
 		}
 		sm := tt.peers[0].(*stateMachine)
-		if g := sm.term; g != 1 {
+		if g := sm.term.Get(); g != 1 {
 			t.Errorf("#%d: term = %d, want %d", i, g, 1)
 		}
 	}
@@ -429,7 +429,7 @@ func TestCommit(t *testing.T) {
 		for j := 0; j < len(tt.matches); j++ {
 			ins[int64(j)] = &index{tt.matches[j], tt.matches[j] + 1}
 		}
-		sm := &stateMachine{log: &log{ents: tt.logs}, indexs: ins, term: tt.smTerm}
+		sm := &stateMachine{log: &log{ents: tt.logs}, indexs: ins, term: atomicInt(tt.smTerm)}
 		sm.maybeCommit()
 		if g := sm.log.committed; g != tt.w {
 			t.Errorf("#%d: commit = %d, want %d", i, g, tt.w)
@@ -620,7 +620,7 @@ func TestStateTransition(t *testing.T) {
 			sm.becomeLeader()
 		}
 
-		if sm.term != tt.wterm {
+		if sm.term.Get() != tt.wterm {
 			t.Errorf("#%d: term = %d, want %d", i, sm.term, tt.wterm)
 		}
 
@@ -707,7 +707,7 @@ func TestAllServerStepdown(t *testing.T) {
 			if sm.state != tt.wstate {
 				t.Errorf("#%d.%d state = %v , want %v", i, j, sm.state, tt.wstate)
 			}
-			if sm.term != tt.wterm {
+			if sm.term.Get() != tt.wterm {
 				t.Errorf("#%d.%d term = %v , want %v", i, j, sm.term, tt.wterm)
 			}
 			if int64(len(sm.log.ents)) != tt.windex {
@@ -736,7 +736,7 @@ func TestLeaderAppResp(t *testing.T) {
 		sm.becomeCandidate()
 		sm.becomeLeader()
 		sm.Msgs()
-		sm.Step(Message{From: 1, Type: msgAppResp, Index: tt.index, Term: sm.term})
+		sm.Step(Message{From: 1, Type: msgAppResp, Index: tt.index, Term: sm.term.Get()})
 		msgs := sm.Msgs()
 
 		if len(msgs) != tt.wmsgNum {
@@ -767,7 +767,7 @@ func TestRecvMsgBeat(t *testing.T) {
 	for i, tt := range tests {
 		sm := newStateMachine(0, []int64{0, 1, 2})
 		sm.log = &log{ents: []Entry{{}, {Term: 0}, {Term: 1}}}
-		sm.term = 1
+		sm.term.Set(1)
 		sm.state = tt.state
 		sm.Step(Message{Type: msgBeat})
 

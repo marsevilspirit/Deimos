@@ -101,13 +101,13 @@ func (in *index) decr() {
 	}
 }
 
-type atomicInt64 int64
+type atomicInt int64
 
-func (i *atomicInt64) Set(n int64) {
+func (i *atomicInt) Set(n int64) {
 	atomic.StoreInt64((*int64)(i), n)
 }
 
-func (i *atomicInt64) Get() int64 {
+func (i *atomicInt) Get() int64 {
 	return atomic.LoadInt64((*int64)(i))
 }
 
@@ -121,7 +121,7 @@ func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 type stateMachine struct {
 	id int64
 
-	term int64
+	term atomicInt
 
 	vote int64
 
@@ -138,7 +138,7 @@ type stateMachine struct {
 	msgs []Message
 
 	// the leader id
-	lead atomicInt64
+	lead atomicInt
 
 	// peding reconfiguration
 	pendingConf bool
@@ -181,7 +181,7 @@ func (sm *stateMachine) poll(id int64, v bool) (granted int) {
 // 发送消息
 func (sm *stateMachine) send(m Message) {
 	m.From = sm.id
-	m.Term = sm.term
+	m.Term = sm.term.Get()
 	sm.msgs = append(sm.msgs, m)
 }
 
@@ -226,7 +226,7 @@ func (sm *stateMachine) maybeCommit() bool {
 	sort.Sort(sort.Reverse(matchIndexs))
 	matchIndex := matchIndexs[sm.q()-1]
 
-	return sm.log.maybeCommit(matchIndex, sm.term)
+	return sm.log.maybeCommit(matchIndex, sm.term.Get())
 }
 
 // return the applied entries and update applied index
@@ -235,7 +235,7 @@ func (sm *stateMachine) nextEnts() (ents []Entry) {
 }
 
 func (sm *stateMachine) reset(term int64) {
-	sm.term = term
+	sm.term.Set(term)
 	sm.lead.Set(none)
 	sm.vote = none
 	sm.votes = make(map[int64]bool)
@@ -253,7 +253,7 @@ func (sm *stateMachine) q() int {
 }
 
 func (sm *stateMachine) appendEntry(e Entry) {
-	e.Term = sm.term
+	e.Term = sm.term.Get()
 	sm.log.append(sm.log.lastIndex(), e)
 	sm.indexs[sm.id].update(sm.log.lastIndex())
 	sm.maybeCommit()
@@ -277,7 +277,7 @@ func (sm *stateMachine) becomeCandidate() {
 	if sm.state == stateLeader {
 		panic("invalid transition [leader -> candidate]")
 	}
-	sm.reset(sm.term + 1)
+	sm.reset(sm.term.Get() + 1)
 	sm.vote = sm.id
 	sm.state = stateCandidate
 }
@@ -286,7 +286,7 @@ func (sm *stateMachine) becomeLeader() {
 	if sm.state == stateFollower {
 		panic("invalid transition [follower -> leader]")
 	}
-	sm.reset(sm.term)
+	sm.reset(sm.term.Get())
 	sm.lead.Set(sm.id)
 	sm.state = stateLeader
 
@@ -325,9 +325,9 @@ func (sm *stateMachine) Step(m Message) (ok bool) {
 	switch {
 	case m.Term == 0:
 		// local message
-	case m.Term > sm.term:
+	case m.Term > sm.term.Get():
 		sm.becomeFollower(m.Term, m.From)
-	case m.Term < sm.term:
+	case m.Term < sm.term.Get():
 		// ignore
 		return true
 	}
@@ -398,7 +398,7 @@ func stepCandidate(sm *stateMachine, m Message) bool {
 	case msgProp:
 		return false
 	case msgApp:
-		sm.becomeFollower(sm.term, m.From)
+		sm.becomeFollower(sm.term.Get(), m.From)
 		sm.handleAppendEntries(m)
 	case msgSnap:
 		sm.becomeFollower(m.Term, m.From)
@@ -412,7 +412,7 @@ func stepCandidate(sm *stateMachine, m Message) bool {
 			sm.becomeLeader()
 			sm.bcastAppend()
 		case len(sm.votes) - gr:
-			sm.becomeFollower(sm.term, none)
+			sm.becomeFollower(sm.term.Get(), none)
 		}
 	}
 	return true
