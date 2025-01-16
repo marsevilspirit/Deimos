@@ -218,6 +218,19 @@ func (sm *stateMachine) sendAppend(to int64) {
 	sm.send(m)
 }
 
+func (sm *stateMachine) sendHeartbeat(to int64) {
+	in := sm.indexs[to]
+	index := max(in.next-1, sm.log.lastIndex())
+	m := Message{
+		To:      to,
+		Type:    msgApp,
+		Index:   index,
+		LogTerm: sm.log.term(index),
+		Commit:  sm.log.committed,
+	}
+	sm.send(m)
+}
+
 // 广播附加日志消息
 func (sm *stateMachine) bcastAppend() {
 	for i := range sm.indexs {
@@ -225,6 +238,15 @@ func (sm *stateMachine) bcastAppend() {
 			continue
 		}
 		sm.sendAppend(i)
+	}
+}
+
+func (sm *stateMachine) bcastHeartbeat() {
+	for i := range sm.indexs {
+		if i == sm.id {
+			continue
+		}
+		sm.sendHeartbeat(i)
 	}
 }
 
@@ -381,7 +403,7 @@ type stepFunc func(sm *stateMachine, m Message) bool
 func stepLeader(sm *stateMachine, m Message) bool {
 	switch m.Type {
 	case msgBeat:
-		sm.bcastAppend()
+		sm.bcastHeartbeat()
 	case msgProp:
 		if len(m.Entries) != 1 {
 			panic("unexpected length(entries) of a msgProp")

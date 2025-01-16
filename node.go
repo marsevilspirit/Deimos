@@ -73,7 +73,7 @@ func (n *Node) IsRemoved() bool { return n.removed }
 func (n *Node) Campaign() { n.Step(Message{From: n.sm.id, ClusterId: n.ClusterId(), Type: msgHup}) }
 
 func (n *Node) InitCluster(clusterId int64) {
-	d := make([]byte, 8)
+	d := make([]byte, 10)
 	wn := binary.PutVarint(d, clusterId)
 	n.Propose(ClusterInit, d[:wn])
 }
