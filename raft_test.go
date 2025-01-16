@@ -74,8 +74,8 @@ func TestLogReplication(t *testing.T) {
 		for j, x := range tt.network.peers {
 			sm := x.(*stateMachine)
 
-			if sm.log.committed != tt.wcommitted {
-				t.Errorf("#%d.%d: committed = %d, want %d", i, j, sm.log.committed, tt.wcommitted)
+			if sm.raftLog.committed != tt.wcommitted {
+				t.Errorf("#%d.%d: committed = %d, want %d", i, j, sm.raftLog.committed, tt.wcommitted)
 			}
 
 			ents := make([]Entry, 0)
@@ -107,8 +107,8 @@ func TestSingleNodeCommit(t *testing.T) {
 	tt.send(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{Data: []byte("some data")}}})
 
 	sm := tt.peers[0].(*stateMachine)
-	if sm.log.committed != 3 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 3)
+	if sm.raftLog.committed != 3 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 3)
 	}
 }
 
@@ -125,8 +125,8 @@ func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 	tt.send(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{Data: []byte("some data")}}})
 
 	sm := tt.peers[0].(*stateMachine)
-	if sm.log.committed != 1 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 0)
+	if sm.raftLog.committed != 1 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 0)
 	}
 
 	tt.recover()
@@ -138,21 +138,21 @@ func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 
 	// no log entries from previous term should be committed
 	sm = tt.peers[1].(*stateMachine)
-	if sm.log.committed != 1 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 1)
+	if sm.raftLog.committed != 1 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 1)
 	}
 
 	tt.recover()
 
 	tt.send(Message{From: 1, To: 1, Type: msgBeat})
 
-	if sm.log.committed != 4 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 4)
+	if sm.raftLog.committed != 4 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 4)
 	}
 
 	tt.send(Message{From: 1, To: 1, Type: msgProp, Entries: []Entry{{Data: []byte("some data")}}})
-	if sm.log.committed != 5 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 3)
+	if sm.raftLog.committed != 5 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 3)
 	}
 }
 
@@ -168,8 +168,8 @@ func TestCommitWithoutNewTermEntry(t *testing.T) {
 	tt.send(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{Data: []byte("some data")}}})
 	tt.send(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{Data: []byte("some data")}}})
 	sm := tt.peers[0].(*stateMachine)
-	if sm.log.committed != 1 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 1)
+	if sm.raftLog.committed != 1 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 1)
 	}
 	// network recovery
 	tt.recover()
@@ -177,8 +177,8 @@ func TestCommitWithoutNewTermEntry(t *testing.T) {
 	// after append a ChangeTerm entry from the current term, all entries
 	// should be committed
 	tt.send(Message{From: 1, To: 1, Type: msgHup})
-	if sm.log.committed != 4 {
-		t.Errorf("committed = %d, want %d", sm.log.committed, 4)
+	if sm.raftLog.committed != 4 {
+		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 4)
 	}
 }
 
@@ -197,13 +197,13 @@ func TestDualingCandidates(t *testing.T) {
 	nt.recover()
 	nt.send(Message{From: 2, To: 2, Type: msgHup})
 
-	wlog := &log{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}}, committed: 1}
+	wlog := &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}}, committed: 1}
 
 	tests := []struct {
 		sm    *stateMachine
 		state stateType
 		term  int64
-		log   *log
+		log   *raftLog
 	}{
 		{a, stateFollower, 2, wlog},
 		{b, stateFollower, 2, wlog},
@@ -220,7 +220,7 @@ func TestDualingCandidates(t *testing.T) {
 
 		base := ltoa(tt.log)
 		if sm, ok := nt.peers[int64(i)].(*stateMachine); ok {
-			l := ltoa(sm.log)
+			l := ltoa(sm.raftLog)
 			if g := diffu(base, l); g != "" {
 				t.Errorf("#%d: diff: \n%s", i, g)
 			}
@@ -252,10 +252,10 @@ func TestCandidateConcede(t *testing.T) {
 		t.Errorf("term = %d, want %d", g, 1)
 	}
 
-	wantLog := ltoa(&log{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2})
+	wantLog := ltoa(&raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2})
 	for i, p := range tt.peers {
 		if sm, ok := p.(*stateMachine); ok {
-			l := ltoa(sm.log)
+			l := ltoa(sm.raftLog)
 			if g := diffu(wantLog, l); g != "" {
 				t.Errorf("#%d: diff: \n%s", i, g)
 			}
@@ -284,7 +284,7 @@ func TestOldMessages(t *testing.T) {
 	// pretend we're an old leader trying to make progress; this entry is expected to be ignored.
 	tt.send(Message{From: 0, To: 0, Type: msgApp, Term: 1, Entries: []Entry{{Term: 1}}})
 
-	l := &log{
+	l := &raftLog{
 		ents: []Entry{
 			{}, {Type: Normal, Data: nil, Term: 1},
 			{Type: Normal, Data: nil, Term: 2}, {Type: Normal, Data: nil, Term: 3},
@@ -294,7 +294,7 @@ func TestOldMessages(t *testing.T) {
 	base := ltoa(l)
 	for i, p := range tt.peers {
 		if sm, ok := p.(*stateMachine); ok {
-			l := ltoa(sm.log)
+			l := ltoa(sm.raftLog)
 			if g := diffu(base, l); g != "" {
 				t.Errorf("#%d: diff: \n%s", i, g)
 			}
@@ -339,13 +339,13 @@ func TestProposal(t *testing.T) {
 
 		wantLog := newLog()
 		if tt.success {
-			wantLog = &log{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2}
+			wantLog = &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2}
 		}
 
 		base := ltoa(wantLog)
 		for i, p := range tt.peers {
 			if sm, ok := p.(*stateMachine); ok {
-				l := ltoa(sm.log)
+				l := ltoa(sm.raftLog)
 				if g := diffu(base, l); g != "" {
 					t.Errorf("#%d: diff: \n%s", i, g)
 				}
@@ -376,11 +376,11 @@ func TestProposalByProxy(t *testing.T) {
 		// propose via follower
 		tt.send(Message{From: 1, To: 1, Type: msgProp, Entries: []Entry{{Data: []byte("somedata")}}})
 
-		wantLog := &log{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2}
+		wantLog := &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2}
 		base := ltoa(wantLog)
 		for i, p := range tt.peers {
 			if sm, ok := p.(*stateMachine); ok {
-				l := ltoa(sm.log)
+				l := ltoa(sm.raftLog)
 				if g := diffu(base, l); g != "" {
 					t.Errorf("#%d: diff:\n%s", i, g)
 				}
@@ -429,9 +429,9 @@ func TestCommit(t *testing.T) {
 		for j := 0; j < len(tt.matches); j++ {
 			ins[int64(j)] = &index{tt.matches[j], tt.matches[j] + 1}
 		}
-		sm := &stateMachine{log: &log{ents: tt.logs}, indexs: ins, term: atomicInt(tt.smTerm)}
+		sm := &stateMachine{raftLog: &raftLog{ents: tt.logs}, indexs: ins, term: atomicInt(tt.smTerm)}
 		sm.maybeCommit()
-		if g := sm.log.committed; g != tt.w {
+		if g := sm.raftLog.committed; g != tt.w {
 			t.Errorf("#%d: commit = %d, want %d", i, g, tt.w)
 		}
 	}
@@ -473,9 +473,9 @@ func TestRecvMsgVote(t *testing.T) {
 
 	for i, tt := range tests {
 		sm := &stateMachine{
-			state: tt.state,
-			vote:  tt.voteFor,
-			log:   &log{ents: []Entry{{}, {Term: 2}, {Term: 2}}},
+			state:   tt.state,
+			vote:    tt.voteFor,
+			raftLog: &raftLog{ents: []Entry{{}, {Term: 2}, {Term: 2}}},
 		}
 
 		sm.Step(Message{Type: msgVote, From: 1, Index: tt.i, LogTerm: tt.term})
@@ -506,10 +506,10 @@ func TestMaybeCompact(t *testing.T) {
 		sm := newStateMachine(0, []int64{0, 1, 2})
 		sm.setSnapshoter(tt.snapshoter)
 		for i := 0; i < defaultCompactThreshold*2; i++ {
-			sm.log.append(int64(i), Entry{Term: int64(i + 1)})
+			sm.raftLog.append(int64(i), Entry{Term: int64(i + 1)})
 		}
-		sm.log.applied = tt.applied
-		sm.log.committed = tt.applied
+		sm.raftLog.applied = tt.applied
+		sm.raftLog.committed = tt.applied
 		if g := sm.maybeCompact(); g != tt.wCompact {
 			t.Errorf("#%d: compact = %v, want %v", i, g, tt.wCompact)
 		}
@@ -558,11 +558,11 @@ func TestRestore(t *testing.T) {
 			sm := newStateMachine(0, []int64{0, 1})
 			sm.setSnapshoter(tt.snapshoter)
 			sm.restore(s)
-			if sm.log.lastIndex() != s.Index {
-				t.Errorf("#%d: log.lastIndex = %d, want %d", i, sm.log.lastIndex(), s.Index)
+			if sm.raftLog.lastIndex() != s.Index {
+				t.Errorf("#%d: log.lastIndex = %d, want %d", i, sm.raftLog.lastIndex(), s.Index)
 			}
-			if sm.log.term(s.Index) != s.Term {
-				t.Errorf("#%d: log.lastTerm = %d, want %d", i, sm.log.term(s.Index), s.Term)
+			if sm.raftLog.term(s.Index) != s.Term {
+				t.Errorf("#%d: log.lastTerm = %d, want %d", i, sm.raftLog.term(s.Index), s.Term)
 			}
 			sg := int64Slice(sm.nodes())
 			sw := int64Slice(s.Nodes)
@@ -635,19 +635,19 @@ func TestConf(t *testing.T) {
 	sm.becomeCandidate()
 	sm.becomeLeader()
 	sm.Step(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{Type: AddNode}}})
-	if sm.log.lastIndex() != 2 {
-		t.Errorf("lastindex = %d, want %d", sm.log.lastIndex(), 1)
+	if sm.raftLog.lastIndex() != 2 {
+		t.Errorf("lastindex = %d, want %d", sm.raftLog.lastIndex(), 1)
 	}
 	if !sm.pendingConf {
 		t.Errorf("pendingConf = %v, want %v", sm.pendingConf, true)
 	}
-	if sm.log.ents[2].Type != AddNode {
-		t.Errorf("type = %d, want %d", sm.log.ents[1].Type, AddNode)
+	if sm.raftLog.ents[2].Type != AddNode {
+		t.Errorf("type = %d, want %d", sm.raftLog.ents[1].Type, AddNode)
 	}
 	// deny the second configuration change request if there is a pending one
 	sm.Step(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{Type: AddNode}}})
-	if sm.log.lastIndex() != 2 {
-		t.Errorf("lastindex = %d, want %d", sm.log.lastIndex(), 1)
+	if sm.raftLog.lastIndex() != 2 {
+		t.Errorf("lastindex = %d, want %d", sm.raftLog.lastIndex(), 1)
 	}
 }
 
@@ -663,7 +663,7 @@ func TestConfChangeLeader(t *testing.T) {
 
 	for i, tt := range tests {
 		sm := newStateMachine(0, []int64{0})
-		sm.log = &log{ents: []Entry{{}, {Type: tt.et}}}
+		sm.raftLog = &raftLog{ents: []Entry{{}, {Type: tt.et}}}
 
 		sm.becomeCandidate()
 		sm.becomeLeader()
@@ -710,8 +710,8 @@ func TestAllServerStepdown(t *testing.T) {
 			if sm.term.Get() != tt.wterm {
 				t.Errorf("#%d.%d term = %v , want %v", i, j, sm.term, tt.wterm)
 			}
-			if int64(len(sm.log.ents)) != tt.windex {
-				t.Errorf("#%d.%d index = %v , want %v", i, j, len(sm.log.ents), tt.windex)
+			if int64(len(sm.raftLog.ents)) != tt.windex {
+				t.Errorf("#%d.%d index = %v , want %v", i, j, len(sm.raftLog.ents), tt.windex)
 			}
 			wlead := int64(1)
 			if msgType == msgVote {
@@ -739,7 +739,7 @@ func TestLeaderAppResp(t *testing.T) {
 		// sm term is 1 after it becomes the leader.
 		// thus the last log term must be 1 to be committed.
 		sm := newStateMachine(0, []int64{0, 1, 2})
-		sm.log = &log{ents: []Entry{{}, {Term: 0}, {Term: 1}}}
+		sm.raftLog = &raftLog{ents: []Entry{{}, {Term: 0}, {Term: 1}}}
 		sm.becomeCandidate()
 		sm.becomeLeader()
 		sm.Msgs()
@@ -787,16 +787,16 @@ func TestHandleMsgApp(t *testing.T) {
 	}
 	for i, tt := range tests {
 		sm := &stateMachine{
-			state: stateFollower,
-			term:  2,
-			log:   &log{committed: 0, ents: []Entry{{}, {Term: 1}, {Term: 2}}},
+			state:   stateFollower,
+			term:    2,
+			raftLog: &raftLog{committed: 0, ents: []Entry{{}, {Term: 1}, {Term: 2}}},
 		}
 		sm.handleAppendEntries(tt.m)
-		if sm.log.lastIndex() != tt.wIndex {
-			t.Errorf("#%d: lastIndex = %d, want %d", i, sm.log.lastIndex(), tt.wIndex)
+		if sm.raftLog.lastIndex() != tt.wIndex {
+			t.Errorf("#%d: lastIndex = %d, want %d", i, sm.raftLog.lastIndex(), tt.wIndex)
 		}
-		if sm.log.committed != tt.wCommit {
-			t.Errorf("#%d: committed = %d, want %d", i, sm.log.committed, tt.wCommit)
+		if sm.raftLog.committed != tt.wCommit {
+			t.Errorf("#%d: committed = %d, want %d", i, sm.raftLog.committed, tt.wCommit)
 		}
 		m := sm.Msgs()
 		if len(m) != 1 {
@@ -825,7 +825,7 @@ func TestRecvMsgBeat(t *testing.T) {
 
 	for i, tt := range tests {
 		sm := newStateMachine(0, []int64{0, 1, 2})
-		sm.log = &log{ents: []Entry{{}, {Term: 0}, {Term: 1}}}
+		sm.raftLog = &raftLog{ents: []Entry{{}, {Term: 0}, {Term: 1}}}
 		sm.term.Set(1)
 		sm.state = tt.state
 		sm.Step(Message{From: 0, To: 0, Type: msgBeat})
@@ -869,7 +869,7 @@ func TestProvideSnap(t *testing.T) {
 
 	// force set the next of node 1, so that
 	// node 1 needs a snapshot
-	sm.indexs[1].next = sm.log.offset
+	sm.indexs[1].next = sm.raftLog.offset
 
 	sm.Step(Message{From: 1, To: 0, Type: msgAppResp, Index: -1})
 	msgs = sm.Msgs()
@@ -920,10 +920,10 @@ func TestSlowNodeRestore(t *testing.T) {
 		t.Errorf("follower.snap = %+v, want %+v", follower.snapshoter.GetSnap(), lead.snapshoter.GetSnap())
 	}
 
-	committed := follower.log.lastIndex()
+	committed := follower.raftLog.lastIndex()
 	nt.send(Message{From: 0, To: 0, Type: msgProp, Entries: []Entry{{}}})
-	if follower.log.committed != committed+1 {
-		t.Errorf("follower.comitted = %d, want %d", follower.log.committed, committed+1)
+	if follower.raftLog.committed != committed+1 {
+		t.Errorf("follower.comitted = %d, want %d", follower.raftLog.committed, committed+1)
 	}
 }
 
@@ -933,7 +933,7 @@ func ents(terms ...int64) *stateMachine {
 		ents = append(ents, Entry{Term: term})
 	}
 
-	sm := &stateMachine{log: &log{ents: ents}}
+	sm := &stateMachine{raftLog: &raftLog{ents: ents}}
 	sm.reset(0)
 	return sm
 }

@@ -12,23 +12,27 @@ import (
 // 2.Append any new entries not already in the log
 func TestAppend(t *testing.T) {
 	previousEnts := []Entry{{Term: 1}, {Term: 2}}
+	previousUnstable := int64(3)
 	tests := []struct {
-		after  int64
-		ents   []Entry
-		windex int64
-		wents  []Entry
+		after     int64
+		ents      []Entry
+		windex    int64
+		wents     []Entry
+		wunstable int64
 	}{
 		{
 			2,
 			[]Entry{},
 			2,
 			[]Entry{{Term: 1}, {Term: 2}},
+			3,
 		},
 		{
 			2,
 			[]Entry{{Term: 2}},
 			3,
 			[]Entry{{Term: 1}, {Term: 2}, {Term: 2}},
+			3,
 		},
 		// conflicts with index 1
 		{
@@ -36,6 +40,7 @@ func TestAppend(t *testing.T) {
 			[]Entry{{Term: 2}},
 			1,
 			[]Entry{{Term: 2}},
+			1,
 		},
 		// conflicts with index 2
 		{
@@ -43,17 +48,22 @@ func TestAppend(t *testing.T) {
 			[]Entry{{Term: 3}, {Term: 3}},
 			3,
 			[]Entry{{Term: 1}, {Term: 3}, {Term: 3}},
+			2,
 		},
 	}
 	for i, tt := range tests {
-		log := newLog()
-		log.ents = append(log.ents, previousEnts...)
-		index := log.append(tt.after, tt.ents...)
+		raftLog := newLog()
+		raftLog.ents = append(raftLog.ents, previousEnts...)
+		raftLog.unstable = previousUnstable
+		index := raftLog.append(tt.after, tt.ents...)
 		if index != tt.windex {
 			t.Errorf("#%d: lastIndex = %d, want %d", i, index, tt.windex)
 		}
-		if g := log.entries(1); !reflect.DeepEqual(g, tt.wents) {
+		if g := raftLog.entries(1); !reflect.DeepEqual(g, tt.wents) {
 			t.Errorf("#%d: logEnts = %+v, want %+v", i, g, tt.wents)
+		}
+		if g := raftLog.unstable; g != tt.wunstable {
+			t.Errorf("#%d: unstable = %d, want %d", i, g, tt.wunstable)
 		}
 	}
 }
@@ -63,32 +73,62 @@ func TestAppend(t *testing.T) {
 func TestCompactionSideEffects(t *testing.T) {
 	var i int64
 	lastIndex := int64(1000)
-	log := newLog()
+	raftLog := newLog()
 	for i = 0; i < lastIndex; i++ {
-		log.append(int64(i), Entry{Term: int64(i + 1)})
+		raftLog.append(int64(i), Entry{Term: int64(i + 1)})
 	}
-	log.compact(500)
-	if log.lastIndex() != lastIndex {
-		t.Errorf("lastIndex = %d, want %d", log.lastIndex(), lastIndex)
+	raftLog.compact(500)
+	if raftLog.lastIndex() != lastIndex {
+		t.Errorf("lastIndex = %d, want %d", raftLog.lastIndex(), lastIndex)
 	}
-	for i := log.offset; i <= log.lastIndex(); i++ {
-		if log.term(i) != i {
-			t.Errorf("term(%d) = %d, want %d", i, log.term(i), i)
+	for i := raftLog.offset; i <= raftLog.lastIndex(); i++ {
+		if raftLog.term(i) != i {
+			t.Errorf("term(%d) = %d, want %d", i, raftLog.term(i), i)
 		}
 	}
-	for i := log.offset; i <= log.lastIndex(); i++ {
-		if !log.matchTerm(i, i) {
+	for i := raftLog.offset; i <= raftLog.lastIndex(); i++ {
+		if !raftLog.matchTerm(i, i) {
 			t.Errorf("matchTerm(%d) = false, want true", i)
 		}
 	}
-	prev := log.lastIndex()
-	log.append(log.lastIndex(), Entry{Term: log.lastIndex() + 1})
-	if log.lastIndex() != prev+1 {
-		t.Errorf("lastIndex = %d, want = %d", log.lastIndex(), prev+1)
+
+	unstableEnts := raftLog.unstableEnts()
+	if g := len(unstableEnts); g != 500 {
+		t.Errorf("len(unstableEntries) = %d, want = %d", g, 500)
 	}
-	ents := log.entries(log.lastIndex())
+
+	prev := raftLog.lastIndex()
+	raftLog.append(raftLog.lastIndex(), Entry{Term: raftLog.lastIndex() + 1})
+	if raftLog.lastIndex() != prev+1 {
+		t.Errorf("lastIndex = %d, want = %d", raftLog.lastIndex(), prev+1)
+	}
+	ents := raftLog.entries(raftLog.lastIndex())
 	if len(ents) != 1 {
 		t.Errorf("len(entries) = %d, want = %d", len(ents), 1)
+	}
+}
+
+func TestUnstableEnts(t *testing.T) {
+	previousEnts := []Entry{{Term: 1}, {Term: 2}}
+	tests := []struct {
+		unstable  int64
+		wents     []Entry
+		wunstable int64
+	}{
+		{3, nil, 3},
+		{1, []Entry{{Term: 1}, {Term: 2}}, 3},
+	}
+	for i, tt := range tests {
+		raftLog := newLog()
+		raftLog.ents = append(raftLog.ents, previousEnts...)
+		raftLog.unstable = tt.unstable
+		ents := raftLog.unstableEnts()
+		if !reflect.DeepEqual(ents, tt.wents) {
+			t.Errorf("#%d: unstableEnts = %+v, want %+v", i, ents, tt.wents)
+		}
+		if g := raftLog.unstable; g != tt.wunstable {
+			t.Errorf("#%d: unstable = %d, want %d", i, g, tt.wunstable)
+		}
 	}
 }
 
@@ -129,28 +169,31 @@ func TestCompaction(t *testing.T) {
 
 func TestLogRestore(t *testing.T) {
 	var i int64
-	log := newLog()
+	raftLog := newLog()
 	for i = 0; i < 100; i++ {
-		log.append(i, Entry{Term: i + 1})
+		raftLog.append(i, Entry{Term: i + 1})
 	}
 	index := int64(1000)
 	term := int64(1000)
-	log.restore(index, term)
+	raftLog.restore(index, term)
 	// only has the guard entry
-	if len(log.ents) != 1 {
-		t.Errorf("len = %d, want 0", len(log.ents))
+	if len(raftLog.ents) != 1 {
+		t.Errorf("len = %d, want 0", len(raftLog.ents))
 	}
-	if log.offset != index {
-		t.Errorf("offset = %d, want %d", log.offset, index)
+	if raftLog.offset != index {
+		t.Errorf("offset = %d, want %d", raftLog.offset, index)
 	}
-	if log.applied != index {
-		t.Errorf("applied = %d, want %d", log.applied, index)
+	if raftLog.applied != index {
+		t.Errorf("applied = %d, want %d", raftLog.applied, index)
 	}
-	if log.committed != index {
-		t.Errorf("comitted = %d, want %d", log.committed, index)
+	if raftLog.committed != index {
+		t.Errorf("comitted = %d, want %d", raftLog.committed, index)
 	}
-	if log.term(index) != term {
-		t.Errorf("term = %d, want %d", log.term(index), term)
+	if raftLog.unstable != index+1 {
+		t.Errorf("unstable = %d, want %d", raftLog.unstable, index+1)
+	}
+	if raftLog.term(index) != term {
+		t.Errorf("term = %d, want %d", raftLog.term(index), term)
 	}
 }
 
@@ -158,7 +201,7 @@ func TestIsOutOfBounds(t *testing.T) {
 	offset := int64(100)
 	num := int64(100)
 	// from 100 to 199 is valid
-	l := &log{offset: offset, ents: make([]Entry, num)}
+	l := &raftLog{offset: offset, ents: make([]Entry, num)}
 
 	tests := []struct {
 		index int64
@@ -183,7 +226,7 @@ func TestAt(t *testing.T) {
 	offset := int64(100)
 	num := int64(100)
 	// from 100 to 199 is valid
-	l := &log{offset: offset}
+	l := &raftLog{offset: offset}
 	for i = 0; i < num; i++ {
 		l.ents = append(l.ents, Entry{Term: i})
 	}
@@ -211,7 +254,7 @@ func TestSlice(t *testing.T) {
 	offset := int64(100)
 	num := int64(100)
 	// from 100 to 199 is valid
-	l := &log{offset: offset}
+	l := &raftLog{offset: offset}
 	for i = 0; i < num; i++ {
 		l.ents = append(l.ents, Entry{Term: i})
 	}

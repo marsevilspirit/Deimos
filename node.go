@@ -60,7 +60,7 @@ func (n *Node) Index() int64 { return n.sm.index.Get() }
 
 func (n *Node) Term() int64 { return n.sm.term.Get() }
 
-func (n *Node) Applied() int64 { return n.sm.log.committed }
+func (n *Node) Applied() int64 { return n.sm.raftLog.committed }
 
 func (n *Node) HasLeader() bool { return n.Leader() != none }
 
@@ -199,4 +199,9 @@ func (n *Node) UpdateConf(t int64, c *Config) {
 	}
 
 	n.Propose(t, data)
+}
+
+// UnstableEnts retuens all the entries that need to be persistent.
+func (n *Node) UnstableEnts() []Entry {
+	return n.sm.raftLog.unstableEnts()
 }
