@@ -75,7 +75,7 @@ type State struct {
 	Commit int64
 }
 
-var emptyState = State{}
+var EmptyState = State{}
 
 type Message struct {
 	Type      messageType // 消息类型
@@ -323,6 +323,7 @@ func (sm *stateMachine) q() int {
 
 func (sm *stateMachine) appendEntry(e Entry) {
 	e.Term = sm.term.Get()
+	e.Index = sm.raftLog.lastIndex() + 1
 	sm.index.Set(sm.raftLog.append(sm.raftLog.lastIndex(), e))
 	sm.indexs[sm.id].update(sm.raftLog.lastIndex())
 	sm.maybeCommit()
@@ -603,4 +604,18 @@ func (sm *stateMachine) setState(vote, term, commit int64) {
 	sm.unstableState.Vote = vote
 	sm.unstableState.Term = term
 	sm.unstableState.Commit = commit
+}
+
+func (sm *stateMachine) loadEnts(ents []Entry) {
+	if !sm.raftLog.isEmpty() {
+		panic("cannot load entries when log is not empty")
+	}
+	sm.raftLog.append(0, ents...)
+	sm.raftLog.unstable = sm.raftLog.lastIndex() + 1
+}
+
+func (sm *stateMachine) loadState(state State) {
+	sm.raftLog.committed = state.Commit
+	sm.setTerm(state.Term)
+	sm.setVote(state.Vote)
 }

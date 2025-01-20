@@ -18,9 +18,10 @@ const (
 )
 
 type Entry struct {
-	Type int64
-	Term int64
-	Data []byte
+	Type  int64
+	Term  int64
+	Index int64
+	Data  []byte
 }
 
 func (e *Entry) isConfig() bool {
@@ -97,6 +98,10 @@ func (l *raftLog) matchTerm(index, term int64) bool {
 		return e.Term == term
 	}
 	return false
+}
+
+func (l *raftLog) isEmpty() bool {
+	return l.offset == 0 && len(l.ents) == 1
 }
 
 func (l *raftLog) String() string {

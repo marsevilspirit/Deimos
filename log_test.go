@@ -75,7 +75,7 @@ func TestCompactionSideEffects(t *testing.T) {
 	lastIndex := int64(1000)
 	raftLog := newLog()
 	for i = 0; i < lastIndex; i++ {
-		raftLog.append(int64(i), Entry{Term: int64(i + 1)})
+		raftLog.append(int64(i), Entry{Term: int64(i + 1), Index: int64(i + 1)})
 	}
 	raftLog.compact(500)
 	if raftLog.lastIndex() != lastIndex {
@@ -96,6 +96,9 @@ func TestCompactionSideEffects(t *testing.T) {
 	if g := len(unstableEnts); g != 500 {
 		t.Errorf("len(unstableEntries) = %d, want = %d", g, 500)
 	}
+	if unstableEnts[0].Index != 501 {
+		t.Errorf("Index = %d, want = %d", unstableEnts[0].Index, 501)
+	}
 
 	prev := raftLog.lastIndex()
 	raftLog.append(raftLog.lastIndex(), Entry{Term: raftLog.lastIndex() + 1})
@@ -109,14 +112,14 @@ func TestCompactionSideEffects(t *testing.T) {
 }
 
 func TestUnstableEnts(t *testing.T) {
-	previousEnts := []Entry{{Term: 1}, {Term: 2}}
+	previousEnts := []Entry{{Term: 1, Index: 1}, {Term: 2, Index: 2}}
 	tests := []struct {
 		unstable  int64
 		wents     []Entry
 		wunstable int64
 	}{
 		{3, nil, 3},
-		{1, []Entry{{Term: 1}, {Term: 2}}, 3},
+		{1, previousEnts, 3},
 	}
 	for i, tt := range tests {
 		raftLog := newLog()

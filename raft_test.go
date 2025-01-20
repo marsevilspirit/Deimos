@@ -183,7 +183,7 @@ func TestCommitWithoutNewTermEntry(t *testing.T) {
 }
 
 // 测试在分布式系统中两个候选者节点同时发起选举的情况
-func TestDualingCandidates(t *testing.T) {
+func TestDuelingCandidates(t *testing.T) {
 	a := newStateMachine(0, nil) // k, id are set later
 	b := newStateMachine(0, nil)
 	c := newStateMachine(0, nil)
@@ -197,7 +197,7 @@ func TestDualingCandidates(t *testing.T) {
 	nt.recover()
 	nt.send(Message{From: 2, To: 2, Type: msgHup})
 
-	wlog := &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}}, committed: 1}
+	wlog := &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1, Index: 1}}, committed: 1}
 
 	tests := []struct {
 		sm    *stateMachine
@@ -252,7 +252,7 @@ func TestCandidateConcede(t *testing.T) {
 		t.Errorf("term = %d, want %d", g, 1)
 	}
 
-	wantLog := ltoa(&raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2})
+	wantLog := ltoa(&raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1, Index: 1}, {Term: 1, Index: 2, Data: data}}, committed: 2})
 	for i, p := range tt.peers {
 		if sm, ok := p.(*stateMachine); ok {
 			l := ltoa(sm.raftLog)
@@ -286,8 +286,8 @@ func TestOldMessages(t *testing.T) {
 
 	l := &raftLog{
 		ents: []Entry{
-			{}, {Type: Normal, Data: nil, Term: 1},
-			{Type: Normal, Data: nil, Term: 2}, {Type: Normal, Data: nil, Term: 3},
+			{}, {Type: Normal, Data: nil, Term: 1, Index: 1},
+			{Type: Normal, Data: nil, Term: 2, Index: 2}, {Type: Normal, Data: nil, Term: 3, Index: 3},
 		},
 		committed: 3,
 	}
@@ -339,7 +339,7 @@ func TestProposal(t *testing.T) {
 
 		wantLog := newLog()
 		if tt.success {
-			wantLog = &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2}
+			wantLog = &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1, Index: 1}, {Term: 1, Index: 2, Data: data}}, committed: 2}
 		}
 
 		base := ltoa(wantLog)
@@ -376,7 +376,7 @@ func TestProposalByProxy(t *testing.T) {
 		// propose via follower
 		tt.send(Message{From: 1, To: 1, Type: msgProp, Entries: []Entry{{Data: []byte("somedata")}}})
 
-		wantLog := &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1}, {Term: 1, Data: data}}, committed: 2}
+		wantLog := &raftLog{ents: []Entry{{}, {Type: Normal, Data: nil, Term: 1, Index: 1}, {Term: 1, Data: data, Index: 2}}, committed: 2}
 		base := ltoa(wantLog)
 		for i, p := range tt.peers {
 			if sm, ok := p.(*stateMachine); ok {

@@ -199,6 +199,35 @@ func TestDenial(t *testing.T) {
 	}
 }
 
+func TestLoad(t *testing.T) {
+	ents := []Entry{{Term: 1}, {Term: 2}, {Term: 3}}
+	state := State{Term: 500, Vote: 1, Commit: 3}
+
+	n := Recover(0, ents, state, defaultHeartbeat, defaultElection)
+	if g := n.Next(); !reflect.DeepEqual(g, ents) {
+		t.Errorf("ents = %+v, want %+v", g, ents)
+	}
+	if g := n.sm.term; g.Get() != state.Term {
+		t.Errorf("term = %d, want %d", g.Get(), state.Term)
+	}
+	if g := n.sm.vote; g != state.Vote {
+		t.Errorf("vote = %d, want %d", g, state.Vote)
+	}
+	if g := n.sm.raftLog.committed; g != state.Commit {
+		t.Errorf("committed = %d, want %d", g, state.Commit)
+	}
+	if g := n.UnstableEnts(); g != nil {
+		t.Errorf("unstableEnts = %+v, want nil", g)
+	}
+	if g := n.UnstableState(); !reflect.DeepEqual(g, state) {
+		t.Errorf("unstableState = %+v, want %+v", g, state)
+	}
+	if g := n.Msgs(); len(g) != 0 {
+		t.Errorf("len(msgs) = %d, want 0", len(g))
+	}
+
+}
+
 // dictate is a helper function to make a node the leader.
 func dictate(n *Node) *Node {
 	n.Step(Message{From: n.Id(), Type: msgHup})
