@@ -85,7 +85,6 @@ type Message struct {
 	Term      int64       // 任期
 	LogTerm   int64       // 日志条目的任期
 	Index     int64       // 日志条目的索引
-	PrevTerm  int64       // 前一个日志条目的任期
 	Entries   []Entry     // 日志条目
 	Commit    int64       // 已提交的日志条目索引
 	Snapshot  Snapshot    // 快照

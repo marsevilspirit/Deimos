@@ -1,0 +1,20 @@
+syntax = "proto2";
+package raft;
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+option (gogoproto.goproto_enum_prefix_all) = false;
+option (gogoproto.goproto_unkeyed_all) = false;
+option (gogoproto.goproto_unrecognized_all) = false;
+option (gogoproto.goproto_sizecache_all) = false;
+
+message Entry {
+	optional int64     Term  = 2 [(gogoproto.nullable) = false]; // must be 64-bit aligned for atomic operations
+	optional int64     Index = 3 [(gogoproto.nullable) = false]; // must be 64-bit aligned for atomic operations
+	optional int64     Type  = 1 [(gogoproto.nullable) = false];
+	optional bytes     Data  = 4;
+}
