@@ -1,264 +1,123 @@
 package raft
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	golog "log"
-	"math/rand"
-	"sort"
-	"time"
+	"context"
 )
 
-type Interface interface {
-	Step(m Message) bool
-	Msgs() []Message
+type stateResp struct {
+	state State
+	ents  []Entry
+	cents []Entry
+	msgs  []Message
 }
 
-type tick int64
+func (a State) Equal(b State) bool {
+	return a.Term == b.Term && a.Vote == b.Vote && a.LastIndex == b.LastIndex
+}
 
-type Config struct {
-	NodeId  int64
-	Addr    string
-	Context []byte
+func (sr stateResp) containsUpdates(prev stateResp) bool {
+	return !prev.state.Equal(sr.state) || len(sr.ents) > 0 ||
+		len(sr.cents) > 0 || len(sr.msgs) > 0
 }
 
 type Node struct {
-	sm *stateMachine
-
-	// 用来跟踪选举超时时间的计数器
-	elapsed   tick
-	election  tick
-	heartbeat tick
-
-	// TODO: it needs garbage collection later
-	rmNodes map[int64]struct{}
-	removed bool
+	ctx    context.Context
+	propc  chan []byte
+	recvc  chan Message
+	statec chan stateResp
+	tickc  chan struct{}
 }
 
-func New(id int64, heartbeat, election tick) *Node {
-	if election < heartbeat*3 {
-		panic("election is least three times as heartbeat [election: %d, heartbeat: %d]")
-	}
-
-	// 创建一个局部随机数生成器
-	localRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-
+func Start(ctx context.Context, id int64, peers []int64) *Node {
 	n := &Node{
-		heartbeat: heartbeat,
-		election:  election + tick(localRand.Int31())%election,
-		sm:        newStateMachine(id, []int64{id}),
-		rmNodes:   make(map[int64]struct{}),
+		ctx:    ctx,
+		propc:  make(chan []byte),
+		recvc:  make(chan Message),
+		statec: make(chan stateResp),
+		tickc:  make(chan struct{}),
 	}
-
+	r := newRaft(id, peers)
+	go n.run(r)
 	return n
 }
 
-func Recover(id int64, ents []Entry, state State, heartbeat, election tick) *Node {
-	n := New(id, heartbeat, election)
-	n.sm.loadEnts(ents)
-	n.sm.loadState(state)
-	return n
-}
-
-func (n *Node) Id() int64 { return n.sm.id }
-
-func (n *Node) ClusterId() int64 { return n.sm.clusterId }
-
-func (n *Node) Info() Info {
-	return Info{Id: n.Id()}
-}
-
-func (n *Node) Index() int64 { return n.sm.index.Get() }
-
-func (n *Node) Term() int64 { return n.sm.term.Get() }
-
-func (n *Node) Applied() int64 { return n.sm.raftLog.committed }
-
-func (n *Node) HasLeader() bool { return n.Leader() != none }
-
-func (n *Node) IsLeader() bool { return n.Leader() == n.Id() }
-
-func (n *Node) Leader() int64 { return n.sm.lead.Get() }
-
-func (n *Node) IsRemoved() bool { return n.removed }
-
-func (n *Node) Nodes() []int64 {
-	nodes := make(int64Slice, 0, len(n.sm.indexs))
-	for k := range n.sm.indexs {
-		nodes = append(nodes, k)
-	}
-	sort.Sort(nodes)
-	return nodes
-}
-
-func (n *Node) Campaign() { n.Step(Message{From: n.sm.id, ClusterId: n.ClusterId(), Type: msgHup}) }
-
-func (n *Node) InitCluster(clusterId int64) {
-	d := make([]byte, 10)
-	wn := binary.PutVarint(d, clusterId)
-	n.Propose(ClusterInit, d[:wn])
-}
-
-func (n *Node) Add(id int64, addr string, context []byte) {
-	n.UpdateConf(AddNode, &Config{NodeId: id, Addr: addr, Context: context})
-}
-
-func (n *Node) Remove(id int64) {
-	n.UpdateConf(RemoveNode, &Config{NodeId: id})
-}
-
-func (n *Node) Msgs() []Message { return n.sm.Msgs() }
-
-func (n *Node) Step(m Message) bool {
-	if m.Type == msgDenied {
-		n.removed = true
-		return false
-	}
-
-	if n.ClusterId() != none && m.ClusterId != none && m.ClusterId != n.ClusterId() {
-		golog.Printf("denied a message from node %d, cluster %d, accept cluster %d\n", m.From, m.ClusterId, n.ClusterId())
-		n.sm.send(Message{To: m.From, ClusterId: n.ClusterId(), Type: msgDenied})
-		return true
-	}
-
-	if _, ok := n.rmNodes[m.From]; ok {
-		if m.From != n.sm.id {
-			n.sm.send(Message{To: m.From, ClusterId: n.ClusterId(), Type: msgDenied})
+func (n *Node) run(r *raft) {
+	propc := n.propc
+	statec := n.statec
+	var prev stateResp
+	for {
+		if r.hasLeader() {
+			propc = n.propc
+		} else {
+			propc = nil
 		}
-		return true
-	}
 
-	l := len(n.sm.msgs)
+		sr := stateResp{
+			state: r.State,
+			ents:  r.raftLog.unstableEnts(),
+			cents: r.raftLog.nextEnts(),
+			msgs:  r.msgs,
+		}
 
-	if !n.sm.Step(m) {
-		return false
-	}
+		if sr.containsUpdates(prev) {
+			statec = n.statec
+		} else {
+			statec = nil
+		}
 
-	for _, m := range n.sm.msgs[l:] {
-		switch m.Type {
-		case msgAppResp:
-			// we just heard from the leader of the same term
-			n.elapsed = 0
-		case msgVoteResp:
-			// we just heard from the candidate the node voted for
-			if m.Index >= 0 {
-				n.elapsed = 0
-			}
+		select {
+		case p := <-propc:
+			r.propose(p)
+		case m := <-n.recvc:
+			r.Step(m)
+		case <-n.tickc:
+			// r.tick()
+		case statec <- sr:
+			r.raftLog.resetNextEnts()
+			r.raftLog.resetUnstable()
+			r.msgs = nil
+		case <-n.ctx.Done():
+			return
 		}
 	}
-	return true
 }
 
-// Propose 方法向集群提议一条数据
-func (n *Node) Propose(t int64, data []byte) {
-	n.Step(Message{From: n.sm.id, ClusterId: n.ClusterId(), Type: msgProp, Entries: []Entry{{Type: t, Data: data}}})
-}
-
-// Next return all available entries.
-func (n *Node) Next() []Entry {
-	ents := n.sm.nextEnts()
-	for i := range ents {
-		switch ents[i].Type {
-		case Normal:
-		case ClusterInit:
-			cid, nr := binary.Varint(ents[i].Data)
-			if nr <= 0 {
-				panic("init cluster failed: cannot read cluster id")
-			}
-			if n.ClusterId() != -1 {
-				panic("cannot init a started cluster")
-			}
-			n.sm.clusterId = cid
-		case AddNode:
-			c := new(Config)
-			if err := json.Unmarshal(ents[i].Data, c); err != nil {
-				golog.Println(err)
-				continue
-			}
-			n.sm.addNode(c.NodeId)
-			delete(n.rmNodes, c.NodeId)
-		case RemoveNode:
-			c := new(Config)
-			if err := json.Unmarshal(ents[i].Data, c); err != nil {
-				golog.Println(err)
-				continue
-			}
-			n.sm.removeNode(c.NodeId)
-			n.rmNodes[c.NodeId] = struct{}{}
-			if c.NodeId == n.sm.id {
-				n.removed = true
-			}
-		default:
-			panic("unexpected entry type")
-		}
-	}
-	return ents
-}
-
-// Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
-func (n *Node) Tick() {
-	if !n.sm.promotable {
-		return
-	}
-
-	timeout, msgType := n.election, msgHup
-	if n.sm.state == stateLeader {
-		timeout, msgType = n.heartbeat, msgBeat
-	}
-	if n.elapsed >= timeout {
-		n.Step(Message{From: n.sm.id, ClusterId: n.ClusterId(), Type: msgType})
-		n.elapsed = 0
-	} else {
-		n.elapsed++
+func (n *Node) Tick() error {
+	select {
+	case n.tickc <- struct{}{}:
+		return nil
+	case <-n.ctx.Done():
+		return n.ctx.Err()
 	}
 }
 
-// IsEmpty returns ture if the log of the node is empty.
-func (n *Node) IsEmpty() bool {
-	return n.sm.raftLog.isEmpty()
-}
-
-func (n *Node) UpdateConf(t int64, c *Config) {
-	data, err := json.Marshal(c)
-	if err != nil {
-		panic(err)
+func (n *Node) Propose(ctx context.Context, data []byte) error {
+	select {
+	case n.propc <- data:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-n.ctx.Done():
+		return n.ctx.Err()
 	}
-
-	n.Propose(t, data)
 }
 
-// int64 is offset, []Entry is entries
-// UnstableEnts retuens all the entries that need to be persistent.
-func (n *Node) UnstableEnts() []Entry {
-	return n.sm.raftLog.unstableEnts()
-}
-
-func (n *Node) UnstableState() State {
-	if n.sm.unstableState.IsEmpty() {
-		return EmptyState
+func (n *Node) Step(m Message) error {
+	select {
+	case n.recvc <- m:
+		return nil
+	case <-n.ctx.Done():
+		return n.ctx.Err()
 	}
-	s := n.sm.unstableState
-	n.sm.clearState()
-	return s
 }
 
-func (n *Node) UnstableSnapshot() Snapshot {
-	if n.sm.raftLog.unstableSnapshot.IsEmpty() {
-		return emptySnapshot
+func (n *Node) ReadState(ctx context.Context) (st State, ents, cents []Entry, msgs []Message, err error) {
+	select {
+	case sr := <-n.statec:
+		return sr.state, sr.ents, sr.cents, sr.msgs, nil
+	case <-ctx.Done():
+		return State{}, nil, nil, nil, ctx.Err()
+	case <-n.ctx.Done():
+		return State{}, nil, nil, nil, n.ctx.Err()
 	}
-	s := n.sm.raftLog.unstableSnapshot
-	n.sm.raftLog.unstableSnapshot = emptySnapshot
-	return s
-}
-
-func (n *Node) GetSnap() Snapshot {
-	return n.sm.raftLog.snapshot
-}
-
-func (n *Node) Compact(d []byte) {
-	n.sm.compact(d)
-}
-
-func (n *Node) EntsLen() int {
-	return len(n.sm.raftLog.ents)
 }

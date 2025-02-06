@@ -3,9 +3,7 @@ package raft
 import (
 	"errors"
 	"fmt"
-	golog "log"
 	"sort"
-	"sync/atomic"
 )
 
 // 表示缺失的领导者
@@ -89,40 +87,26 @@ func (m Message) String() string {
 		m.Type, m.From, m.To, m.Term, m.LogTerm, m.Index, m.Commit, len(m.Entries))
 }
 
-type stepper interface {
-	step(m Message)
-}
-
-type index struct {
+type progress struct {
 	match int64 // 已匹配的日志条目索引
 	next  int64 // 下一个要发送的日志条目索引
 }
 
 // 更新已匹配的日志条目索引和下一个要发送的日志条目索引
-func (in *index) update(n int64) {
-	in.match = n
-	in.next = n + 1
+func (pr *progress) update(n int64) {
+	pr.match = n
+	pr.next = n + 1
 }
 
 // 减少下一个要发送的日志条目索引
-func (in *index) decr() {
-	if in.next--; in.next < 1 {
-		in.next = 1
+func (pr *progress) decr() {
+	if pr.next--; pr.next < 1 {
+		pr.next = 1
 	}
 }
 
-func (in *index) String() string {
-	return fmt.Sprintf("n=%d m=%d", in.next, in.match)
-}
-
-type atomicInt int64
-
-func (i *atomicInt) Set(n int64) {
-	atomic.StoreInt64((*int64)(i), n)
-}
-
-func (i *atomicInt) Get() int64 {
-	return atomic.LoadInt64((*int64)(i))
+func (pr *progress) String() string {
+	return fmt.Sprintf("n=%d m=%d", pr.next, pr.match)
 }
 
 // int64Slice implements sort interface
@@ -132,20 +116,16 @@ func (p int64Slice) Len() int           { return len(p) }
 func (p int64Slice) Less(i, j int) bool { return p[i] < p[j] }
 func (p int64Slice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
 
-type stateMachine struct {
-	clusterId int64
-	id        int64
+type raft struct {
+	State
 
-	term atomicInt
+	id int64
 
-	index atomicInt
-
-	vote int64
+	index int64
 
 	raftLog *raftLog
 
-	// 每个节点的日志同步状态
-	indexs map[int64]*index
+	prs map[int64]*progress
 
 	state stateType
 
@@ -155,12 +135,10 @@ type stateMachine struct {
 	msgs []Message
 
 	// the leader id
-	lead atomicInt
+	lead int64
 
 	// peding reconfiguration
-	pendingConf bool
-
-	unstableState State
+	configuring bool
 
 	// promotable indicates whether state machine could be promoted.
 	// New machine has to wait until it has been added to the cluster, or it
@@ -168,380 +146,370 @@ type stateMachine struct {
 	promotable bool
 }
 
-func newStateMachine(id int64, peers []int64) *stateMachine {
+func newRaft(id int64, peers []int64) *raft {
 	if id == none {
 		panic("cannot use none id")
 	}
 
-	sm := &stateMachine{
-		id:        id,
-		clusterId: none,
-		lead:      none,
-		raftLog:   newLog(),
-		indexs:    make(map[int64]*index),
+	r := &raft{
+		id:      id,
+		lead:    none,
+		raftLog: newLog(),
+		prs:     make(map[int64]*progress),
 	}
 	for _, p := range peers {
-		sm.indexs[p] = &index{}
+		r.prs[p] = &progress{}
 	}
-	sm.reset(0)
-	return sm
+	r.reset(0)
+	return r
 }
 
-func (sm *stateMachine) String() string {
-	s := fmt.Sprintf(`state=%v term=%d`, sm.state, sm.term)
-	switch sm.state {
+func (r *raft) hasLeader() bool {
+	return r.lead != none
+}
+
+func (r *raft) propose(data []byte) {
+	r.Step(Message{From: r.id, Type: msgProp, Entries: []Entry{{Data: data}}})
+}
+
+func (r *raft) String() string {
+	s := fmt.Sprintf(`state=%v term=%d`, r.state, r.Term)
+	switch r.state {
 	case stateFollower:
-		s += fmt.Sprintf(" vote=%v lead=%v", sm.vote, sm.lead)
+		s += fmt.Sprintf(" vote=%v lead=%v", r.Vote, r.lead)
 	case stateCandidate:
-		s += fmt.Sprintf(` votes="%v"`, sm.votes)
+		s += fmt.Sprintf(` votes="%v"`, r.votes)
 	case stateLeader:
-		s += fmt.Sprintf(` ins="%v"`, sm.indexs)
+		s += fmt.Sprintf(` ins="%v"`, r.prs)
 	}
 	return s
 }
 
 // 记录投票结果并计算票数
-func (sm *stateMachine) poll(id int64, v bool) (granted int) {
-	if _, ok := sm.votes[id]; !ok {
-		sm.votes[id] = v
+func (r *raft) poll(id int64, v bool) (granted int) {
+	if _, ok := r.votes[id]; !ok {
+		r.votes[id] = v
 	}
-
-	for _, vv := range sm.votes {
+	for _, vv := range r.votes {
 		if vv {
 			granted++
 		}
 	}
-
 	return granted
 }
 
 // 发送消息
-func (sm *stateMachine) send(m Message) {
-	m.ClusterId = sm.clusterId
-	m.From = sm.id
-	m.Term = sm.term.Get()
-	golog.Printf("raft.send.msg %v\n", m)
-	sm.msgs = append(sm.msgs, m)
+func (r *raft) send(m Message) {
+	m.From = r.id
+	m.Term = r.Term
+	r.msgs = append(r.msgs, m)
 }
 
-func (sm *stateMachine) sendAppend(to int64) {
-	index := sm.indexs[to]
-	m := Message{
-		To:    to,
-		Index: index.next - 1,
-	}
-
-	if sm.needSnapshot(m.Index) {
+func (r *raft) sendAppend(to int64) {
+	pr := r.prs[to]
+	m := Message{}
+	m.To = to
+	m.Index = pr.next - 1
+	if r.needSnapshot(m.Index) {
 		m.Type = msgSnap
-		m.Snapshot = sm.raftLog.snapshot
+		m.Snapshot = r.raftLog.snapshot
 	} else {
 		m.Type = msgApp
-		m.LogTerm = sm.raftLog.term(index.next - 1)
-		m.Entries = sm.raftLog.entries(index.next)
-		m.Commit = sm.raftLog.committed
+		m.LogTerm = r.raftLog.term(pr.next - 1)
+		m.Entries = r.raftLog.entries(pr.next)
+		m.Commit = r.raftLog.committed
 	}
-
-	sm.send(m)
+	r.send(m)
 }
 
-func (sm *stateMachine) sendHeartbeat(to int64) {
-	in := sm.indexs[to]
-	index := max(in.next-1, sm.raftLog.lastIndex())
+func (r *raft) sendHeartbeat(to int64) {
+	pr := r.prs[to]
+	index := max(pr.next-1, r.raftLog.lastIndex())
 	m := Message{
 		To:      to,
 		Type:    msgApp,
 		Index:   index,
-		LogTerm: sm.raftLog.term(index),
-		Commit:  sm.raftLog.committed,
+		LogTerm: r.raftLog.term(index),
+		Commit:  r.raftLog.committed,
 	}
-	sm.send(m)
+	r.send(m)
 }
 
 // 广播附加日志消息
-func (sm *stateMachine) bcastAppend() {
-	for i := range sm.indexs {
-		if i == sm.id {
+func (r *raft) bcastAppend() {
+	for i := range r.prs {
+		if i == r.id {
 			continue
 		}
-		sm.sendAppend(i)
+		r.sendAppend(i)
 	}
 }
 
-func (sm *stateMachine) bcastHeartbeat() {
-	for i := range sm.indexs {
-		if i == sm.id {
+func (r *raft) bcastHeartbeat() {
+	for i := range r.prs {
+		if i == r.id {
 			continue
 		}
-		sm.sendHeartbeat(i)
+		r.sendHeartbeat(i)
 	}
 }
 
 // 判断是否可以提交日志
 // 同时更新commit
-func (sm *stateMachine) maybeCommit() bool {
+func (r *raft) maybeCommit() bool {
 	// 不需要0初始化，所以使用0
-	matchIndexs := make(int64Slice, 0, len(sm.indexs))
-	for i := range sm.indexs {
-		matchIndexs = append(matchIndexs, sm.indexs[i].match)
+	matchIndexs := make(int64Slice, 0, len(r.prs))
+	for i := range r.prs {
+		matchIndexs = append(matchIndexs, r.prs[i].match)
 	}
 	sort.Sort(sort.Reverse(matchIndexs))
-	matchIndex := matchIndexs[sm.q()-1]
+	matchIndex := matchIndexs[r.q()-1]
 
-	return sm.raftLog.maybeCommit(matchIndex, sm.term.Get())
+	return r.raftLog.maybeCommit(matchIndex, r.Term)
 }
 
-// return the applied entries and update applied index
-func (sm *stateMachine) nextEnts() (ents []Entry) {
-	return sm.raftLog.nextEnts()
-}
-
-func (sm *stateMachine) reset(term int64) {
-	sm.setTerm(term)
-	sm.lead.Set(none)
-	sm.setVote(none)
-	sm.votes = make(map[int64]bool)
-	for i := range sm.indexs {
-		sm.indexs[i] = &index{next: sm.raftLog.lastIndex() + 1}
-		if i == sm.id {
-			sm.indexs[i].match = sm.raftLog.lastIndex()
+func (r *raft) reset(term int64) {
+	r.Term = term
+	r.lead = none
+	r.Vote = none
+	r.votes = make(map[int64]bool)
+	for i := range r.prs {
+		r.prs[i] = &progress{next: r.raftLog.lastIndex() + 1}
+		if i == r.id {
+			r.prs[i].match = r.raftLog.lastIndex()
 		}
 	}
 }
 
 // 计算多数所需的节点数
-func (sm *stateMachine) q() int {
-	return len(sm.indexs)/2 + 1
+func (r *raft) q() int {
+	return len(r.prs)/2 + 1
 }
 
-func (sm *stateMachine) appendEntry(e Entry) {
-	e.Term = sm.term.Get()
-	e.Index = sm.raftLog.lastIndex() + 1
-	sm.index.Set(sm.raftLog.append(sm.raftLog.lastIndex(), e))
-	sm.indexs[sm.id].update(sm.raftLog.lastIndex())
-	sm.maybeCommit()
+func (r *raft) appendEntry(e Entry) {
+	e.Term = r.Term
+	e.Index = r.raftLog.lastIndex() + 1
+	r.LastIndex = r.raftLog.append(r.raftLog.lastIndex(), e)
+	r.prs[r.id].update(r.raftLog.lastIndex())
+	r.maybeCommit()
 }
 
-func (sm *stateMachine) becomeFollower(term int64, lead int64) {
-	sm.reset(term)
-	sm.lead.Set(lead)
-	sm.state = stateFollower
-	sm.pendingConf = false
+func (r *raft) becomeFollower(term int64, lead int64) {
+	r.reset(term)
+	r.lead = lead
+	r.state = stateFollower
+	r.configuring = false
 }
 
-func (sm *stateMachine) becomeCandidate() {
-	if sm.state == stateLeader {
+func (r *raft) becomeCandidate() {
+	// TODO: remove the panic when the raft implementation is stable
+	if r.state == stateLeader {
 		panic("invalid transition [leader -> candidate]")
 	}
-	sm.reset(sm.term.Get() + 1)
-	sm.setVote(sm.id)
-	sm.state = stateCandidate
+	r.reset(r.Term + 1)
+	r.Vote = r.id
+	r.state = stateCandidate
 }
 
-func (sm *stateMachine) becomeLeader() {
-	if sm.state == stateFollower {
+func (r *raft) becomeLeader() {
+	// TODO: remove the panic when the raft implementation is stable
+	if r.state == stateFollower {
 		panic("invalid transition [follower -> leader]")
 	}
-	sm.reset(sm.term.Get())
-	sm.lead.Set(sm.id)
-	sm.state = stateLeader
-
-	for _, e := range sm.raftLog.entries(sm.raftLog.committed + 1) {
-		if e.Type == AddNode || e.Type == RemoveNode {
-			sm.pendingConf = true
+	r.reset(r.Term)
+	r.lead = r.id
+	r.state = stateLeader
+	for _, e := range r.raftLog.entries(r.raftLog.committed + 1) {
+		if e.isConfig() {
+			r.configuring = true
 		}
 	}
-	sm.appendEntry(Entry{Type: Normal, Data: nil})
+	r.appendEntry(Entry{Type: Normal, Data: nil})
 }
 
-func (sm *stateMachine) Msgs() []Message {
-	msgs := sm.msgs
-	sm.msgs = make([]Message, 0)
+func (r *raft) ReadMessages() []Message {
+	msgs := r.msgs
+	r.msgs = make([]Message, 0)
 	return msgs
 }
 
-func (sm *stateMachine) Step(m Message) (ok bool) {
+func (r *raft) Step(m Message) error {
 	// fmt.Printf("%s node %d receive %+v\n", sm.state.String(), sm.id, m)
-	golog.Printf("raft.step beforeState %v\n", sm)
-	golog.Printf("raft.step beforeLog %v\n", sm.raftLog)
-	defer golog.Printf("raft.step afterLog %v\n", sm.raftLog)
-	defer golog.Printf("raft.step afterState %v\n", sm)
-	golog.Printf("raft.step msg %v\n", m)
+
+	// TODO: this likely allocs - prevent that
+	defer func() { r.Commit = r.raftLog.committed }()
+
 	if m.Type == msgHup {
-		sm.becomeCandidate()
-		if sm.q() == sm.poll(sm.id, true) {
-			sm.becomeLeader()
-			return true
+		r.becomeCandidate()
+		if r.q() == r.poll(r.id, true) {
+			r.becomeLeader()
 		}
-		for i := range sm.indexs {
-			if i == sm.id {
+		for i := range r.prs {
+			if i == r.id {
 				continue
 			}
-			lasti := sm.raftLog.lastIndex()
-			sm.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: sm.raftLog.term(lasti)})
+			lasti := r.raftLog.lastIndex()
+			r.send(Message{To: i, Type: msgVote, Index: lasti, LogTerm: r.raftLog.term(lasti)})
 		}
-		return true
 	}
 
 	switch {
 	case m.Term == 0:
 		// local message
-	case m.Term > sm.term.Get():
+	case m.Term > r.Term:
 		lead := m.From
 		if m.Type == msgVote {
 			lead = none
 		}
-		sm.becomeFollower(m.Term, lead)
-	case m.Term < sm.term.Get():
+		r.becomeFollower(m.Term, lead)
+	case m.Term < r.Term:
 		// ignore
-		return true
 	}
 
-	return stepmap[sm.state](sm, m)
+	stepmap[r.state](r, m)
+	return nil
 }
 
-func (sm *stateMachine) handleAppendEntries(m Message) {
-	if sm.raftLog.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...) {
-		sm.index.Set(sm.raftLog.lastIndex())
-		sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.raftLog.lastIndex()})
+func (r *raft) handleAppendEntries(m Message) {
+	if r.raftLog.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...) {
+		r.LastIndex = r.raftLog.lastIndex()
+		r.send(Message{To: m.From, Type: msgAppResp, Index: r.raftLog.lastIndex()})
 	} else {
-		sm.send(Message{To: m.From, Type: msgAppResp, Index: -1})
+		r.send(Message{To: m.From, Type: msgAppResp, Index: -1})
 	}
 }
 
-func (sm *stateMachine) handleSnapshot(m Message) {
-	if sm.restore(m.Snapshot) {
-		sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.raftLog.lastIndex()})
+func (r *raft) handleSnapshot(m Message) {
+	if r.restore(m.Snapshot) {
+		r.send(Message{To: m.From, Type: msgAppResp, Index: r.raftLog.lastIndex()})
 	} else {
-		sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.raftLog.committed})
+		r.send(Message{To: m.From, Type: msgAppResp, Index: r.raftLog.committed})
 	}
 }
 
-func (sm *stateMachine) addNode(id int64) {
-	sm.addIndexs(id, 0, sm.raftLog.lastIndex()+1)
-	sm.pendingConf = false
-	if id == sm.id {
-		sm.promotable = true
+func (r *raft) addNode(id int64) {
+	r.setProgress(id, 0, r.raftLog.lastIndex()+1)
+	r.configuring = false
+	if id == r.id {
+		r.promotable = true
 	}
 }
 
-func (sm *stateMachine) removeNode(id int64) {
-	sm.deleteIns(id)
-	sm.pendingConf = false
+func (r *raft) removeNode(id int64) {
+	r.delProgress(id)
+	r.configuring = false
 }
 
-type stepFunc func(sm *stateMachine, m Message) bool
+type stepFunc func(r *raft, m Message)
 
-func stepLeader(sm *stateMachine, m Message) bool {
+func stepLeader(r *raft, m Message) {
 	switch m.Type {
 	case msgBeat:
-		sm.bcastHeartbeat()
+		r.bcastHeartbeat()
 	case msgProp:
 		if len(m.Entries) != 1 {
 			panic("unexpected length(entries) of a msgProp")
 		}
 		e := m.Entries[0]
 		if e.isConfig() {
-			if sm.pendingConf {
-				return false
+			if r.configuring {
+				panic("pending conf")
 			}
-			sm.pendingConf = true
+			r.configuring = true
 		}
-		sm.appendEntry(e)
-		sm.bcastAppend()
+		r.appendEntry(e)
+		r.bcastAppend()
 	case msgAppResp:
 		if m.Index < 0 {
-			sm.indexs[m.From].decr()
-			sm.sendAppend(m.From)
+			r.prs[m.From].decr()
+			r.sendAppend(m.From)
 		} else {
-			sm.indexs[m.From].update(m.Index)
-			if sm.maybeCommit() {
-				sm.bcastAppend()
+			r.prs[m.From].update(m.Index)
+			if r.maybeCommit() {
+				r.bcastAppend()
 			}
 		}
 	case msgVote:
-		sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
+		r.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 	}
-	return true
 }
 
-func stepCandidate(sm *stateMachine, m Message) bool {
+func stepCandidate(r *raft, m Message) {
 	switch m.Type {
 	case msgProp:
-		return false
+		panic("no leader")
 	case msgApp:
-		sm.becomeFollower(sm.term.Get(), m.From)
-		sm.handleAppendEntries(m)
+		r.becomeFollower(r.Term, m.From)
+		r.handleAppendEntries(m)
 	case msgSnap:
-		sm.becomeFollower(m.Term, m.From)
-		sm.handleSnapshot(m)
+		r.becomeFollower(m.Term, m.From)
+		r.handleSnapshot(m)
 	case msgVote:
-		sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
+		r.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 	case msgVoteResp:
-		gr := sm.poll(m.From, m.Index >= 0)
-		switch sm.q() {
+		gr := r.poll(m.From, m.Index >= 0)
+		switch r.q() {
 		case gr:
-			sm.becomeLeader()
-			sm.bcastAppend()
-		case len(sm.votes) - gr:
-			sm.becomeFollower(sm.term.Get(), none)
+			r.becomeLeader()
+			r.bcastAppend()
+		case len(r.votes) - gr:
+			r.becomeFollower(r.Term, none)
 		}
 	}
-	return true
 }
 
-func stepFollower(sm *stateMachine, m Message) bool {
+func stepFollower(r *raft, m Message) {
 	switch m.Type {
 	case msgProp:
-		if sm.lead.Get() == none {
-			return false
+		if r.lead == none {
+			panic("no leader")
 		}
-		m.To = sm.lead.Get()
-		sm.send(m)
+		m.To = r.lead
+		r.send(m)
 	case msgApp:
-		sm.lead.Set(m.From)
-		sm.handleAppendEntries(m)
+		r.lead = m.From
+		r.handleAppendEntries(m)
 	case msgSnap:
-		sm.handleSnapshot(m)
+		r.handleSnapshot(m)
 	case msgVote:
-		if (sm.vote == none || sm.vote == m.From) && sm.raftLog.isUpToDate(m.Index, m.LogTerm) {
-			sm.setVote(m.From)
-			sm.send(Message{To: m.From, Type: msgVoteResp, Index: sm.raftLog.lastIndex()})
+		if (r.Vote == none || r.Vote == m.From) && r.raftLog.isUpToDate(m.Index, m.LogTerm) {
+			r.Vote = m.From
+			r.send(Message{To: m.From, Type: msgVoteResp, Index: r.raftLog.lastIndex()})
 		} else {
-			sm.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
+			r.send(Message{To: m.From, Type: msgVoteResp, Index: -1})
 		}
 	}
-	return true
 }
 
-func (sm *stateMachine) compact(d []byte) {
-	sm.raftLog.snap(d, sm.raftLog.applied,
-		sm.raftLog.term(sm.raftLog.applied), sm.nodes())
-	sm.raftLog.compact(sm.raftLog.applied)
+func (r *raft) compact(d []byte) {
+	r.raftLog.snap(d, r.raftLog.applied,
+		r.raftLog.term(r.raftLog.applied), r.nodes())
+	r.raftLog.compact(r.raftLog.applied)
 }
 
-// not restore outdated snapshot
-func (sm *stateMachine) restore(s Snapshot) bool {
-	if s.Index <= sm.raftLog.committed {
+// restore recovers the statemachine from a snapshot. It restores the log and the
+// configuration of statemachine.
+func (r *raft) restore(s Snapshot) bool {
+	if s.Index <= r.raftLog.committed {
 		return false
 	}
-
-	sm.raftLog.restore(s)
-	sm.index.Set(sm.raftLog.lastIndex())
-	sm.indexs = make(map[int64]*index)
+	r.raftLog.restore(s)
+	r.LastIndex = r.raftLog.lastIndex()
+	r.prs = make(map[int64]*progress)
 	for _, n := range s.Nodes {
-		if n == sm.id {
-			sm.addIndexs(n, sm.raftLog.lastIndex(), sm.raftLog.lastIndex()+1)
+		if n == r.id {
+			r.setProgress(n, r.raftLog.lastIndex(), r.raftLog.lastIndex()+1)
 		} else {
-			sm.addIndexs(n, 0, sm.raftLog.lastIndex()+1)
+			r.setProgress(n, 0, r.raftLog.lastIndex()+1)
 		}
 	}
-	sm.pendingConf = false
+	r.configuring = false
 	return true
 }
 
-func (sm *stateMachine) needSnapshot(i int64) bool {
-	if i < sm.raftLog.offset {
-		if sm.raftLog.snapshot.IsEmpty() {
+func (r *raft) needSnapshot(i int64) bool {
+	if i < r.raftLog.offset {
+		if r.raftLog.snapshot.IsEmpty() {
 			panic("need non-empty snapshot")
 		}
 		return true
@@ -549,65 +517,32 @@ func (sm *stateMachine) needSnapshot(i int64) bool {
 	return false
 }
 
-func (sm *stateMachine) nodes() []int64 {
-	nodes := make([]int64, 0, len(sm.indexs))
-	for k := range sm.indexs {
+func (r *raft) nodes() []int64 {
+	nodes := make([]int64, 0, len(r.prs))
+	for k := range r.prs {
 		nodes = append(nodes, k)
 	}
 	return nodes
 }
 
-func (sm *stateMachine) setTerm(term int64) {
-	sm.term.Set(term)
-	sm.saveState()
+func (r *raft) setProgress(id, match, next int64) {
+	r.prs[id] = &progress{next: next, match: match}
 }
-
-func (sm *stateMachine) setVote(vote int64) {
-	sm.vote = vote
-	sm.saveState()
+func (r *raft) delProgress(id int64) {
+	delete(r.prs, id)
 }
-
-func (sm *stateMachine) addIndexs(id, match, next int64) {
-	sm.indexs[id] = &index{match: match, next: next}
-	sm.saveState()
-}
-
-func (sm *stateMachine) deleteIns(id int64) {
-	delete(sm.indexs, id)
-	sm.saveState()
-}
-
-// saveState saves the current state to sm.unstableState
-// when there is a term change, vote change or configuration change,
-// raft must call saveState
-func (sm *stateMachine) saveState() {
-	sm.setState(sm.vote, sm.term.Get(), sm.raftLog.committed)
-}
-
-func (sm *stateMachine) clearState() {
-	sm.setState(0, 0, 0)
-}
-
-func (sm *stateMachine) setState(vote, term, commit int64) {
-	sm.unstableState.Vote = vote
-	sm.unstableState.Term = term
-	sm.unstableState.Commit = commit
-}
-
-func (sm *stateMachine) loadEnts(ents []Entry) {
-	if !sm.raftLog.isEmpty() {
+func (r *raft) loadEnts(ents []Entry) {
+	if !r.raftLog.isEmpty() {
 		panic("cannot load entries when log is not empty")
 	}
-	sm.raftLog.append(0, ents...)
-	sm.raftLog.unstable = sm.raftLog.lastIndex() + 1
+	r.raftLog.append(0, ents...)
+	r.raftLog.unstable = r.raftLog.lastIndex() + 1
 }
-
-func (sm *stateMachine) loadState(state State) {
-	sm.raftLog.committed = state.Commit
-	sm.setTerm(state.Term)
-	sm.setVote(state.Vote)
+func (r *raft) loadState(state State) {
+	r.raftLog.committed = state.Commit
+	r.Term = state.Term
+	r.Vote = state.Vote
 }
-
 func (s *State) IsEmpty() bool {
 	return s.Term == 0
 }

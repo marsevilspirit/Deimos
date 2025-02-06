@@ -30,8 +30,8 @@ type raftLog struct {
 	snapshot         Snapshot
 	unstableSnapshot Snapshot
 
-	// want a compact after the number of log entries
-	// exceeds the compact threshold
+	// want a compact after the number of entries exceeds the threshold
+	// TODO: size might be a better criteria
 	compactThreshold int64
 }
 
@@ -45,62 +45,12 @@ func newLog() *raftLog {
 	}
 }
 
-func (l *raftLog) unstableEnts() []Entry {
-	ents := l.entries(l.unstable)
-	l.unstable = l.lastIndex() + 1
-	return ents
-}
-
-func (l *raftLog) lastIndex() int64 {
-	return int64(len(l.ents)) - 1 + l.offset
-}
-
-func (l *raftLog) append(after int64, ents ...Entry) int64 {
-	l.ents = append(l.slice(l.offset, after+1), ents...)
-	l.unstable = min(l.unstable, after+1)
-	return l.lastIndex()
-}
-
-func (l *raftLog) term(i int64) int64 {
-	if e := l.at(i); e != nil {
-		return e.Term
-	}
-	return -1
-}
-
-func (l *raftLog) findConflict(from int64, ents []Entry) int64 {
-	for i, ne := range ents {
-		if oe := l.at(from + int64(i)); oe == nil || oe.Term != ne.Term {
-			return from + int64(i)
-		}
-	}
-	return -1
-}
-
-func (l *raftLog) entries(i int64) []Entry {
-	// never send out the first entry
-	// first entry is only used for matching
-	// prevLogTerm
-	if i == l.offset {
-		panic("cannot return the first entry in log")
-	}
-
-	return l.slice(i, l.lastIndex()+1)
-}
-
-func (l *raftLog) matchTerm(index, term int64) bool {
-	if e := l.at(index); e != nil {
-		return e.Term == term
-	}
-	return false
-}
-
 func (l *raftLog) isEmpty() bool {
 	return l.offset == 0 && len(l.ents) == 1
 }
 
 func (l *raftLog) String() string {
-	return fmt.Sprintf("offset=%d, committed=%d, applied=%d, len(ents)=%d", l.offset, l.committed, l.applied, len(l.ents))
+	return fmt.Sprintf("offset=%d committed=%d applied=%d len(ents)=%d", l.offset, l.committed, l.applied, len(l.ents))
 }
 
 func (l *raftLog) maybeAppend(index, logTerm, committed int64, ents ...Entry) bool {
@@ -122,30 +72,103 @@ func (l *raftLog) maybeAppend(index, logTerm, committed int64, ents ...Entry) bo
 	return false
 }
 
-func (l *raftLog) isUpToDate(index, term int64) bool {
-	entry := l.at(l.lastIndex())
-	return term > entry.Term || (term == entry.Term && index >= l.lastIndex())
+func (l *raftLog) append(after int64, ents ...Entry) int64 {
+	l.ents = append(l.slice(l.offset, after+1), ents...)
+	l.unstable = min(l.unstable, after+1)
+	return l.lastIndex()
+}
+
+func (l *raftLog) findConflict(from int64, ents []Entry) int64 {
+	for i, ne := range ents {
+		if oe := l.at(from + int64(i)); oe == nil || oe.Term != ne.Term {
+			return from + int64(i)
+		}
+	}
+	return -1
+}
+
+func (l *raftLog) unstableEnts() []Entry {
+	ents := l.entries(l.unstable)
+	if ents == nil {
+		return nil
+	}
+	cpy := make([]Entry, len(ents))
+	copy(cpy, ents)
+	return cpy
+}
+
+func (l *raftLog) resetUnstable() {
+	l.unstable = l.lastIndex() + 1
+}
+
+// nextEnts returns all the available entries for execution.
+// all the returned entries will be marked as applied.
+func (l *raftLog) nextEnts() (ents []Entry) {
+	if l.committed > l.applied {
+		ents := l.slice(l.applied+1, l.committed+1)
+		if ents == nil {
+			return nil
+		}
+		cpy := make([]Entry, len(ents))
+		copy(cpy, ents)
+		return cpy
+	}
+	return nil
+}
+
+func (l *raftLog) resetNextEnts() {
+	if l.committed > l.applied {
+		l.applied = l.committed
+	}
+}
+
+func (l *raftLog) lastIndex() int64 {
+	return int64(len(l.ents)) - 1 + l.offset
+}
+
+func (l *raftLog) term(i int64) int64 {
+	if e := l.at(i); e != nil {
+		return e.Term
+	}
+	return -1
+}
+
+func (l *raftLog) entries(i int64) []Entry {
+	// never send out the first entry
+	// first entry is only used for matching
+	// prevLogTerm
+	if i == l.offset {
+		panic("cannot return the first entry in log")
+	}
+
+	return l.slice(i, l.lastIndex()+1)
+}
+
+func (l *raftLog) isUpToDate(i, term int64) bool {
+	e := l.at(l.lastIndex())
+	return term > e.Term || (term == e.Term && i >= l.lastIndex())
+}
+
+func (l *raftLog) matchTerm(i, term int64) bool {
+	if e := l.at(i); e != nil {
+		return e.Term == term
+	}
+	return false
 }
 
 func (l *raftLog) maybeCommit(maxIndex, term int64) bool {
-	if maxIndex > l.committed && l.matchTerm(maxIndex, term) {
+	if maxIndex > l.committed && l.term(maxIndex) == term {
 		l.committed = maxIndex
 		return true
 	}
 	return false
 }
 
-// nextEnts returns all the avaliable entries for execution.
-// all the returned entries will be marked as applied.
-func (l *raftLog) nextEnts() (ents []Entry) {
-	if l.committed > l.applied {
-		ents = l.slice(l.applied+1, l.committed+1)
-		l.applied = l.committed
-	}
-	return ents
-}
-
-// return the number of emtries after the compaction
+// compact compacts all log entries until i.
+// It removes the log entries before i, exclusive.
+// i must be not smaller than the index of the first entry
+// and not greater than the index of the last entry.
+// the number of entries after compaction will be returned.
 func (l *raftLog) compact(i int64) int64 {
 	if l.isOutOfBounds(i) {
 		panic(fmt.Sprintf("compact %d out of bounds [%d:%d]", i, l.offset, l.lastIndex()))
@@ -176,7 +199,6 @@ func (l *raftLog) restore(s Snapshot) {
 	l.applied = s.Index
 	l.offset = s.Index
 	l.snapshot = s
-	l.unstableSnapshot = s
 }
 
 func (l *raftLog) at(i int64) *Entry {

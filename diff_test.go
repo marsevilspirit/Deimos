@@ -19,8 +19,10 @@ func diffu(a, b string) string {
 	buf, err := cmd.CombinedOutput()
 	if err != nil {
 		if _, ok := err.(*exec.ExitError); ok {
+			// do nothing
 			return string(buf)
 		}
+		panic(err)
 	}
 	return string(buf)
 }
@@ -44,9 +46,9 @@ func mustTemp(pre, body string) string {
 
 func ltoa(l *raftLog) string {
 	s := fmt.Sprintf("committed: %d\n", l.committed)
-	s += fmt.Sprintf("applied: %d\n", l.applied)
+	s += fmt.Sprintf("applied:  %d\n", l.applied)
 	for i, e := range l.ents {
-		s += fmt.Sprintf("%d: %+v\n", i, e)
+		s += fmt.Sprintf("#%d: %+v\n", i, e)
 	}
 	return s
 }
