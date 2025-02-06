@@ -8,6 +8,8 @@ option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
 
-message Info {
-	required int64 id   = 1 [(gogoproto.nullable) = false];
+message State {
+	required int64 term   = 1 [(gogoproto.nullable) = false];
+	required int64 vote   = 2 [(gogoproto.nullable) = false];
+	required int64 commit = 3 [(gogoproto.nullable) = false];
 }
