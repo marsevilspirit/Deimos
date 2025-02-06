@@ -22,11 +22,13 @@ func (e *Entry) isConfig() bool {
 }
 
 type raftLog struct {
-	ents      []Entry
-	unstable  int64
-	committed int64
-	applied   int64
-	offset    int64
+	ents             []Entry
+	unstable         int64
+	committed        int64
+	applied          int64
+	offset           int64
+	snapshot         Snapshot
+	unstableSnapshot Snapshot
 
 	// want a compact after the number of log entries
 	// exceeds the compact threshold
@@ -154,16 +156,27 @@ func (l *raftLog) compact(i int64) int64 {
 	return int64(len(l.ents))
 }
 
+func (l *raftLog) snap(d []byte, index, term int64, nodes []int64) {
+	l.snapshot = Snapshot{
+		Data:  d,
+		Nodes: nodes,
+		Index: index,
+		Term:  term,
+	}
+}
+
 func (l *raftLog) shouldCompact() bool {
 	return (l.applied - l.offset) > l.compactThreshold
 }
 
-func (l *raftLog) restore(index, term int64) {
-	l.ents = []Entry{{Term: term}}
-	l.unstable = index + 1
-	l.committed = index
-	l.applied = index
-	l.offset = index
+func (l *raftLog) restore(s Snapshot) {
+	l.ents = []Entry{{Term: s.Term}}
+	l.unstable = s.Index + 1
+	l.committed = s.Index
+	l.applied = s.Index
+	l.offset = s.Index
+	l.snapshot = s
+	l.unstableSnapshot = s
 }
 
 func (l *raftLog) at(i int64) *Entry {

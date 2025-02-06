@@ -166,9 +166,12 @@ type stateMachine struct {
 	// peding reconfiguration
 	pendingConf bool
 
-	snapshoter Snapshoter
-
 	unstableState State
+
+	// promotable indicates whether state machine could be promoted.
+	// New machine has to wait until it has been added to the cluster, or it
+	// may become the leader of the cluster without it.
+	promotable bool
 }
 
 func newStateMachine(id int64, peers []int64) *stateMachine {
@@ -201,10 +204,6 @@ func (sm *stateMachine) String() string {
 		s += fmt.Sprintf(` ins="%v"`, sm.indexs)
 	}
 	return s
-}
-
-func (sm *stateMachine) setSnapshoter(s Snapshoter) {
-	sm.snapshoter = s
 }
 
 // 记录投票结果并计算票数
@@ -240,7 +239,7 @@ func (sm *stateMachine) sendAppend(to int64) {
 
 	if sm.needSnapshot(m.Index) {
 		m.Type = msgSnap
-		m.Snapshot = sm.snapshoter.GetSnap()
+		m.Snapshot = sm.raftLog.snapshot
 	} else {
 		m.Type = msgApp
 		m.LogTerm = sm.raftLog.term(index.next - 1)
@@ -326,13 +325,6 @@ func (sm *stateMachine) appendEntry(e Entry) {
 	sm.index.Set(sm.raftLog.append(sm.raftLog.lastIndex(), e))
 	sm.indexs[sm.id].update(sm.raftLog.lastIndex())
 	sm.maybeCommit()
-}
-
-// promotable indicates whether state machine could be promoted.
-// New machine has to wait for the first log entry to be committed, or it will
-// always start as a one-node cluster.
-func (sm *stateMachine) promotable() bool {
-	return sm.raftLog.committed != 0
 }
 
 func (sm *stateMachine) becomeFollower(term int64, lead int64) {
@@ -423,13 +415,19 @@ func (sm *stateMachine) handleAppendEntries(m Message) {
 }
 
 func (sm *stateMachine) handleSnapshot(m Message) {
-	sm.restore(m.Snapshot)
-	sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.raftLog.lastIndex()})
+	if sm.restore(m.Snapshot) {
+		sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.raftLog.lastIndex()})
+	} else {
+		sm.send(Message{To: m.From, Type: msgAppResp, Index: sm.raftLog.committed})
+	}
 }
 
 func (sm *stateMachine) addNode(id int64) {
 	sm.addIndexs(id, 0, sm.raftLog.lastIndex()+1)
 	sm.pendingConf = false
+	if id == sm.id {
+		sm.promotable = true
+	}
 }
 
 func (sm *stateMachine) removeNode(id int64) {
@@ -521,21 +519,19 @@ func stepFollower(sm *stateMachine, m Message) bool {
 	return true
 }
 
-func (sm *stateMachine) maybeCompact() bool {
-	if sm.snapshoter == nil || !sm.raftLog.shouldCompact() {
-		return false
-	}
-	sm.snapshoter.Snap(sm.raftLog.applied, sm.raftLog.term(sm.raftLog.applied), sm.nodes())
+func (sm *stateMachine) compact(d []byte) {
+	sm.raftLog.snap(d, sm.raftLog.applied,
+		sm.raftLog.term(sm.raftLog.applied), sm.nodes())
 	sm.raftLog.compact(sm.raftLog.applied)
-	return true
 }
 
-func (sm *stateMachine) restore(s Snapshot) {
-	if sm.snapshoter == nil {
-		panic("try to restore from snapshot, but snapshoter is nil")
+// not restore outdated snapshot
+func (sm *stateMachine) restore(s Snapshot) bool {
+	if s.Index <= sm.raftLog.committed {
+		return false
 	}
 
-	sm.raftLog.restore(s.Index, s.Term)
+	sm.raftLog.restore(s)
 	sm.index.Set(sm.raftLog.lastIndex())
 	sm.indexs = make(map[int64]*index)
 	for _, n := range s.Nodes {
@@ -545,15 +541,14 @@ func (sm *stateMachine) restore(s Snapshot) {
 			sm.addIndexs(n, 0, sm.raftLog.lastIndex()+1)
 		}
 	}
-
 	sm.pendingConf = false
-	sm.snapshoter.Restore(s)
+	return true
 }
 
 func (sm *stateMachine) needSnapshot(i int64) bool {
 	if i < sm.raftLog.offset {
-		if sm.snapshoter == nil {
-			panic("try to generate snapshot, but snapshoter is nil")
+		if sm.raftLog.snapshot.IsEmpty() {
+			panic("need non-empty snapshot")
 		}
 		return true
 	}

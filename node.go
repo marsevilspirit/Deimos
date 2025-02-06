@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	golog "log"
 	"math/rand"
+	"sort"
 	"time"
 )
 
@@ -76,6 +77,15 @@ func (n *Node) IsLeader() bool { return n.Leader() == n.Id() }
 func (n *Node) Leader() int64 { return n.sm.lead.Get() }
 
 func (n *Node) IsRemoved() bool { return n.removed }
+
+func (n *Node) Nodes() []int64 {
+	nodes := make(int64Slice, 0, len(n.sm.indexs))
+	for k := range n.sm.indexs {
+		nodes = append(nodes, k)
+	}
+	sort.Sort(nodes)
+	return nodes
+}
 
 func (n *Node) Campaign() { n.Step(Message{From: n.sm.id, ClusterId: n.ClusterId(), Type: msgHup}) }
 
@@ -183,7 +193,7 @@ func (n *Node) Next() []Entry {
 
 // Tick 方法推进时间，检查是否需要发送选举超时或心跳消息
 func (n *Node) Tick() {
-	if !n.sm.promotable() {
+	if !n.sm.promotable {
 		return
 	}
 
@@ -226,4 +236,25 @@ func (n *Node) UnstableState() State {
 	s := n.sm.unstableState
 	n.sm.clearState()
 	return s
+}
+
+func (n *Node) UnstableSnapshot() Snapshot {
+	if n.sm.raftLog.unstableSnapshot.IsEmpty() {
+		return emptySnapshot
+	}
+	s := n.sm.raftLog.unstableSnapshot
+	n.sm.raftLog.unstableSnapshot = emptySnapshot
+	return s
+}
+
+func (n *Node) GetSnap() Snapshot {
+	return n.sm.raftLog.snapshot
+}
+
+func (n *Node) Compact(d []byte) {
+	n.sm.compact(d)
+}
+
+func (n *Node) EntsLen() int {
+	return len(n.sm.raftLog.ents)
 }

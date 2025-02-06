@@ -10,8 +10,8 @@ type Snapshot struct {
 	Term int64
 }
 
-type Snapshoter interface {
-	Snap(index, term int64, nodes []int64)
-	Restore(snap Snapshot)
-	GetSnap() Snapshot
+var emptySnapshot = Snapshot{}
+
+func (s Snapshot) IsEmpty() bool {
+	return s.Term == 0
 }

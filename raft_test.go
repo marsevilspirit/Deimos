@@ -2,7 +2,6 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
 	"math/rand"
 	"reflect"
 	"sort"
@@ -492,89 +491,37 @@ func TestRecvMsgVote(t *testing.T) {
 	}
 }
 
-func TestMaybeCompact(t *testing.T) {
-	tests := []struct {
-		snapshoter Snapshoter
-		applied    int64
-		wCompact   bool
-	}{
-		{nil, defaultCompactThreshold + 1, false},
-		{new(logSnapshoter), defaultCompactThreshold - 1, false},
-		{new(logSnapshoter), defaultCompactThreshold + 1, true},
-	}
-	for i, tt := range tests {
-		sm := newStateMachine(0, []int64{0, 1, 2})
-		sm.setSnapshoter(tt.snapshoter)
-		for i := 0; i < defaultCompactThreshold*2; i++ {
-			sm.raftLog.append(int64(i), Entry{Term: int64(i + 1)})
-		}
-		sm.raftLog.applied = tt.applied
-		sm.raftLog.committed = tt.applied
-		if g := sm.maybeCompact(); g != tt.wCompact {
-			t.Errorf("#%d: compact = %v, want %v", i, g, tt.wCompact)
-		}
-		if tt.wCompact {
-			s := sm.snapshoter.GetSnap()
-			if s.Index != tt.applied {
-				t.Errorf("#%d: snap.Index = %v, want %v", i, s.Index, tt.applied)
-			}
-			if s.Term != tt.applied {
-				t.Errorf("#%d: snap.Term = %v, want %v", i, s.Index, tt.applied)
-			}
-
-			w := sm.nodes()
-			sw := int64Slice(w)
-			sg := int64Slice(s.Nodes)
-			sort.Sort(sw)
-			sort.Sort(sg)
-			if !reflect.DeepEqual(sg, sw) {
-				t.Errorf("#%d: snap.Nodes = %+v, want %+v", i, sg, sw)
-			}
-		}
-	}
-}
 func TestRestore(t *testing.T) {
 	s := Snapshot{
 		Index: defaultCompactThreshold + 1,
 		Term:  defaultCompactThreshold + 1,
 		Nodes: []int64{0, 1, 2},
 	}
-	tests := []struct {
-		snapshoter Snapshoter
-		wallow     bool
-	}{
-		{nil, false},
-		{new(logSnapshoter), true},
+
+	sm := newStateMachine(0, []int64{0, 1})
+	if ok := sm.restore(s); !ok {
+		t.Fatal("restore fail, want success")
 	}
-	for i, tt := range tests {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					if tt.wallow == true {
-						t.Errorf("%d: allow = %v, want %v", i, false, true)
-					}
-				}
-			}()
-			sm := newStateMachine(0, []int64{0, 1})
-			sm.setSnapshoter(tt.snapshoter)
-			sm.restore(s)
-			if sm.raftLog.lastIndex() != s.Index {
-				t.Errorf("#%d: log.lastIndex = %d, want %d", i, sm.raftLog.lastIndex(), s.Index)
-			}
-			if sm.raftLog.term(s.Index) != s.Term {
-				t.Errorf("#%d: log.lastTerm = %d, want %d", i, sm.raftLog.term(s.Index), s.Term)
-			}
-			sg := int64Slice(sm.nodes())
-			sw := int64Slice(s.Nodes)
-			sort.Sort(sg)
-			sort.Sort(sw)
-			if !reflect.DeepEqual(sg, sw) {
-				t.Errorf("#%d: sm.Nodes = %+v, want %+v", i, sg, sw)
-			}
-			if !reflect.DeepEqual(sm.snapshoter.GetSnap(), s) {
-				t.Errorf("%d: snapshoter.getSnap = %+v, want %+v", i, sm.snapshoter.GetSnap(), s)
-			}
-		}()
+
+	if sm.raftLog.lastIndex() != s.Index {
+		t.Errorf("lastIndex = %d, want %d", sm.raftLog.lastIndex(), s.Index)
+	}
+	if sm.raftLog.term(s.Index) != s.Term {
+		t.Errorf("term = %d, want %d", sm.raftLog.term(s.Index), s.Term)
+	}
+	sg := int64Slice(sm.nodes())
+	sw := int64Slice(s.Nodes)
+	sort.Sort(sg)
+	sort.Sort(sw)
+	if !reflect.DeepEqual(sg, sw) {
+		t.Errorf("nodes = %+v, want %+v", sg, sw)
+	}
+	if !reflect.DeepEqual(sm.raftLog.snapshot, s) {
+		t.Errorf("snapshot = %+v, want %+v", sm.raftLog.snapshot, s)
+	}
+
+	if ok := sm.restore(s); ok {
+		t.Fatal("restore success, want fail")
 	}
 }
 
@@ -849,7 +796,6 @@ func TestProvideSnap(t *testing.T) {
 		Nodes: []int64{0, 1},
 	}
 	sm := newStateMachine(0, []int64{0})
-	sm.setSnapshoter(new(logSnapshoter))
 	// restore the statemachin from a snapshot
 	// so it has a compacted log and a snapshot
 	sm.restore(s)
@@ -890,11 +836,10 @@ func TestRestoreFromSnapMsg(t *testing.T) {
 	m := Message{From: 0, Type: msgSnap, Term: 1, Snapshot: s}
 
 	sm := newStateMachine(1, []int64{0, 1})
-	sm.setSnapshoter(new(logSnapshoter))
 	sm.Step(m)
 
-	if !reflect.DeepEqual(sm.snapshoter.GetSnap(), s) {
-		t.Errorf("snapshot = %+v, want %+v", sm.snapshoter.GetSnap(), s)
+	if !reflect.DeepEqual(sm.raftLog.snapshot, s) {
+		t.Errorf("snapshot = %+v, want %+v", sm.raftLog.snapshot, s)
 	}
 }
 func TestSlowNodeRestore(t *testing.T) {
@@ -908,16 +853,14 @@ func TestSlowNodeRestore(t *testing.T) {
 
 	lead := nt.peers[0].(*stateMachine)
 	lead.nextEnts()
-	if !lead.maybeCompact() {
-		t.Errorf("compacted = false, want true")
-	}
+	lead.compact(nil)
 
 	nt.recover()
 	nt.send(Message{From: 0, To: 0, Type: msgBeat})
 
 	follower := nt.peers[2].(*stateMachine)
-	if !reflect.DeepEqual(follower.snapshoter.GetSnap(), lead.snapshoter.GetSnap()) {
-		t.Errorf("follower.snap = %+v, want %+v", follower.snapshoter.GetSnap(), lead.snapshoter.GetSnap())
+	if !reflect.DeepEqual(follower.raftLog.snapshot, lead.raftLog.snapshot) {
+		t.Errorf("follower.snap = %+v, want %+v", follower.raftLog.snapshot, lead.raftLog.snapshot)
 	}
 
 	committed := follower.raftLog.lastIndex()
@@ -993,7 +936,6 @@ func newNetwork(peers ...Interface) *network {
 		switch v := p.(type) {
 		case nil:
 			sm := newStateMachine(nid, defaultPeerAddrs)
-			sm.setSnapshoter(new(logSnapshoter))
 			npeers[nid] = sm
 		case *stateMachine:
 			v.id = nid
@@ -1085,24 +1027,3 @@ func (blackHole) Step(Message) bool { return true }
 func (blackHole) Msgs() []Message   { return nil }
 
 var nopStepper = &blackHole{}
-
-type logSnapshoter struct {
-	snapshot Snapshot
-}
-
-func (s *logSnapshoter) Snap(index, term int64, nodes []int64) {
-	s.snapshot = Snapshot{
-		Index: index,
-		Term:  term,
-		Nodes: nodes,
-		Data:  []byte(fmt.Sprintf("%d-%d", term, index)),
-	}
-}
-
-func (s *logSnapshoter) Restore(ss Snapshot) {
-	s.snapshot = ss
-}
-
-func (s *logSnapshoter) GetSnap() Snapshot {
-	return s.snapshot
-}

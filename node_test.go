@@ -14,8 +14,7 @@ func TestTickMsgHup(t *testing.T) {
 	n := New(0, defaultHeartbeat, defaultElection)
 	n.sm = newStateMachine(0, []int64{0, 1, 2})
 
-	// simulate to patch the join log
-	n.Step(Message{From: 1, Type: msgApp, Commit: 1, Entries: []Entry{{}}})
+	n.sm.promotable = true
 
 	for i := 0; i < defaultElection*2; i++ {
 		n.Tick()
@@ -81,6 +80,7 @@ func TestResetElapse(t *testing.T) {
 	for i, tt := range tests {
 		n := New(0, defaultHeartbeat, defaultElection)
 		n.sm = newStateMachine(0, []int64{0, 1, 2})
+		n.sm.promotable = true
 		n.sm.raftLog.append(0, Entry{Type: Normal, Term: 1})
 		n.sm.term = 2
 		n.sm.raftLog.committed = 1
