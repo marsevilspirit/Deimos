@@ -686,7 +686,7 @@ func TestAllServerStepdown(t *testing.T) {
 		{stateLeader, stateFollower, 3, 2},
 	}
 
-	tmsgTypes := [...]messageType{msgVote, msgApp}
+	tmsgTypes := [...]int64{msgVote, msgApp}
 	tterm := int64(3)
 
 	for i, tt := range tests {
@@ -921,7 +921,7 @@ func ents(terms ...int64) *raft {
 type network struct {
 	peers   map[int64]Interface
 	dropm   map[connem]float64
-	ignorem map[messageType]bool
+	ignorem map[int64]bool
 }
 
 // newNetwork initializes a network from peers.
@@ -958,7 +958,7 @@ func newNetwork(peers ...Interface) *network {
 	return &network{
 		peers:   npeers,
 		dropm:   make(map[connem]float64),
-		ignorem: make(map[messageType]bool),
+		ignorem: make(map[int64]bool),
 	}
 }
 
@@ -990,13 +990,13 @@ func (nw *network) isolate(id int64) {
 	}
 }
 
-func (nw *network) ignore(t messageType) {
+func (nw *network) ignore(t int64) {
 	nw.ignorem[t] = true
 }
 
 func (nw *network) recover() {
 	nw.dropm = make(map[connem]float64)
-	nw.ignorem = make(map[messageType]bool)
+	nw.ignorem = make(map[int64]bool)
 }
 
 func (nw *network) filter(msgs []Message) []Message {

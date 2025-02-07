@@ -16,18 +16,14 @@ func Example_Node() {
 	var prev State
 	for {
 		// ReadState blocks until there is new state ready.
-		st, ents, cents, msgs, err := n.ReadState(context.Background())
-		if err != nil {
-			log.Fatal(err)
+		rd := <-n.Ready()
+		if !prev.Equal(rd.State) {
+			saveStateToDisk(rd.State)
+			prev = rd.State
 		}
 
-		if !prev.Equal(st) {
-			saveStateToDisk(st)
-			prev = st
-		}
-
-		saveToDisk(ents)
-		go applyToStore(cents)
-		sendMessages(msgs)
+		saveToDisk(rd.Entries)
+		go applyToStore(rd.CommittedEntries)
+		sendMessages(rd.Messages)
 	}
 }

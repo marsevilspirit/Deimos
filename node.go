@@ -1,9 +1,6 @@
 package raft
 
-import (
-	"context"
-	"sort"
-)
+import "context"
 
 type Ready struct {
 	// The current state of a Node.
@@ -106,42 +103,33 @@ func (n *Node) Tick() error {
 }
 
 // client sends proposals to the leader using this method. The proposals are
-func (n *Node) Propose(ctx context.Context, data []byte) error {
+func (n *Node) Propose(ctx context.Context, id int64, data []byte) error {
 	return n.Step(ctx,
-		[]Message{
-			{
-				Type: msgProp,
-				Entries: []Entry{
-					{Data: data},
-				},
+		Message{
+			Type: msgProp,
+			Entries: []Entry{
+				{Id: id, Data: data},
 			},
 		},
 	)
 }
 
-// Step advances the state machine using msgs. Proposals are priotized last so
-// that any votes and vote requests will not be wedged behind proposals and
-// prevent this cluster from making progress. The ctx.Err() will be returned,
+// Step advances the state machine using msgs. The ctx.Err() will be returned,
 // if any.
-func (n *Node) Step(ctx context.Context, msgs []Message) error {
-	sort.Sort(sort.Reverse(byMsgType(msgs)))
-
-	for _, m := range msgs {
-		ch := n.recvc
-		if m.Type == msgProp {
-			ch = n.propc
-		}
-
-		select {
-		case ch <- m:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-n.ctx.Done():
-			return n.ctx.Err()
-		}
+func (n *Node) Step(ctx context.Context, m Message) error {
+	ch := n.recvc
+	if m.Type == msgProp {
+		ch = n.propc
 	}
-	return nil
+
+	select {
+	case ch <- m:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-n.ctx.Done():
+		return n.ctx.Err()
+	}
 }
 
 // ReadState returns the current point-in-time state.

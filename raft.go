@@ -12,15 +12,15 @@ const none = -1
 type messageType int64
 
 const (
-	msgHup      messageType = iota // 开始选举
-	msgBeat                        // 心跳
-	msgProp                        // 提议
-	msgApp                         // 附加日志
-	msgAppResp                     // 附加日志响应
-	msgVote                        // 请求投票
-	msgVoteResp                    // 请求投票响应
-	msgSnap                        // 快照
-	msgDenied                      // 拒绝
+	msgHup      int64 = iota // 开始选举
+	msgBeat                  // 心跳
+	msgProp                  // 提议
+	msgApp                   // 附加日志
+	msgAppResp               // 附加日志响应
+	msgVote                  // 请求投票
+	msgVoteResp              // 请求投票响应
+	msgSnap                  // 快照
+	msgDenied                // 拒绝
 )
 
 // 消息类型的字符串表示
@@ -68,24 +68,6 @@ func (st stateType) String() string {
 }
 
 var EmptyState = State{}
-
-type Message struct {
-	Type      messageType // 消息类型
-	ClusterId int64       // 集群ID
-	From      int64       // 发送者
-	To        int64       // 接收者
-	Term      int64       // 任期
-	LogTerm   int64       // 日志条目的任期
-	Index     int64       // 日志条目的索引
-	Entries   []Entry     // 日志条目
-	Commit    int64       // 已提交的日志条目索引
-	Snapshot  Snapshot    // 快照
-}
-
-func (m Message) String() string {
-	return fmt.Sprintf("type=%v from=%x to=%x term=%d logTerm=%d i=%d ci=%d len(ents)=%d",
-		m.Type, m.From, m.To, m.Term, m.LogTerm, m.Index, m.Commit, len(m.Entries))
-}
 
 type progress struct {
 	match int64 // 已匹配的日志条目索引
@@ -505,7 +487,7 @@ func (r *raft) restore(s Snapshot) bool {
 
 func (r *raft) needSnapshot(i int64) bool {
 	if i < r.raftLog.offset {
-		if r.raftLog.snapshot.IsEmpty() {
+		if r.raftLog.snapshot.Term == 0 {
 			panic("need non-empty snapshot")
 		}
 		return true
@@ -524,9 +506,11 @@ func (r *raft) nodes() []int64 {
 func (r *raft) setProgress(id, match, next int64) {
 	r.prs[id] = &progress{next: next, match: match}
 }
+
 func (r *raft) delProgress(id int64) {
 	delete(r.prs, id)
 }
+
 func (r *raft) loadEnts(ents []Entry) {
 	if !r.raftLog.isEmpty() {
 		panic("cannot load entries when log is not empty")
@@ -534,11 +518,9 @@ func (r *raft) loadEnts(ents []Entry) {
 	r.raftLog.append(0, ents...)
 	r.raftLog.unstable = r.raftLog.lastIndex() + 1
 }
+
 func (r *raft) loadState(state State) {
 	r.raftLog.committed = state.Commit
 	r.Term = state.Term
 	r.Vote = state.Vote
-}
-func (s *State) IsEmpty() bool {
-	return s.Term == 0
 }
