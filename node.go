@@ -2,38 +2,50 @@ package raft
 
 import (
 	"context"
+	"sort"
 )
 
-type stateResp struct {
-	state State
-	ents  []Entry
-	cents []Entry
-	msgs  []Message
+type Ready struct {
+	// The current state of a Node.
+	State
+
+	// Entries specifies entries to be saved to stable storage BEFORE
+	// Messages are sent.
+	Entries []Entry
+
+	// CommittedEntries specifies entries to be committed to a
+	// store/state-machine. These have previously been committed to stable
+	// store.
+	CommittedEntries []Entry
+
+	// Messages specifies outbound messages to be sent AFTER Entries are
+	// committed to stable storage.
+	Messages []Message
 }
 
 func (a State) Equal(b State) bool {
 	return a.Term == b.Term && a.Vote == b.Vote && a.LastIndex == b.LastIndex
 }
 
-func (sr stateResp) containsUpdates(prev stateResp) bool {
-	return !prev.state.Equal(sr.state) || len(sr.ents) > 0 ||
-		len(sr.cents) > 0 || len(sr.msgs) > 0
+func (rd Ready) containsUpdates(prev Ready) bool {
+	return !prev.State.Equal(rd.State) || len(rd.Entries) > 0 ||
+		len(rd.CommittedEntries) > 0 || len(rd.Messages) > 0
 }
 
 type Node struct {
 	ctx    context.Context
-	propc  chan []byte
+	propc  chan Message
 	recvc  chan Message
-	statec chan stateResp
+	readyc chan Ready
 	tickc  chan struct{}
 }
 
-func Start(ctx context.Context, id int64, peers []int64) *Node {
-	n := &Node{
+func Start(ctx context.Context, id int64, peers []int64) Node {
+	n := Node{
 		ctx:    ctx,
-		propc:  make(chan []byte),
+		propc:  make(chan Message),
 		recvc:  make(chan Message),
-		statec: make(chan stateResp),
+		readyc: make(chan Ready),
 		tickc:  make(chan struct{}),
 	}
 	r := newRaft(id, peers)
@@ -43,8 +55,9 @@ func Start(ctx context.Context, id int64, peers []int64) *Node {
 
 func (n *Node) run(r *raft) {
 	propc := n.propc
-	statec := n.statec
-	var prev stateResp
+	readyc := n.readyc
+
+	var prev Ready
 	for {
 		if r.hasLeader() {
 			propc = n.propc
@@ -52,27 +65,28 @@ func (n *Node) run(r *raft) {
 			propc = nil
 		}
 
-		sr := stateResp{
-			state: r.State,
-			ents:  r.raftLog.unstableEnts(),
-			cents: r.raftLog.nextEnts(),
-			msgs:  r.msgs,
+		rd := Ready{
+			State:            r.State,
+			Entries:          r.raftLog.unstableEnts(),
+			CommittedEntries: r.raftLog.nextEnts(),
+			Messages:         r.msgs,
 		}
 
-		if sr.containsUpdates(prev) {
-			statec = n.statec
+		if rd.containsUpdates(prev) {
+			readyc = n.readyc
 		} else {
-			statec = nil
+			readyc = nil
 		}
 
 		select {
-		case p := <-propc:
-			r.propose(p)
+		case m := <-propc:
+			m.From = r.id
+			r.Step(m)
 		case m := <-n.recvc:
 			r.Step(m)
 		case <-n.tickc:
 			// r.tick()
-		case statec <- sr:
+		case readyc <- rd:
 			r.raftLog.resetNextEnts()
 			r.raftLog.resetUnstable()
 			r.msgs = nil
@@ -91,33 +105,52 @@ func (n *Node) Tick() error {
 	}
 }
 
+// client sends proposals to the leader using this method. The proposals are
 func (n *Node) Propose(ctx context.Context, data []byte) error {
-	select {
-	case n.propc <- data:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-n.ctx.Done():
-		return n.ctx.Err()
-	}
+	return n.Step(ctx,
+		[]Message{
+			{
+				Type: msgProp,
+				Entries: []Entry{
+					{Data: data},
+				},
+			},
+		},
+	)
 }
 
-func (n *Node) Step(m Message) error {
-	select {
-	case n.recvc <- m:
-		return nil
-	case <-n.ctx.Done():
-		return n.ctx.Err()
+// Step advances the state machine using msgs. Proposals are priotized last so
+// that any votes and vote requests will not be wedged behind proposals and
+// prevent this cluster from making progress. The ctx.Err() will be returned,
+// if any.
+func (n *Node) Step(ctx context.Context, msgs []Message) error {
+	sort.Sort(sort.Reverse(byMsgType(msgs)))
+
+	for _, m := range msgs {
+		ch := n.recvc
+		if m.Type == msgProp {
+			ch = n.propc
+		}
+
+		select {
+		case ch <- m:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-n.ctx.Done():
+			return n.ctx.Err()
+		}
 	}
+	return nil
 }
 
-func (n *Node) ReadState(ctx context.Context) (st State, ents, cents []Entry, msgs []Message, err error) {
-	select {
-	case sr := <-n.statec:
-		return sr.state, sr.ents, sr.cents, sr.msgs, nil
-	case <-ctx.Done():
-		return State{}, nil, nil, nil, ctx.Err()
-	case <-n.ctx.Done():
-		return State{}, nil, nil, nil, n.ctx.Err()
-	}
+// ReadState returns the current point-in-time state.
+func (n *Node) Ready() <-chan Ready {
+	return n.readyc
 }
+
+type byMsgType []Message
+
+func (msgs byMsgType) Len() int           { return len(msgs) }
+func (msgs byMsgType) Less(i, j int) bool { return msgs[i].Type == msgProp }
+func (msgs byMsgType) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }

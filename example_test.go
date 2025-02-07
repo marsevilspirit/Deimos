@@ -1,10 +1,6 @@
 package raft
 
-import (
-	"log"
-
-	"context"
-)
+import "context"
 
 func applyToStore(ents []Entry)   {}
 func sendMessages(msgs []Message) {}
