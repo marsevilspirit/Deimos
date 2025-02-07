@@ -59,12 +59,6 @@ var stmap = [...]string{
 	stateLeader:    "Leader",
 }
 
-var stepmap = [...]stepFunc{
-	stateFollower:  stepFollower,
-	stateCandidate: stepCandidate,
-	stateLeader:    stepLeader,
-}
-
 func (st stateType) String() string {
 	return stmap[int64(st)]
 }
@@ -121,18 +115,11 @@ type raft struct {
 	// the leader id
 	lead int64
 
-	// peding reconfiguration
-	configuring bool
-
-	// promotable indicates whether state machine could be promoted.
-	// New machine has to wait until it has been added to the cluster, or it
-	// may become the leader of the cluster without it.
-	promotable bool
-
 	elapsed          int
 	heartbeatTimeout int
 	electionTimeout  int
 	tick             func()
+	step             stepFunc
 }
 
 func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
@@ -259,6 +246,7 @@ func (r *raft) reset(term int64) {
 	r.Term = term
 	r.lead = none
 	r.Vote = none
+	r.elapsed = 0
 	r.votes = make(map[int64]bool)
 	for i := range r.prs {
 		r.prs[i] = &progress{next: r.raftLog.lastIndex() + 1}
@@ -283,9 +271,10 @@ func (r *raft) appendEntry(e pb.Entry) {
 
 func (r *raft) tickElection() {
 	r.elapsed++
+	// TODO (xiangli): elctionTimeout should be randomized.
 	if r.elapsed > r.electionTimeout {
 		r.elapsed = 0
-		r.campaign()
+		r.Step(pb.Message{From: r.id, Type: msgHup})
 	}
 }
 
@@ -293,48 +282,40 @@ func (r *raft) tickHeartbeat() {
 	r.elapsed++
 	if r.elapsed > r.heartbeatTimeout {
 		r.elapsed = 0
-		r.bcastHeartbeat()
+		r.Step(pb.Message{From: r.id, Type: msgBeat})
 	}
 }
 
-func (r *raft) setTick(f func()) {
-	r.elapsed = 0
-	r.tick = f
-}
-
 func (r *raft) becomeFollower(term int64, lead int64) {
-	r.setTick(r.tickElection)
+	r.step = stepFollower
 	r.reset(term)
+	r.tick = r.tickElection
 	r.lead = lead
 	r.state = stateFollower
-	r.configuring = false
 }
 
 func (r *raft) becomeCandidate() {
-	r.setTick(r.tickElection)
 	// TODO: remove the panic when the raft implementation is stable
 	if r.state == stateLeader {
 		panic("invalid transition [leader -> candidate]")
 	}
+	r.step = stepCandidate
 	r.reset(r.Term + 1)
+	r.tick = r.tickElection
 	r.Vote = r.id
 	r.state = stateCandidate
 }
 
 func (r *raft) becomeLeader() {
-	r.setTick(r.tickHeartbeat)
 	// TODO: remove the panic when the raft implementation is stable
 	if r.state == stateFollower {
 		panic("invalid transition [follower -> leader]")
 	}
+	r.step = stepLeader
 	r.reset(r.Term)
+	r.tick = r.tickElection
 	r.lead = r.id
 	r.state = stateLeader
-	for _, e := range r.raftLog.entries(r.raftLog.committed + 1) {
-		if isConfig(e) {
-			r.configuring = true
-		}
-	}
 	r.appendEntry(pb.Entry{Type: Normal, Data: nil})
 }
 
@@ -381,7 +362,7 @@ func (r *raft) Step(m pb.Message) error {
 		// ignore
 	}
 
-	stepmap[r.state](r, m)
+	r.step(r, m)
 	return nil
 }
 
@@ -402,19 +383,6 @@ func (r *raft) handleSnapshot(m pb.Message) {
 	}
 }
 
-func (r *raft) addNode(id int64) {
-	r.setProgress(id, 0, r.raftLog.lastIndex()+1)
-	r.configuring = false
-	if id == r.id {
-		r.promotable = true
-	}
-}
-
-func (r *raft) removeNode(id int64) {
-	r.delProgress(id)
-	r.configuring = false
-}
-
 type stepFunc func(r *raft, m pb.Message)
 
 func stepLeader(r *raft, m pb.Message) {
@@ -426,12 +394,6 @@ func stepLeader(r *raft, m pb.Message) {
 			panic("unexpected length(entries) of a msgProp")
 		}
 		e := m.Entries[0]
-		if isConfig(e) {
-			if r.configuring {
-				panic("pending conf")
-			}
-			r.configuring = true
-		}
 		r.appendEntry(e)
 		r.bcastAppend()
 	case msgAppResp:
@@ -454,7 +416,6 @@ func stepCandidate(r *raft, m pb.Message) {
 	case msgProp:
 		panic("no leader")
 	case msgApp:
-		r.elapsed = 0
 		r.becomeFollower(r.Term, m.From)
 		r.handleAppendEntries(m)
 	case msgSnap:
@@ -490,8 +451,8 @@ func stepFollower(r *raft, m pb.Message) {
 		r.elapsed = 0
 		r.handleSnapshot(m)
 	case msgVote:
-		// TODO: maybe reset elapsed
 		if (r.Vote == none || r.Vote == m.From) && r.raftLog.isUpToDate(m.Index, m.LogTerm) {
+			r.elapsed = 0
 			r.Vote = m.From
 			r.send(pb.Message{To: m.From, Type: msgVoteResp, Index: r.raftLog.lastIndex()})
 		} else {
@@ -522,7 +483,6 @@ func (r *raft) restore(s pb.Snapshot) bool {
 			r.setProgress(n, 0, r.raftLog.lastIndex()+1)
 		}
 	}
-	r.configuring = false
 	return true
 }
 

@@ -21,10 +21,6 @@ const (
 	defaultCompactThreshold = 10000
 )
 
-func isConfig(e pb.Entry) bool {
-	return e.Type == AddNode || e.Type == RemoveNode
-}
-
 type raftLog struct {
 	ents             []pb.Entry
 	unstable         int64

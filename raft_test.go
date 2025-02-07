@@ -550,11 +550,18 @@ func TestRecvMsgVote(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		sm := &raft{
-			state:   tt.state,
-			State:   pb.State{Vote: tt.voteFor},
-			raftLog: &raftLog{ents: []pb.Entry{{}, {Term: 2}, {Term: 2}}},
+		sm := newRaft(0, []int64{0}, 0, 0)
+		sm.state = tt.state
+		switch tt.state {
+		case stateFollower:
+			sm.step = stepFollower
+		case stateCandidate:
+			sm.step = stepCandidate
+		case stateLeader:
+			sm.step = stepLeader
 		}
+		sm.State = pb.State{Vote: tt.voteFor}
+		sm.raftLog = &raftLog{ents: []pb.Entry{{}, {Term: 2}, {Term: 2}}}
 
 		sm.Step(pb.Message{Type: msgVote, From: 1, Index: tt.i, LogTerm: tt.term})
 
@@ -619,59 +626,6 @@ func TestStateTransition(t *testing.T) {
 				t.Errorf("%d: lead = %d, want %d", i, sm.lead, tt.wlead)
 			}
 		}()
-	}
-}
-
-func TestConf(t *testing.T) {
-	sm := newRaft(0, []int64{0}, 0, 0)
-	sm.becomeCandidate()
-	sm.becomeLeader()
-
-	sm.Step(pb.Message{From: 0, To: 0, Type: msgProp, Entries: []pb.Entry{{Type: AddNode}}})
-	if sm.raftLog.lastIndex() != 2 {
-		t.Errorf("lastindex = %d, want %d", sm.raftLog.lastIndex(), 1)
-	}
-	if !sm.configuring {
-		t.Errorf("pendingConf = %v, want %v", sm.configuring, true)
-	}
-	if sm.raftLog.ents[2].Type != AddNode {
-		t.Errorf("type = %d, want %d", sm.raftLog.ents[1].Type, AddNode)
-	}
-
-	// deny the second configuration change request if there is a pending one
-	paniced := false
-	defer func() { recover(); paniced = true }()
-	sm.Step(pb.Message{From: 0, To: 0, Type: msgProp, Entries: []pb.Entry{{Type: AddNode}}})
-	if !paniced {
-		t.Errorf("expected panic")
-	}
-	if sm.raftLog.lastIndex() != 2 {
-		t.Errorf("lastindex = %d, want %d", sm.raftLog.lastIndex(), 1)
-	}
-}
-
-// Ensures that the new leader sets the pendingConf flag correctly according to
-// the uncommitted log entries
-func TestConfChangeLeader(t *testing.T) {
-	tests := []struct {
-		et       int64
-		wPending bool
-	}{
-		{Normal, false},
-		{AddNode, true},
-		{RemoveNode, true},
-	}
-
-	for i, tt := range tests {
-		sm := newRaft(0, []int64{0}, 0, 0)
-		sm.raftLog = &raftLog{ents: []pb.Entry{{}, {Type: tt.et}}}
-
-		sm.becomeCandidate()
-		sm.becomeLeader()
-
-		if sm.configuring != tt.wPending {
-			t.Errorf("#%d: pendingConf = %v, want %v", i, sm.configuring, tt.wPending)
-		}
 	}
 }
 
@@ -779,6 +733,14 @@ func TestRecvMsgBeat(t *testing.T) {
 		sm.raftLog = &raftLog{ents: []pb.Entry{{}, {Term: 0}, {Term: 1}}}
 		sm.Term = 1
 		sm.state = tt.state
+		switch tt.state {
+		case stateFollower:
+			sm.step = stepFollower
+		case stateCandidate:
+			sm.step = stepCandidate
+		case stateLeader:
+			sm.step = stepLeader
+		}
 		sm.Step(pb.Message{From: 0, To: 0, Type: msgBeat})
 
 		msgs := sm.ReadMessages()
