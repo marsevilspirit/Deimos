@@ -314,9 +314,9 @@ func (r *raft) ReadMessages() []pb.Message {
 }
 
 func (r *raft) Step(m pb.Message) error {
-	// fmt.Printf("%s node %d receive %+v\n", sm.state.String(), sm.id, m)
+	// fmt.Printf("%d to %d : %+v\n", m.From, m.To, m)
 
-	// TODO: this likely allocs - prevent that
+	// TODO: this likely allocs - prevent that.
 	defer func() { r.Commit = r.raftLog.committed }()
 
 	if m.Type == msgHup {

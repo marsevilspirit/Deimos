@@ -11,13 +11,12 @@ message Entry {
 	required int64 type  = 1 [(gogoproto.nullable) = false];
 	required int64 term  = 2 [(gogoproto.nullable) = false];
 	required int64 index = 3 [(gogoproto.nullable) = false];
-	optional bytes data  = 4 [(gogoproto.nullable) = false];
-	required int64 id    = 5 [(gogoproto.nullable) = false];
+	optional bytes data  = 4;
 }
 
 message Snapshot {
-	required bytes data  = 1 [(gogoproto.nullable) = false];
-	repeated int64 nodes = 2 [(gogoproto.nullable) = false];
+	required bytes data  = 1;
+	repeated int64 nodes = 2;
 	required int64 index = 3 [(gogoproto.nullable) = false];
 	required int64 term  = 4 [(gogoproto.nullable) = false];
 }

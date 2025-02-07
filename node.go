@@ -63,35 +63,44 @@ func (n *Node) run(r *raft) {
 		if r.hasLeader() {
 			propc = n.propc
 		} else {
+			// We cannot accept proposals because we don't know who
+			// to send them to, so we'll apply back-pressure and
+			// block senders.
 			propc = nil
 		}
 
 		rd := Ready{
-			State:            r.State,
-			Entries:          r.raftLog.unstableEnts(),
-			CommittedEntries: r.raftLog.nextEnts(),
-			Messages:         r.msgs,
+			r.State,
+			r.raftLog.unstableEnts(),
+			r.raftLog.nextEnts(),
+			r.msgs,
 		}
 
 		if rd.containsUpdates(prev) {
 			readyc = n.readyc
+			prev = rd
 		} else {
 			readyc = nil
 		}
 
 		select {
 		case m := <-propc:
+			// log.Printf("m := <-propc")
 			m.From = r.id
 			r.Step(m)
 		case m := <-n.recvc:
-			r.Step(m)
+			// log.Printf("m := <-n.recvc")
+			r.Step(m) // raft never returns an error
 		case <-n.tickc:
+			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^tickc")
 			// r.tick()
 		case readyc <- rd:
+			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^readyc <- rd")
 			r.raftLog.resetNextEnts()
 			r.raftLog.resetUnstable()
 			r.msgs = nil
 		case <-n.ctx.Done():
+			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^done")
 			return
 		}
 	}
@@ -106,13 +115,17 @@ func (n *Node) Tick() error {
 	}
 }
 
+func (n *Node) Campaign(ctx context.Context) error {
+	return n.Step(ctx, pb.Message{Type: msgHup})
+}
+
 // client sends proposals to the leader using this method. The proposals are
-func (n *Node) Propose(ctx context.Context, id int64, data []byte) error {
+func (n *Node) Propose(ctx context.Context, data []byte) error {
 	return n.Step(ctx,
 		pb.Message{
 			Type: msgProp,
 			Entries: []pb.Entry{
-				{Id: id, Data: data},
+				{Data: data},
 			},
 		},
 	)
@@ -145,4 +158,4 @@ type byMsgType []pb.Message
 
 func (msgs byMsgType) Len() int           { return len(msgs) }
 func (msgs byMsgType) Less(i, j int) bool { return msgs[i].Type == msgProp }
-func (msgs byMsgType) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }
+func (msgs byMsgType) Swap(i, j int)      { msgs[i], msgs[j] = msgs[i], msgs[j] }
