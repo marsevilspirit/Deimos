@@ -128,23 +128,30 @@ type raft struct {
 	// New machine has to wait until it has been added to the cluster, or it
 	// may become the leader of the cluster without it.
 	promotable bool
+
+	elapsed          int
+	heartbeatTimeout int
+	electionTimeout  int
+	tick             func()
 }
 
-func newRaft(id int64, peers []int64) *raft {
+func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
 	if id == none {
 		panic("cannot use none id")
 	}
 
 	r := &raft{
-		id:      id,
-		lead:    none,
-		raftLog: newLog(),
-		prs:     make(map[int64]*progress),
+		id:               id,
+		lead:             none,
+		raftLog:          newLog(),
+		prs:              make(map[int64]*progress),
+		electionTimeout:  election,
+		heartbeatTimeout: heartbeat,
 	}
 	for _, p := range peers {
 		r.prs[p] = &progress{}
 	}
-	r.reset(0)
+	r.becomeFollower(0, none)
 	return r
 }
 
@@ -274,7 +281,29 @@ func (r *raft) appendEntry(e pb.Entry) {
 	r.maybeCommit()
 }
 
+func (r *raft) tickElection() {
+	r.elapsed++
+	if r.elapsed > r.electionTimeout {
+		r.elapsed = 0
+		r.campaign()
+	}
+}
+
+func (r *raft) tickHeartbeat() {
+	r.elapsed++
+	if r.elapsed > r.heartbeatTimeout {
+		r.elapsed = 0
+		r.bcastHeartbeat()
+	}
+}
+
+func (r *raft) setTick(f func()) {
+	r.elapsed = 0
+	r.tick = f
+}
+
 func (r *raft) becomeFollower(term int64, lead int64) {
+	r.setTick(r.tickElection)
 	r.reset(term)
 	r.lead = lead
 	r.state = stateFollower
@@ -282,6 +311,7 @@ func (r *raft) becomeFollower(term int64, lead int64) {
 }
 
 func (r *raft) becomeCandidate() {
+	r.setTick(r.tickElection)
 	// TODO: remove the panic when the raft implementation is stable
 	if r.state == stateLeader {
 		panic("invalid transition [leader -> candidate]")
@@ -292,6 +322,7 @@ func (r *raft) becomeCandidate() {
 }
 
 func (r *raft) becomeLeader() {
+	r.setTick(r.tickHeartbeat)
 	// TODO: remove the panic when the raft implementation is stable
 	if r.state == stateFollower {
 		panic("invalid transition [follower -> leader]")
@@ -313,6 +344,20 @@ func (r *raft) ReadMessages() []pb.Message {
 	return msgs
 }
 
+func (r *raft) campaign() {
+	r.becomeCandidate()
+	if r.q() == r.poll(r.id, true) {
+		r.becomeLeader()
+	}
+	for i := range r.prs {
+		if i == r.id {
+			continue
+		}
+		lasti := r.raftLog.lastIndex()
+		r.send(pb.Message{To: i, Type: msgVote, Index: lasti, LogTerm: r.raftLog.term(lasti)})
+	}
+}
+
 func (r *raft) Step(m pb.Message) error {
 	// fmt.Printf("%d to %d : %+v\n", m.From, m.To, m)
 
@@ -320,17 +365,7 @@ func (r *raft) Step(m pb.Message) error {
 	defer func() { r.Commit = r.raftLog.committed }()
 
 	if m.Type == msgHup {
-		r.becomeCandidate()
-		if r.q() == r.poll(r.id, true) {
-			r.becomeLeader()
-		}
-		for i := range r.prs {
-			if i == r.id {
-				continue
-			}
-			lasti := r.raftLog.lastIndex()
-			r.send(pb.Message{To: i, Type: msgVote, Index: lasti, LogTerm: r.raftLog.term(lasti)})
-		}
+		r.campaign()
 	}
 
 	switch {
@@ -419,6 +454,7 @@ func stepCandidate(r *raft, m pb.Message) {
 	case msgProp:
 		panic("no leader")
 	case msgApp:
+		r.elapsed = 0
 		r.becomeFollower(r.Term, m.From)
 		r.handleAppendEntries(m)
 	case msgSnap:
@@ -447,11 +483,14 @@ func stepFollower(r *raft, m pb.Message) {
 		m.To = r.lead
 		r.send(m)
 	case msgApp:
+		r.elapsed = 0
 		r.lead = m.From
 		r.handleAppendEntries(m)
 	case msgSnap:
+		r.elapsed = 0
 		r.handleSnapshot(m)
 	case msgVote:
+		// TODO: maybe reset elapsed
 		if (r.Vote == none || r.Vote == m.From) && r.raftLog.isUpToDate(m.Index, m.LogTerm) {
 			r.Vote = m.From
 			r.send(pb.Message{To: m.From, Type: msgVoteResp, Index: r.raftLog.lastIndex()})

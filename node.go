@@ -2,9 +2,12 @@ package raft
 
 import (
 	"context"
+	"errors"
 
 	pb "github.com/marsevilspirit/m_raft/raftpb"
 )
+
+var ErrStopped = errors.New("raft: stopped")
 
 type Ready struct {
 	// The current state of a Node.
@@ -34,24 +37,30 @@ func (rd Ready) containsUpdates(prev Ready) bool {
 }
 
 type Node struct {
-	ctx    context.Context
-	propc  chan pb.Message
-	recvc  chan pb.Message
-	readyc chan Ready
-	tickc  chan struct{}
+	ctx          context.Context
+	propc        chan pb.Message
+	recvc        chan pb.Message
+	readyc       chan Ready
+	tickc        chan struct{}
+	alwaysreadyc chan Ready
+	done         chan struct{}
 }
 
-func Start(ctx context.Context, id int64, peers []int64) Node {
+func Start(id int64, peers []int64, election, heartbeat int) Node {
 	n := Node{
-		ctx:    ctx,
 		propc:  make(chan pb.Message),
 		recvc:  make(chan pb.Message),
 		readyc: make(chan Ready),
 		tickc:  make(chan struct{}),
+		done:   make(chan struct{}),
 	}
-	r := newRaft(id, peers)
+	r := newRaft(id, peers, election, heartbeat)
 	go n.run(r)
 	return n
+}
+
+func (n *Node) Stop() {
+	close(n.done)
 }
 
 func (n *Node) run(r *raft) {
@@ -93,13 +102,15 @@ func (n *Node) run(r *raft) {
 			r.Step(m) // raft never returns an error
 		case <-n.tickc:
 			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^tickc")
-			// r.tick()
+			r.tick()
 		case readyc <- rd:
 			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^readyc <- rd")
 			r.raftLog.resetNextEnts()
 			r.raftLog.resetUnstable()
 			r.msgs = nil
-		case <-n.ctx.Done():
+		case n.alwaysreadyc <- rd:
+			// this is for testing only
+		case <-n.done:
 			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^done")
 			return
 		}
@@ -110,8 +121,8 @@ func (n *Node) Tick() error {
 	select {
 	case n.tickc <- struct{}{}:
 		return nil
-	case <-n.ctx.Done():
-		return n.ctx.Err()
+	case <-n.done:
+		return ErrStopped
 	}
 }
 
@@ -144,8 +155,8 @@ func (n *Node) Step(ctx context.Context, m pb.Message) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-n.ctx.Done():
-		return n.ctx.Err()
+	case <-n.done:
+		return ErrStopped
 	}
 }
 
@@ -154,8 +165,8 @@ func (n *Node) Ready() <-chan Ready {
 	return n.readyc
 }
 
-type byMsgType []pb.Message
-
-func (msgs byMsgType) Len() int           { return len(msgs) }
-func (msgs byMsgType) Less(i, j int) bool { return msgs[i].Type == msgProp }
-func (msgs byMsgType) Swap(i, j int)      { msgs[i], msgs[j] = msgs[i], msgs[j] }
+// RecvReadyNow returns the state of n without blocking. It is primarly for
+// testing purposes only.
+func RecvReadyNow(n Node) Ready {
+	return <-n.alwaysreadyc
+}
