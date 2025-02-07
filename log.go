@@ -7,14 +7,6 @@ import (
 )
 
 const (
-	Normal int64 = iota
-
-	ClusterInit
-	AddNode
-	RemoveNode
-)
-
-const (
 	// when the size of the raft log becomes
 	// larger than the compact threshold,
 	// the log will be truncated by a compaction.

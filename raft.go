@@ -313,10 +313,10 @@ func (r *raft) becomeLeader() {
 	}
 	r.step = stepLeader
 	r.reset(r.Term)
-	r.tick = r.tickElection
+	r.tick = r.tickHeartbeat
 	r.lead = r.id
 	r.state = stateLeader
-	r.appendEntry(pb.Entry{Type: Normal, Data: nil})
+	r.appendEntry(pb.Entry{Data: nil})
 }
 
 func (r *raft) ReadMessages() []pb.Message {
@@ -360,6 +360,7 @@ func (r *raft) Step(m pb.Message) error {
 		r.becomeFollower(m.Term, lead)
 	case m.Term < r.Term:
 		// ignore
+		return nil
 	}
 
 	r.step(r, m)
