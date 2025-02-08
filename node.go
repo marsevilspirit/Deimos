@@ -8,8 +8,13 @@ import (
 	pb "github.com/marsevilspirit/m_raft/raftpb"
 )
 
-var ErrStopped = errors.New("raft: stopped")
+var (
+	emptyState = pb.State{}
+	ErrStopped = errors.New("raft: stopped")
+)
 
+// Ready encapsulates the entries and messages that are ready to be saved to
+// stable storage, committed or sent to other peers.
 type Ready struct {
 	// The current state of a Node.
 	pb.State
@@ -32,32 +37,48 @@ func isStateEqual(a, b pb.State) bool {
 	return a.Term == b.Term && a.Vote == b.Vote && a.LastIndex == b.LastIndex
 }
 
-func (rd Ready) containsUpdates(prev Ready) bool {
-	return !isStateEqual(prev.State, rd.State) || len(rd.Entries) > 0 ||
+func IsEmptyState(st pb.State) bool {
+	return isStateEqual(st, emptyState)
+}
+
+func (rd Ready) containsUpdates() bool {
+	return !IsEmptyState(rd.State) || len(rd.Entries) > 0 ||
 		len(rd.CommittedEntries) > 0 || len(rd.Messages) > 0
 }
 
 type Node struct {
-	ctx          context.Context
-	propc        chan pb.Message
-	recvc        chan pb.Message
-	readyc       chan Ready
-	tickc        chan struct{}
-	alwaysreadyc chan Ready
-	done         chan struct{}
+	ctx    context.Context
+	propc  chan pb.Message
+	recvc  chan pb.Message
+	readyc chan Ready
+	tickc  chan struct{}
+	done   chan struct{}
 }
 
 func Start(id int64, peers []int64, election, heartbeat int) Node {
-	n := Node{
+	n := newNode()
+	r := newRaft(id, peers, election, heartbeat)
+	go n.run(r)
+	return n
+}
+
+func Restart(id int64, peers []int64, election, heartbeat int, state pb.State, ents []pb.Entry) Node {
+	n := newNode()
+	r := newRaft(id, peers, election, heartbeat)
+	r.loadState(state)
+	r.loadEnts(ents)
+	go n.run(r)
+	return n
+}
+
+func newNode() Node {
+	return Node{
 		propc:  make(chan pb.Message),
 		recvc:  make(chan pb.Message),
 		readyc: make(chan Ready),
 		tickc:  make(chan struct{}),
 		done:   make(chan struct{}),
 	}
-	r := newRaft(id, peers, election, heartbeat)
-	go n.run(r)
-	return n
 }
 
 func (n *Node) Stop() {
@@ -69,8 +90,8 @@ func (n *Node) run(r *raft) {
 	readyc := n.readyc
 
 	var lead int64
-	var prev Ready
-	prev.Vote = none
+	prevSt := r.State
+
 	for {
 		if lead != r.lead {
 			log.Printf("raft: leader changed from %#x to %#x", lead, r.lead)
@@ -82,40 +103,30 @@ func (n *Node) run(r *raft) {
 			}
 		}
 
-		rd := Ready{
-			r.State,
-			r.raftLog.unstableEnts(),
-			r.raftLog.nextEnts(),
-			r.msgs,
-		}
+		rd := newReady(r, prevSt)
 
-		if rd.containsUpdates(prev) {
+		if rd.containsUpdates() {
 			readyc = n.readyc
-			prev = rd
 		} else {
 			readyc = nil
 		}
 
 		select {
 		case m := <-propc:
-			// log.Printf("m := <-propc")
 			m.From = r.id
 			r.Step(m)
 		case m := <-n.recvc:
-			// log.Printf("m := <-n.recvc")
 			r.Step(m) // raft never returns an error
 		case <-n.tickc:
-			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^tickc")
 			r.tick()
 		case readyc <- rd:
-			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^readyc <- rd")
 			r.raftLog.resetNextEnts()
 			r.raftLog.resetUnstable()
+			if !IsEmptyState(rd.State) {
+				prevSt = rd.State
+			}
 			r.msgs = nil
-		case n.alwaysreadyc <- rd:
-			// this is for testing only
 		case <-n.done:
-			// log.Printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^done")
 			return
 		}
 	}
@@ -169,8 +180,15 @@ func (n *Node) Ready() <-chan Ready {
 	return n.readyc
 }
 
-// RecvReadyNow returns the state of n without blocking. It is primarly for
-// testing purposes only.
-func RecvReadyNow(n Node) Ready {
-	return <-n.alwaysreadyc
+func newReady(r *raft, prev pb.State) Ready {
+	rd := Ready{
+		Entries:          r.raftLog.unstableEnts(),
+		CommittedEntries: r.raftLog.nextEnts(),
+		Messages:         r.msgs,
+	}
+
+	if !isStateEqual(r.State, prev) {
+		rd.State = r.State
+	}
+	return rd
 }
