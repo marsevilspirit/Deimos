@@ -9,7 +9,7 @@ import (
 )
 
 // 表示缺失的领导者
-const none = -1
+const none = 0
 
 type messageType int64
 
