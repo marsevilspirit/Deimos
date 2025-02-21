@@ -11,7 +11,7 @@ import (
 )
 
 // nextEnts returns the appliable entries and updates the applied index
-func (r *raft) nextEnts() (ents []pb.Entry) {
+func nextEnts(r *raft) (ents []pb.Entry) {
 	ents = r.raftLog.nextEnts()
 	r.raftLog.resetNextEnts()
 	return ents
@@ -93,7 +93,7 @@ func TestLogReplication(t *testing.T) {
 			}
 
 			ents := make([]pb.Entry, 0)
-			for _, e := range sm.nextEnts() {
+			for _, e := range nextEnts(sm) {
 				if e.Data != nil {
 					ents = append(ents, e)
 				}
@@ -869,7 +869,7 @@ func TestSlowNodeRestore(t *testing.T) {
 		nt.send(pb.Message{From: none, To: 1, Type: msgProp, Entries: []pb.Entry{{}}})
 	}
 	lead := nt.peers[1].(*raft)
-	lead.nextEnts()
+	nextEnts(lead)
 	lead.compact(nil)
 
 	nt.recover()
