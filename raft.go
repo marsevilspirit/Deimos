@@ -26,6 +26,7 @@ const (
 )
 
 // 消息类型的字符串表示
+// example: msgHup -> "msgHup"
 var mtmap = [...]string{
 	msgHup:      "msgHup",
 	msgBeat:     "msgBeat",
