@@ -156,8 +156,8 @@ func (l *raftLog) maybeCommit(maxIndex, term int64) bool {
 // and not greater than the index of the last entry.
 // the number of entries after compaction will be returned.
 func (l *raftLog) compact(i int64) int64 {
-	if l.isOutOfBounds(i) {
-		panic(fmt.Sprintf("compact %d out of bounds [%d:%d]", i, l.offset, l.lastIndex()))
+	if l.isOutOfAppliedBounds(i) {
+		panic(fmt.Sprintf("compact %d out of bounds [%d:%d]", i, l.offset, l.applied))
 	}
 	l.ents = l.slice(i, l.lastIndex()+1)
 	l.unstable = max(i+1, l.unstable)
@@ -210,6 +210,13 @@ func (l *raftLog) slice(lo, hi int64) []pb.Entry {
 // isOutOfBounds returns if the given index is out of the bound.
 func (l *raftLog) isOutOfBounds(index int64) bool {
 	return index < l.offset || index > l.lastIndex()
+}
+
+func (l *raftLog) isOutOfAppliedBounds(i int64) bool {
+	if i < l.offset || i > l.applied {
+		return true
+	}
+	return false
 }
 
 func min(a, b int64) int64 {
