@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bytes"
+	"fmt"
 	"math/rand"
 	"reflect"
 	"sort"
@@ -934,7 +935,7 @@ func newNetwork(peers ...Interface) *network {
 		case *blackHole:
 			npeers[id] = v
 		default:
-			panic("unimplemented")
+			panic(fmt.Sprintf("unexpected state machine type: %T", p))
 		}
 	}
 	return &network{

@@ -109,7 +109,6 @@ func (n *Node) run(r *raft) {
 		}
 
 		rd := newReady(r, prevSt)
-
 		if rd.containsUpdates() {
 			readyc = n.readyc
 		} else {
@@ -148,6 +147,7 @@ func (n *Node) Tick() error {
 	}
 }
 
+// Campaign causes this Node to transition to candidate state.
 func (n *Node) Campaign(ctx context.Context) error {
 	return n.Step(ctx, pb.Message{Type: msgHup})
 }
