@@ -49,7 +49,7 @@ func TestLeaderElection(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+		tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 		sm := tt.network.peers[firstId].(*raft)
 		if sm.state != tt.state {
 			t.Errorf("#%d: state = %s, want %s", i, sm.state, tt.state)
@@ -69,7 +69,7 @@ func TestLogReplication(t *testing.T) {
 		{
 			newNetwork(nil, nil, nil),
 			[]pb.Message{
-				{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}},
+				{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}},
 			},
 			2,
 		},
@@ -77,16 +77,16 @@ func TestLogReplication(t *testing.T) {
 			newNetwork(nil, nil, nil),
 			[]pb.Message{
 
-				{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}},
-				{From: none, To: firstId + 1, Type: msgHup},
-				{From: none, To: firstId + 1, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}},
+				{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}},
+				{From: firstId, To: firstId + 1, Type: msgHup},
+				{From: firstId, To: firstId + 1, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}},
 			},
 			4,
 		},
 	}
 
 	for i, tt := range tests {
-		tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+		tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 
 		for _, m := range tt.msgs {
 			tt.send(m)
@@ -122,9 +122,9 @@ func TestLogReplication(t *testing.T) {
 
 func TestSingleNodeCommit(t *testing.T) {
 	tt := newNetwork(nil)
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
-	tt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
-	tt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
 
 	sm := tt.peers[firstId].(*raft)
 	if sm.raftLog.committed != 3 {
@@ -137,15 +137,15 @@ func TestSingleNodeCommit(t *testing.T) {
 // filtered.
 func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 	tt := newNetwork(nil, nil, nil, nil, nil)
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 
 	// 0 cannot reach 2,3,4
 	tt.cut(firstId, firstId+2)
 	tt.cut(firstId, firstId+3)
 	tt.cut(firstId, firstId+4)
 
-	tt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
-	tt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
 
 	sm := tt.peers[firstId].(*raft)
 	if sm.raftLog.committed != 1 {
@@ -158,7 +158,7 @@ func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 	tt.ignore(msgApp)
 
 	// elect 1 as the new leader with term 2
-	tt.send(pb.Message{From: none, To: firstId + 1, Type: msgHup})
+	tt.send(pb.Message{From: firstId + 1, To: firstId + 1, Type: msgHup})
 
 	// no log entries from previous term should be committed
 	sm = tt.peers[firstId+1].(*raft)
@@ -171,14 +171,14 @@ func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 	// send out a heartbeat
 	// after append a ChangeTerm entry from the current term, all entries
 	// should be committed
-	tt.send(pb.Message{From: none, To: firstId + 1, Type: msgBeat})
+	tt.send(pb.Message{From: firstId + 1, To: firstId + 1, Type: msgBeat})
 
 	if sm.raftLog.committed != 4 {
 		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 4)
 	}
 
 	// still be able to append a entry
-	tt.send(pb.Message{From: none, To: firstId + 1, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId + 1, To: firstId + 1, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
 
 	if sm.raftLog.committed != 5 {
 		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 5)
@@ -189,15 +189,15 @@ func TestCannotCommitWithoutNewTermEntry(t *testing.T) {
 // when leader changes, no new proposal comes in.
 func TestCommitWithoutNewTermEntry(t *testing.T) {
 	tt := newNetwork(nil, nil, nil, nil, nil)
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 
 	// 0 cannot reach 2,3,4
 	tt.cut(firstId, firstId+2)
 	tt.cut(firstId, firstId+3)
 	tt.cut(firstId, firstId+4)
 
-	tt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
-	tt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: []byte("some data")}}})
 
 	sm := tt.peers[firstId].(*raft)
 	if sm.raftLog.committed != 1 {
@@ -226,11 +226,11 @@ func TestDuelingCandidates(t *testing.T) {
 	nt := newNetwork(a, b, c)
 	nt.cut(firstId, firstId+2)
 
-	nt.send(pb.Message{From: none, To: firstId, Type: msgHup})
-	nt.send(pb.Message{From: none, To: firstId + 2, Type: msgHup})
+	nt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
+	nt.send(pb.Message{From: firstId + 2, To: firstId + 2, Type: msgHup})
 
 	nt.recover()
-	nt.send(pb.Message{From: none, To: firstId + 2, Type: msgHup})
+	nt.send(pb.Message{From: firstId + 2, To: firstId + 2, Type: msgHup})
 
 	wlog := &raftLog{ents: []pb.Entry{{}, {Data: nil, Term: 1, Index: 1}}, committed: 1}
 	tests := []struct {
@@ -267,15 +267,15 @@ func TestCandidateConcede(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
 	tt.isolate(firstId)
 
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
-	tt.send(pb.Message{From: none, To: firstId + 2, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId + 2, To: firstId + 2, Type: msgHup})
 
 	// heal the partition
 	tt.recover()
 
 	data := []byte("force follower")
 	// send a proposal to 2 to flush out a msgApp to 0
-	tt.send(pb.Message{From: none, To: firstId + 2, Type: msgProp, Entries: []pb.Entry{{Data: data}}})
+	tt.send(pb.Message{From: firstId + 2, To: firstId + 2, Type: msgProp, Entries: []pb.Entry{{Data: data}}})
 
 	a := tt.peers[firstId].(*raft)
 	if g := a.state; g != stateFollower {
@@ -299,7 +299,7 @@ func TestCandidateConcede(t *testing.T) {
 
 func TestSingleNodeCandidate(t *testing.T) {
 	tt := newNetwork(nil)
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 
 	sm := tt.peers[firstId].(*raft)
 	if sm.state != stateLeader {
@@ -310,11 +310,11 @@ func TestSingleNodeCandidate(t *testing.T) {
 func TestOldMessages(t *testing.T) {
 	tt := newNetwork(nil, nil, nil)
 	// make 0 leader @ term 3
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
-	tt.send(pb.Message{From: none, To: firstId + 1, Type: msgHup})
-	tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
+	tt.send(pb.Message{From: firstId + 1, To: firstId + 1, Type: msgHup})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 	// pretend we're an old leader trying to make progress
-	tt.send(pb.Message{From: none, To: firstId, Type: msgApp, Term: 1, Entries: []pb.Entry{{Term: 1}}})
+	tt.send(pb.Message{From: firstId, To: firstId, Type: msgApp, Term: 1, Entries: []pb.Entry{{Term: 1}}})
 
 	l := &raftLog{
 		ents: []pb.Entry{
@@ -366,8 +366,8 @@ func TestProposal(t *testing.T) {
 		data := []byte("somedata")
 
 		// promote 0 the leader
-		send(pb.Message{From: none, To: firstId, Type: msgHup})
-		send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: data}}})
+		send(pb.Message{From: firstId, To: firstId, Type: msgHup})
+		send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{Data: data}}})
 
 		wantLog := newLog()
 		if tt.success {
@@ -401,10 +401,10 @@ func TestProposalByProxy(t *testing.T) {
 
 	for i, tt := range tests {
 		// promote 0 the leader
-		tt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+		tt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 
 		// propose via follower
-		tt.send(pb.Message{From: none, To: firstId + 1, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}})
+		tt.send(pb.Message{From: firstId + 1, To: firstId + 1, Type: msgProp, Entries: []pb.Entry{{Data: []byte("somedata")}}})
 
 		wantLog := &raftLog{ents: []pb.Entry{{}, {Data: nil, Term: 1, Index: 1}, {Term: 1, Data: data, Index: 2}}, committed: 2}
 		base := ltoa(wantLog)
@@ -764,7 +764,7 @@ func TestRecvMsgBeat(t *testing.T) {
 		case stateLeader:
 			sm.step = stepLeader
 		}
-		sm.Step(pb.Message{From: none, To: firstId, Type: msgBeat})
+		sm.Step(pb.Message{From: firstId, To: firstId, Type: msgBeat})
 
 		msgs := sm.ReadMessages()
 		if len(msgs) != tt.wMsg {
@@ -826,7 +826,7 @@ func TestProvideSnap(t *testing.T) {
 	sm.becomeCandidate()
 	sm.becomeLeader()
 
-	sm.Step(pb.Message{From: none, To: firstId, Type: msgBeat})
+	sm.Step(pb.Message{From: firstId, To: firstId, Type: msgBeat})
 	msgs := sm.ReadMessages()
 	if len(msgs) != 1 {
 		t.Errorf("len(msgs) = %d, want 1", len(msgs))
@@ -869,7 +869,7 @@ func TestRestoreFromSnapMsg(t *testing.T) {
 
 func TestSlowNodeRestore(t *testing.T) {
 	nt := newNetwork(nil, nil, nil)
-	nt.send(pb.Message{From: none, To: firstId, Type: msgHup})
+	nt.send(pb.Message{From: firstId, To: firstId, Type: msgHup})
 
 	nt.isolate(firstId + 2)
 	for j := 0; j < defaultCompactThreshold+1; j++ {
@@ -880,7 +880,7 @@ func TestSlowNodeRestore(t *testing.T) {
 	lead.compact(nil)
 
 	nt.recover()
-	nt.send(pb.Message{From: none, To: firstId, Type: msgBeat})
+	nt.send(pb.Message{From: firstId, To: firstId, Type: msgBeat})
 
 	follower := nt.peers[firstId+2].(*raft)
 	if !reflect.DeepEqual(follower.raftLog.snapshot, lead.raftLog.snapshot) {
@@ -888,7 +888,7 @@ func TestSlowNodeRestore(t *testing.T) {
 	}
 
 	committed := follower.raftLog.lastIndex()
-	nt.send(pb.Message{From: none, To: firstId, Type: msgProp, Entries: []pb.Entry{{}}})
+	nt.send(pb.Message{From: firstId, To: firstId, Type: msgProp, Entries: []pb.Entry{{}}})
 	if follower.raftLog.committed != committed+1 {
 		t.Errorf("follower.comitted = %d, want %d", follower.raftLog.committed, committed+1)
 	}
