@@ -34,7 +34,8 @@ type Ready struct {
 }
 
 func isStateEqual(a, b pb.State) bool {
-	return a.Term == b.Term && a.Vote == b.Vote && a.LastIndex == b.LastIndex
+	return a.Term == b.Term && a.Vote == b.Vote &&
+		a.Commit == b.Commit && a.LastIndex == b.LastIndex
 }
 
 func IsEmptyState(st pb.State) bool {
@@ -91,8 +92,8 @@ func (n *Node) Stop() {
 }
 
 func (n *Node) run(r *raft) {
-	propc := n.propc
-	readyc := n.readyc
+	var propc chan pb.Message
+	var readyc chan Ready
 
 	var lead int64
 	prevSt := r.State
@@ -101,6 +102,7 @@ func (n *Node) run(r *raft) {
 		if lead != r.lead {
 			log.Printf("raft: leader changed from %#x to %#x", lead, r.lead)
 			lead = r.lead
+			// block proposal when don't have a leader.
 			if r.hasLeader() {
 				propc = n.propc
 			} else {

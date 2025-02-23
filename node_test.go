@@ -84,37 +84,37 @@ func TestNodeStepUnblock(t *testing.T) {
 }
 
 // TestBlockProposal ensures that node will block proposal when it does not
-// know who is the current leader; node will direct proposal when it knows
+// know who is the current leader; node will accept proposal when it knows
 // who is the current leader.
-// func TestBlockProposal(t *testing.T) {
-// 	n := newNode()
-// 	defer n.Stop()
-// 	r := newRaft(1, []int64{1}, 10, 1)
-// 	go n.run(r)
-//
-// 	errc := make(chan error, 1)
-// 	go func() {
-// 		errc <- n.Propose(context.TODO(), []byte("somedata"))
-// 	}()
-//
-// 	mustEnoughSched()
-// 	select {
-// 	case err := <-errc:
-// 		t.Errorf("err = %v, want blocking", err)
-// 	default:
-// 	}
-//
-// 	n.Campaign(context.TODO())
-// 	mustEnoughSched()
-// 	select {
-// 	case err := <-errc:
-// 		if err != nil {
-// 			t.Errorf("err = %v, want nil", err)
-// 		}
-// 	default:
-// 		t.Errorf("blocking proposal, want unblocking")
-// 	}
-// }
+func TestBlockProposal(t *testing.T) {
+	n := newNode()
+	r := newRaft(1, []int64{1}, 10, 1)
+	go n.run(r)
+	defer n.Stop()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- n.Propose(context.TODO(), []byte("somedata"))
+	}()
+
+	forceGosched()
+	select {
+	case err := <-errc:
+		t.Errorf("err = %v, want blocking", err)
+	default:
+	}
+
+	n.Campaign(context.TODO())
+	forceGosched()
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Errorf("err = %v, want nil", err)
+		}
+	default:
+		t.Errorf("blocking proposal, want unblocking")
+	}
+}
 
 func TestReadyContainUpdates(t *testing.T) {
 	tests := []struct {
@@ -194,7 +194,30 @@ func TestNodeRestart(t *testing.T) {
 	}
 }
 
-func mustEnoughSched() {
+func TestIsStateEqual(t *testing.T) {
+	tests := []struct {
+		st raftpb.State
+		we bool
+	}{
+		{emptyState, true},
+		{raftpb.State{Vote: 1}, false},
+		{raftpb.State{Commit: 1}, false},
+		{raftpb.State{Term: 1}, false},
+		{raftpb.State{LastIndex: 1}, false},
+	}
+
+	for i, tt := range tests {
+		if isStateEqual(tt.st, emptyState) != tt.we {
+			t.Errorf("#%d, equal = %v, want %v", i,
+				isStateEqual(tt.st, emptyState), tt.we)
+		}
+	}
+}
+
+// WARNING: This is a hack.
+// Remove this when we are able to block/check the status
+// of the go-routines.
+func forceGosched() {
 	// possibility enough to sched upto 10 go routines.
 	for i := 0; i < 10000; i++ {
 		runtime.Gosched()

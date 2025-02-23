@@ -963,9 +963,11 @@ func (nw *network) cut(one, other int64) {
 	nw.drop(other, one, 1)
 }
 
+// isolate disconnects the specified node (id)
+// from all other nodes in the network.
 func (nw *network) isolate(id int64) {
 	for i := 0; i < len(nw.peers); i++ {
-		nid := 1 + int64(i)
+		nid := int64(i) + 1
 		if nid != id {
 			nw.drop(id, nid, 1.0)
 			nw.drop(nid, id, 1.0)
