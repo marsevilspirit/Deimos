@@ -30,7 +30,7 @@ type raftLog struct {
 func newLog() *raftLog {
 	return &raftLog{
 		ents:             make([]pb.Entry, 1),
-		unstable:         1,
+		unstable:         0,
 		committed:        0,
 		applied:          0,
 		compactThreshold: defaultCompactThreshold,
@@ -39,6 +39,11 @@ func newLog() *raftLog {
 
 func (l *raftLog) isEmpty() bool {
 	return l.offset == 0 && len(l.ents) == 1
+}
+
+func (l *raftLog) load(ents []pb.Entry) {
+	l.ents = ents
+	l.unstable = l.offset + int64(len(ents))
 }
 
 func (l *raftLog) String() string {
@@ -80,7 +85,7 @@ func (l *raftLog) findConflict(from int64, ents []pb.Entry) int64 {
 }
 
 func (l *raftLog) unstableEnts() []pb.Entry {
-	ents := l.entries(l.unstable)
+	ents := l.slice(l.unstable, l.lastIndex()+1)
 	if ents == nil {
 		return nil
 	}

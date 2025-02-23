@@ -204,7 +204,7 @@ func TestCommitWithoutNewTermEntry(t *testing.T) {
 	// elect 1 as the new leader with term 2
 	// after append a ChangeTerm entry from the current term, all entries
 	// should be committed
-	tt.send(pb.Message{From: none, To: 2, Type: msgHup})
+	tt.send(pb.Message{From: None, To: 2, Type: msgHup})
 
 	if sm.raftLog.committed != 4 {
 		t.Errorf("committed = %d, want %d", sm.raftLog.committed, 4)
@@ -539,25 +539,25 @@ func TestRecvMsgVote(t *testing.T) {
 		voteFor int64
 		w       int64
 	}{
-		{stateFollower, 0, 0, none, -1},
-		{stateFollower, 0, 1, none, -1},
-		{stateFollower, 0, 2, none, -1},
-		{stateFollower, 0, 3, none, 2},
+		{stateFollower, 0, 0, None, -1},
+		{stateFollower, 0, 1, None, -1},
+		{stateFollower, 0, 2, None, -1},
+		{stateFollower, 0, 3, None, 2},
 
-		{stateFollower, 1, 0, none, -1},
-		{stateFollower, 1, 1, none, -1},
-		{stateFollower, 1, 2, none, -1},
-		{stateFollower, 1, 3, none, 2},
+		{stateFollower, 1, 0, None, -1},
+		{stateFollower, 1, 1, None, -1},
+		{stateFollower, 1, 2, None, -1},
+		{stateFollower, 1, 3, None, 2},
 
-		{stateFollower, 2, 0, none, -1},
-		{stateFollower, 2, 1, none, -1},
-		{stateFollower, 2, 2, none, 2},
-		{stateFollower, 2, 3, none, 2},
+		{stateFollower, 2, 0, None, -1},
+		{stateFollower, 2, 1, None, -1},
+		{stateFollower, 2, 2, None, 2},
+		{stateFollower, 2, 3, None, 2},
 
-		{stateFollower, 3, 0, none, -1},
-		{stateFollower, 3, 1, none, -1},
-		{stateFollower, 3, 2, none, 2},
-		{stateFollower, 3, 3, none, 2},
+		{stateFollower, 3, 0, None, -1},
+		{stateFollower, 3, 1, None, -1},
+		{stateFollower, 3, 2, None, 2},
+		{stateFollower, 3, 3, None, 2},
 
 		{stateFollower, 3, 2, 2, 2},
 		{stateFollower, 3, 2, 1, -1},
@@ -601,16 +601,16 @@ func TestStateTransition(t *testing.T) {
 		wterm  int64
 		wlead  int64
 	}{
-		{stateFollower, stateFollower, true, 1, none},
-		{stateFollower, stateCandidate, true, 1, none},
-		{stateFollower, stateLeader, false, -1, none},
+		{stateFollower, stateFollower, true, 1, None},
+		{stateFollower, stateCandidate, true, 1, None},
+		{stateFollower, stateLeader, false, -1, None},
 
-		{stateCandidate, stateFollower, true, 0, none},
-		{stateCandidate, stateCandidate, true, 1, none},
+		{stateCandidate, stateFollower, true, 0, None},
+		{stateCandidate, stateCandidate, true, 1, None},
 		{stateCandidate, stateLeader, true, 0, 1},
 
-		{stateLeader, stateFollower, true, 1, none},
-		{stateLeader, stateCandidate, false, 1, none},
+		{stateLeader, stateFollower, true, 1, None},
+		{stateLeader, stateCandidate, false, 1, None},
 		{stateLeader, stateLeader, true, 0, 1},
 	}
 
@@ -666,7 +666,7 @@ func TestAllServerStepdown(t *testing.T) {
 		sm := newRaft(1, []int64{1, 2, 3}, 0, 0)
 		switch tt.state {
 		case stateFollower:
-			sm.becomeFollower(1, none)
+			sm.becomeFollower(1, None)
 		case stateCandidate:
 			sm.becomeCandidate()
 		case stateLeader:
@@ -688,10 +688,10 @@ func TestAllServerStepdown(t *testing.T) {
 			}
 			wlead := int64(2)
 			if msgType == msgVote {
-				wlead = none
+				wlead = None
 			}
 			if sm.lead != wlead {
-				t.Errorf("#%d, sm.lead = %d, want %d", i, sm.lead, none)
+				t.Errorf("#%d, sm.lead = %d, want %d", i, sm.lead, None)
 			}
 		}
 	}
@@ -729,6 +729,71 @@ func TestLeaderAppResp(t *testing.T) {
 			if msg.Commit != tt.wcommitted {
 				t.Errorf("#%d.%d commit = %d, want %d", i, j, msg.Commit, tt.wcommitted)
 			}
+		}
+	}
+}
+
+// When the leader receives a heartbeat tick, it should
+// send a msgApp with m.Index = max(progress.next-1,log.offset)
+// and empty entries.
+func TestBcastBeat(t *testing.T) {
+	offset := int64(1000)
+
+	// make a state machine with log.offset = 1000
+	s := pb.Snapshot{
+		Index: offset,
+		Term:  1,
+		Nodes: []int64{1, 2},
+	}
+
+	sm := newRaft(1, []int64{1, 2}, 0, 0)
+	sm.Term = 1
+	sm.restore(s)
+
+	sm.becomeCandidate()
+	sm.becomeLeader()
+
+	for i := 0; i < 10; i++ {
+		sm.appendEntry(pb.Entry{})
+	}
+
+	tests := []struct {
+		pnext  int64
+		windex int64
+		wterm  int64
+		wto    int64
+	}{
+		{offset + 1, offset, 1, 2},
+		{offset + 2, offset + 1, 2, 2},
+		//pr.next - 1 < offset
+		{offset, offset, 1, 2},
+		{offset - 1, offset, 1, 2},
+	}
+
+	for i, tt := range tests {
+		sm.prs[2].match = 0
+		sm.prs[2].next = tt.pnext
+
+		sm.Step(pb.Message{Type: msgBeat})
+		msgs := sm.ReadMessages()
+		if len(msgs) != 1 {
+			t.Fatalf("#%d: len(msgs) = %v, want 1", i, len(msgs))
+		}
+		m := msgs[0]
+		if m.Type != msgApp {
+			t.Errorf("#%d: type = %v, want %v", i, m.Type, msgApp)
+		}
+		if m.Index != tt.windex {
+			t.Errorf("#%d: prevIndex = %v, want %v", i, m.Index, tt.windex)
+		}
+		if m.LogTerm != tt.wterm {
+			t.Errorf("#%d: prevTerm = %v, want %v", i, m.LogTerm, tt.wterm)
+		}
+		if m.To != tt.wto {
+			t.Errorf("#%d: to = %v, want %v", i, m.To, tt.wto)
+		}
+		if len(m.Entries) != 0 {
+			t.Errorf("#%d: len(ents) = %v, want 0", i, len(m.Entries))
 		}
 	}
 }
@@ -867,7 +932,7 @@ func TestSlowNodeRestore(t *testing.T) {
 
 	nt.isolate(3)
 	for j := 0; j < defaultCompactThreshold+1; j++ {
-		nt.send(pb.Message{From: none, To: 1, Type: msgProp, Entries: []pb.Entry{{}}})
+		nt.send(pb.Message{From: None, To: 1, Type: msgProp, Entries: []pb.Entry{{}}})
 	}
 	lead := nt.peers[1].(*raft)
 	nextEnts(lead)
