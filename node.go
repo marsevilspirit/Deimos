@@ -42,6 +42,9 @@ type Ready struct {
 	// Messages are sent.
 	Entries []pb.Entry
 
+	// Snapshot specifies the snapshot to be saved to stable storage.
+	Snapshot pb.Snapshot
+
 	// CommittedEntries specifies entries to be committed to a
 	// store/state-machine. These have previously been committed to stable
 	// store.
@@ -52,26 +55,31 @@ type Ready struct {
 	Messages []pb.Message
 }
 
-func isStateEqual(a, b pb.HardState) bool {
+func isHardStateEqual(a, b pb.HardState) bool {
 	return a.Term == b.Term && a.Vote == b.Vote && a.Commit == b.Commit
 }
 
-func IsEmptyState(st pb.HardState) bool {
-	return isStateEqual(st, emptyState)
+func IsEmptyHardState(st pb.HardState) bool {
+	return isHardStateEqual(st, emptyState)
+}
+
+func IsEmptySnap(sp pb.Snapshot) bool {
+	return sp.Index == 0
 }
 
 func (rd Ready) containsUpdates() bool {
-	return rd.SoftState != nil || !IsEmptyState(rd.HardState) ||
-		len(rd.Entries) > 0 || len(rd.CommittedEntries) > 0 ||
-		len(rd.Messages) > 0
+	return rd.SoftState != nil || !IsEmptyHardState(rd.HardState) ||
+		!IsEmptySnap(rd.Snapshot) || len(rd.Entries) > 0 ||
+		len(rd.CommittedEntries) > 0 || len(rd.Messages) > 0
 }
 
 type Node struct {
-	propc  chan pb.Message
-	recvc  chan pb.Message
-	readyc chan Ready
-	tickc  chan struct{}
-	done   chan struct{}
+	propc    chan pb.Message
+	recvc    chan pb.Message
+	compactc chan []byte
+	readyc   chan Ready
+	tickc    chan struct{}
+	done     chan struct{}
 }
 
 // Start returns a new Node given a unique raft id, a list of raft peers, and
@@ -86,9 +94,12 @@ func Start(id int64, peers []int64, election, heartbeat int) Node {
 // Restart is identical to Start but takes an initial State and a slice of
 // entries. Generally this is used when restarting from a stable storage
 // log.
-func Restart(id int64, peers []int64, election, heartbeat int, state pb.HardState, ents []pb.Entry) Node {
+func Restart(id int64, peers []int64, election, heartbeat int, snapshot *pb.Snapshot, state pb.HardState, ents []pb.Entry) Node {
 	n := newNode()
 	r := newRaft(id, peers, election, heartbeat)
+	if snapshot != nil {
+		r.restore(*snapshot)
+	}
 	r.loadState(state)
 	r.loadEnts(ents)
 	go n.run(r)
@@ -97,11 +108,12 @@ func Restart(id int64, peers []int64, election, heartbeat int, state pb.HardStat
 
 func newNode() Node {
 	return Node{
-		propc:  make(chan pb.Message),
-		recvc:  make(chan pb.Message),
-		readyc: make(chan Ready),
-		tickc:  make(chan struct{}),
-		done:   make(chan struct{}),
+		propc:    make(chan pb.Message),
+		recvc:    make(chan pb.Message),
+		compactc: make(chan []byte),
+		readyc:   make(chan Ready),
+		tickc:    make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -116,9 +128,10 @@ func (n *Node) run(r *raft) {
 	lead := None
 	prevSoftSt := r.softState()
 	prevHardSt := r.HardState
+	prevSnapi := r.raftLog.snapshot.Index
 
 	for {
-		rd := newReady(r, prevSoftSt, prevHardSt)
+		rd := newReady(r, prevSoftSt, prevHardSt, prevSnapi)
 		if rd.containsUpdates() {
 			readyc = n.readyc
 		} else {
@@ -142,14 +155,19 @@ func (n *Node) run(r *raft) {
 			r.Step(m)
 		case m := <-n.recvc:
 			r.Step(m) // raft never returns an error
+		case d := <-n.compactc:
+			r.compact(d)
 		case <-n.tickc:
 			r.tick()
 		case readyc <- rd:
 			if rd.SoftState != nil {
 				prevSoftSt = rd.SoftState
 			}
-			if !IsEmptyState(rd.HardState) {
+			if !IsEmptyHardState(rd.HardState) {
 				prevHardSt = rd.HardState
+			}
+			if !IsEmptySnap(rd.Snapshot) {
+				prevSnapi = rd.Snapshot.Index
 			}
 			r.raftLog.resetNextEnts()
 			r.raftLog.resetUnstable()
@@ -209,7 +227,14 @@ func (n *Node) Ready() <-chan Ready {
 	return n.readyc
 }
 
-func newReady(r *raft, prevSoftSt *SoftState, prevHardSt pb.HardState) Ready {
+func (n *Node) Compact(d []byte) {
+	select {
+	case n.compactc <- d:
+	case <-n.done:
+	}
+}
+
+func newReady(r *raft, prevSoftSt *SoftState, prevHardSt pb.HardState, prevSnapi int64) Ready {
 	rd := Ready{
 		Entries:          r.raftLog.unstableEnts(),
 		CommittedEntries: r.raftLog.nextEnts(),
@@ -219,8 +244,11 @@ func newReady(r *raft, prevSoftSt *SoftState, prevHardSt pb.HardState) Ready {
 	if softSt := r.softState(); !softSt.equal(prevSoftSt) {
 		rd.SoftState = softSt
 	}
-	if !isStateEqual(r.HardState, prevHardSt) {
+	if !isHardStateEqual(r.HardState, prevHardSt) {
 		rd.HardState = r.HardState
+	}
+	if prevSnapi != r.raftLog.snapshot.Index {
+		rd.Snapshot = r.raftLog.snapshot
 	}
 	return rd
 }

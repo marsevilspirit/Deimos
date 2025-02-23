@@ -127,6 +127,7 @@ func TestReadyContainUpdates(t *testing.T) {
 		{Ready{Entries: make([]raftpb.Entry, 1, 1)}, true},
 		{Ready{CommittedEntries: make([]raftpb.Entry, 1, 1)}, true},
 		{Ready{Messages: make([]raftpb.Message, 1, 1)}, true},
+		{Ready{Snapshot: raftpb.Snapshot{Index: 1}}, true},
 	}
 
 	for i, tt := range tests {
@@ -185,7 +186,7 @@ func TestNodeRestart(t *testing.T) {
 		CommittedEntries: entries[1 : state.Commit+1],
 	}
 
-	n := Restart(1, []int64{1}, 0, 0, state, entries)
+	n := Restart(1, []int64{1}, 0, 0, nil, state, entries)
 	if g := <-n.Ready(); !reflect.DeepEqual(g, want) {
 		t.Errorf("g = %+v,\n             w   %+v", g, want)
 	}
@@ -194,6 +195,55 @@ func TestNodeRestart(t *testing.T) {
 	case rd := <-n.Ready():
 		t.Errorf("unexpected Ready: %+v", rd)
 	default:
+	}
+}
+
+func TestCompact(t *testing.T) {
+	ctx := context.Background()
+	n := newNode()
+	r := newRaft(1, []int64{1}, 0, 0)
+	go n.run(r)
+
+	n.Campaign(ctx)
+	n.Propose(ctx, []byte("foo"))
+
+	w := raftpb.Snapshot{
+		Term:  1,
+		Index: 2, // one nop + one proposal
+		Data:  []byte("a snapshot"),
+		Nodes: []int64{1},
+	}
+
+	forceGosched()
+	select {
+	case <-n.Ready():
+	default:
+		t.Fatalf("unexpected proposal failure: unable to commit entry")
+	}
+
+	n.Compact(w.Data)
+	forceGosched()
+	select {
+	case rd := <-n.Ready():
+		if !reflect.DeepEqual(rd.Snapshot, w) {
+			t.Errorf("snap = %+v, want %+v", rd.Snapshot, w)
+		}
+	default:
+		t.Fatalf("unexpected proposal failure: unable to create a snapshot")
+	}
+	forceGosched()
+
+	// TODO: this test the run updates the snapi correctly...
+	// should be tested separately with other kinds of updates.
+	select {
+	case <-n.Ready():
+		t.Fatalf("unexpected more Ready")
+	default:
+	}
+	n.Stop()
+
+	if r.raftLog.offset != w.Index {
+		t.Errorf("log.offset = %d, want %d", r.raftLog.offset, w.Index)
 	}
 }
 
@@ -209,9 +259,9 @@ func TestIsStateEqual(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		if isStateEqual(tt.st, emptyState) != tt.we {
+		if isHardStateEqual(tt.st, emptyState) != tt.we {
 			t.Errorf("#%d, equal = %v, want %v", i,
-				isStateEqual(tt.st, emptyState), tt.we)
+				isHardStateEqual(tt.st, emptyState), tt.we)
 		}
 	}
 }

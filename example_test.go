@@ -19,7 +19,7 @@ func saveToDisk(ents []pb.Entry)      {}
 // 	for {
 // 		// ReadState blocks until there is new state ready.
 // 		rd := <-n.Ready()
-// 		if !isStateEqual(prev, rd.HardState) {
+// 		if !isHardStateEqual(prev, rd.HardState) {
 // 			saveStateToDisk(rd.HardState)
 // 			prev = rd.HardState
 // 		}
