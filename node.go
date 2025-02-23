@@ -34,8 +34,7 @@ type Ready struct {
 }
 
 func isStateEqual(a, b pb.State) bool {
-	return a.Term == b.Term && a.Vote == b.Vote &&
-		a.Commit == b.Commit && a.LastIndex == b.LastIndex
+	return a.Term == b.Term && a.Vote == b.Vote && a.Commit == b.Commit
 }
 
 func IsEmptyState(st pb.State) bool {
@@ -48,7 +47,6 @@ func (rd Ready) containsUpdates() bool {
 }
 
 type Node struct {
-	ctx    context.Context
 	propc  chan pb.Message
 	recvc  chan pb.Message
 	readyc chan Ready
@@ -138,14 +136,12 @@ func (n *Node) run(r *raft) {
 	}
 }
 
-// Tick increments the internal logical clock for this Node. Election timeouts
-// and heartbeat timeouts are in units of ticks.
-func (n *Node) Tick() error {
+// Tick increments the internal logical clock for this Node.
+// Election timeouts and heartbeat timeouts are in units of ticks.
+func (n *Node) Tick() {
 	select {
 	case n.tickc <- struct{}{}:
-		return nil
 	case <-n.done:
-		return ErrStopped
 	}
 }
 

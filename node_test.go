@@ -141,12 +141,12 @@ func TestNode(t *testing.T) {
 
 	wants := []Ready{
 		{
-			State:            raftpb.State{Term: 1, Commit: 1, LastIndex: 1},
+			State:            raftpb.State{Term: 1, Commit: 1},
 			Entries:          []raftpb.Entry{{}, {Term: 1, Index: 1}},
 			CommittedEntries: []raftpb.Entry{{Term: 1, Index: 1}},
 		},
 		{
-			State:            raftpb.State{Term: 1, Commit: 2, LastIndex: 2},
+			State:            raftpb.State{Term: 1, Commit: 2},
 			Entries:          []raftpb.Entry{{Term: 1, Index: 2, Data: []byte("foo")}},
 			CommittedEntries: []raftpb.Entry{{Term: 1, Index: 2, Data: []byte("foo")}},
 		},
@@ -176,7 +176,7 @@ func TestNodeRestart(t *testing.T) {
 		{Term: 1, Index: 1},
 		{Term: 1, Index: 2, Data: []byte("foo")},
 	}
-	state := raftpb.State{Term: 1, Commit: 1, LastIndex: 2}
+	state := raftpb.State{Term: 1, Commit: 1}
 
 	want := Ready{
 		State:            emptyState,
@@ -204,7 +204,6 @@ func TestIsStateEqual(t *testing.T) {
 		{raftpb.State{Vote: 1}, false},
 		{raftpb.State{Commit: 1}, false},
 		{raftpb.State{Term: 1}, false},
-		{raftpb.State{LastIndex: 1}, false},
 	}
 
 	for i, tt := range tests {
