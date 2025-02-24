@@ -86,7 +86,8 @@ type Node interface {
 	// Configure proposes config change.
 	// Only one config can be in the process of
 	// going through consensus at a time.
-	Configure(ctx context.Context, data []byte) error
+	// Configure doesn't support perform config change.
+	Configure(ctx context.Context, conf pb.Config) error
 	// Step advances the state machine using the given message.
 	// ctx.Err() will be returned, if any.
 	Step(ctx context.Context, m pb.Message) error
@@ -263,7 +264,11 @@ func (n *node) Propose(ctx context.Context, data []byte) error {
 	)
 }
 
-func (n *node) Configure(ctx context.Context, data []byte) error {
+func (n *node) Configure(ctx context.Context, conf pb.Config) error {
+	data, err := conf.Marshal()
+	if err != nil {
+		return err
+	}
 	return n.Step(ctx,
 		pb.Message{
 			Type: msgProp,
