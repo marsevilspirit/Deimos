@@ -953,7 +953,8 @@ func TestSlowNodeRestore(t *testing.T) {
 	}
 }
 
-// TestStepConfig tests that when raft step msgProp in ConfigEntry type,
+// TestStepConfig tests that when raft step msgProp
+// in EntryConfigChange type,
 // it appends the entry to log and sets pendingConf to be true.
 func TestStepConfig(t *testing.T) {
 	// a raft that cannot make progress
@@ -961,7 +962,7 @@ func TestStepConfig(t *testing.T) {
 	r.becomeCandidate()
 	r.becomeLeader()
 	index := r.raftLog.lastIndex()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfig}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfigChange}}})
 	if g := r.raftLog.lastIndex(); g != index+1 {
 		t.Errorf("index = %d, want %d", g, index+1)
 	}
@@ -971,17 +972,17 @@ func TestStepConfig(t *testing.T) {
 }
 
 // TestStepIgnoreConfig tests that if raft step the second msgProp in
-// ConfigEntry type when the first one is uncommitted, the node will deny
-// the proposal and keep its original state.
+// EntryConfigChange type when the first one is uncommitted,
+// the node will deny the proposal and keep its original state.
 func TestStepIgnoreConfig(t *testing.T) {
 	// a raft that cannot make progress
 	r := newRaft(1, []int64{1, 2}, 0, 0)
 	r.becomeCandidate()
 	r.becomeLeader()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfig}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfigChange}}})
 	index := r.raftLog.lastIndex()
 	pendingConf := r.pendingConf
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfig}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfigChange}}})
 	if g := r.raftLog.lastIndex(); g != index {
 		t.Errorf("index = %d, want %d", g, index)
 	}
@@ -998,7 +999,7 @@ func TestRecoverPendingConfig(t *testing.T) {
 		wpending bool
 	}{
 		{pb.EntryNormal, false},
-		{pb.EntryConfig, true},
+		{pb.EntryConfigChange, true},
 	}
 	for i, tt := range tests {
 		r := newRaft(1, []int64{1, 2}, 0, 0)
@@ -1021,8 +1022,8 @@ func TestRecoverDoublePendingConfig(t *testing.T) {
 			}
 		}()
 		r := newRaft(1, []int64{1, 2}, 0, 0)
-		r.appendEntry(pb.Entry{Type: pb.EntryConfig})
-		r.appendEntry(pb.Entry{Type: pb.EntryConfig})
+		r.appendEntry(pb.Entry{Type: pb.EntryConfigChange})
+		r.appendEntry(pb.Entry{Type: pb.EntryConfigChange})
 		r.becomeCandidate()
 		r.becomeLeader()
 	}()
