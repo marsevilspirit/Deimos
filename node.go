@@ -242,7 +242,7 @@ func (n *node) Tick() {
 
 // Campaign causes this Node to transition to candidate state.
 func (n *node) Campaign(ctx context.Context) error {
-	return n.Step(ctx, pb.Message{Type: msgHup})
+	return n.step(ctx, pb.Message{Type: msgHup})
 }
 
 func (n *node) Propose(ctx context.Context, data []byte) error {
@@ -271,9 +271,18 @@ func (n *node) ProposeConfChange(ctx context.Context, cc pb.ConfChange) error {
 	)
 }
 
+func (n *node) Step(ctx context.Context, m pb.Message) error {
+	// ignore unexpected local messages receiving over network
+	if m.Type == msgHup || m.Type == msgBeat {
+		// TODO: return an error?
+		return nil
+	}
+	return n.step(ctx, m)
+}
+
 // Step advances the state machine using msgs.
 // The ctx.Err() will be returned, if any.
-func (n *node) Step(ctx context.Context, m pb.Message) error {
+func (n *node) step(ctx context.Context, m pb.Message) error {
 	ch := n.recvc
 	if m.Type == msgProp {
 		ch = n.propc
