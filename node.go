@@ -268,7 +268,7 @@ func (n *node) Configure(ctx context.Context, data []byte) error {
 		pb.Message{
 			Type: msgProp,
 			Entries: []pb.Entry{
-				{Type: EntryConfig, Data: data},
+				{Type: pb.EntryConfig, Data: data},
 			},
 		},
 	)

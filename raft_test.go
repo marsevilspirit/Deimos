@@ -961,7 +961,7 @@ func TestStepConfig(t *testing.T) {
 	r.becomeCandidate()
 	r.becomeLeader()
 	index := r.raftLog.lastIndex()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: EntryConfig}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfig}}})
 	if g := r.raftLog.lastIndex(); g != index+1 {
 		t.Errorf("index = %d, want %d", g, index+1)
 	}
@@ -978,10 +978,10 @@ func TestStepIgnoreConfig(t *testing.T) {
 	r := newRaft(1, []int64{1, 2}, 0, 0)
 	r.becomeCandidate()
 	r.becomeLeader()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: EntryConfig}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfig}}})
 	index := r.raftLog.lastIndex()
 	pendingConf := r.pendingConf
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: EntryConfig}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfig}}})
 	if g := r.raftLog.lastIndex(); g != index {
 		t.Errorf("index = %d, want %d", g, index)
 	}
@@ -994,11 +994,11 @@ func TestStepIgnoreConfig(t *testing.T) {
 // based on uncommitted entries.
 func TestRecoverPendingConfig(t *testing.T) {
 	tests := []struct {
-		entType  int64
+		entType  pb.EntryType
 		wpending bool
 	}{
-		{EntryNormal, false},
-		{EntryConfig, true},
+		{pb.EntryNormal, false},
+		{pb.EntryConfig, true},
 	}
 	for i, tt := range tests {
 		r := newRaft(1, []int64{1, 2}, 0, 0)
@@ -1021,8 +1021,8 @@ func TestRecoverDoublePendingConfig(t *testing.T) {
 			}
 		}()
 		r := newRaft(1, []int64{1, 2}, 0, 0)
-		r.appendEntry(pb.Entry{Type: EntryConfig})
-		r.appendEntry(pb.Entry{Type: EntryConfig})
+		r.appendEntry(pb.Entry{Type: pb.EntryConfig})
+		r.appendEntry(pb.Entry{Type: pb.EntryConfig})
 		r.becomeCandidate()
 		r.becomeLeader()
 	}()
