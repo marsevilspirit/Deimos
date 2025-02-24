@@ -954,7 +954,7 @@ func TestSlowNodeRestore(t *testing.T) {
 }
 
 // TestStepConfig tests that when raft step msgProp
-// in EntryConfigChange type,
+// in EntryConfChange type,
 // it appends the entry to log and sets pendingConf to be true.
 func TestStepConfig(t *testing.T) {
 	// a raft that cannot make progress
@@ -962,7 +962,7 @@ func TestStepConfig(t *testing.T) {
 	r.becomeCandidate()
 	r.becomeLeader()
 	index := r.raftLog.lastIndex()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfigChange}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
 	if g := r.raftLog.lastIndex(); g != index+1 {
 		t.Errorf("index = %d, want %d", g, index+1)
 	}
@@ -979,10 +979,10 @@ func TestStepIgnoreConfig(t *testing.T) {
 	r := newRaft(1, []int64{1, 2}, 0, 0)
 	r.becomeCandidate()
 	r.becomeLeader()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfigChange}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
 	index := r.raftLog.lastIndex()
 	pendingConf := r.pendingConf
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfigChange}}})
+	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
 	if g := r.raftLog.lastIndex(); g != index {
 		t.Errorf("index = %d, want %d", g, index)
 	}
@@ -999,7 +999,7 @@ func TestRecoverPendingConfig(t *testing.T) {
 		wpending bool
 	}{
 		{pb.EntryNormal, false},
-		{pb.EntryConfigChange, true},
+		{pb.EntryConfChange, true},
 	}
 	for i, tt := range tests {
 		r := newRaft(1, []int64{1, 2}, 0, 0)
@@ -1022,8 +1022,8 @@ func TestRecoverDoublePendingConfig(t *testing.T) {
 			}
 		}()
 		r := newRaft(1, []int64{1, 2}, 0, 0)
-		r.appendEntry(pb.Entry{Type: pb.EntryConfigChange})
-		r.appendEntry(pb.Entry{Type: pb.EntryConfigChange})
+		r.appendEntry(pb.Entry{Type: pb.EntryConfChange})
+		r.appendEntry(pb.Entry{Type: pb.EntryConfChange})
 		r.becomeCandidate()
 		r.becomeLeader()
 	}()
