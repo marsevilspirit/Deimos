@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marsevilspirit/m_raft/raftpb"
+	"github.com/marsevilspirit/marstore/raft/raftpb"
 )
 
 // TestNodeStep ensures that node.Step sends msgProp to propc chan

@@ -1,4 +1,4 @@
-module github.com/marsevilspirit/m_raft
+module github.com/marsevilspirit/marstore
 
 go 1.24.0
 

@@ -1,13 +1,10 @@
 package server
 
-import (
-	"github.com/marsevilspirit/m_raft"
-)
+import ()
 
 type Response struct {
 	err error
 }
 
 type Server struct {
-	n raft.Node
 }

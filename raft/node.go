@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log"
 
-	pb "github.com/marsevilspirit/m_raft/raftpb"
+	pb "github.com/marsevilspirit/marstore/raft/raftpb"
 )
 
 var (

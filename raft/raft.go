@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	pb "github.com/marsevilspirit/m_raft/raftpb"
+	pb "github.com/marsevilspirit/marstore/raft/raftpb"
 )
 
 // 表示缺失的领导者
