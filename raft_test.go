@@ -449,7 +449,7 @@ func TestCommit(t *testing.T) {
 
 	for i, tt := range tests {
 		prs := make(map[int64]*progress)
-		for j := 0; j < len(tt.matches); j++ {
+		for j := range len(tt.matches) {
 			prs[int64(j)] = &progress{tt.matches[j], tt.matches[j] + 1}
 		}
 		sm := &raft{raftLog: &raftLog{ents: tt.logs}, prs: prs, HardState: pb.HardState{Term: tt.smTerm}}
@@ -753,7 +753,7 @@ func TestBcastBeat(t *testing.T) {
 	sm.becomeCandidate()
 	sm.becomeLeader()
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sm.appendEntry(pb.Entry{})
 	}
 
@@ -931,7 +931,7 @@ func TestSlowNodeRestore(t *testing.T) {
 	nt.send(pb.Message{From: 1, To: 1, Type: msgHup})
 
 	nt.isolate(3)
-	for j := 0; j < defaultCompactThreshold+1; j++ {
+	for range defaultCompactThreshold + 1 {
 		nt.send(pb.Message{From: None, To: 1, Type: msgProp, Entries: []pb.Entry{{}}})
 	}
 	lead := nt.peers[1].(*raft)
@@ -1059,6 +1059,33 @@ func TestRemoveNode(t *testing.T) {
 	}
 }
 
+func TestTickElectionElapsed(t *testing.T) {
+	electionTimeout := 10
+	tests := []struct {
+		promotable bool
+		e          int
+		we         int
+	}{
+		{true, 0, 1},
+	}
+	for i, tt := range tests {
+		r := &raft{
+			id:              1,
+			raftLog:         newLog(),
+			prs:             make(map[int64]*progress),
+			electionTimeout: electionTimeout,
+			elapsed:         tt.e,
+		}
+		if tt.promotable {
+			r.prs[r.id] = &progress{}
+		}
+		r.tickElection()
+		if r.elapsed != tt.we {
+			t.Errorf("#%d: elapsed = %d, want %d", i, r.elapsed, tt.we)
+		}
+	}
+}
+
 func ents(terms ...int64) *raft {
 	ents := []pb.Entry{{}}
 	for _, term := range terms {
@@ -1083,7 +1110,7 @@ type network struct {
 func newNetwork(peers ...Interface) *network {
 	size := len(peers)
 	peerAddrs := make([]int64, size)
-	for i := 0; i < size; i++ {
+	for i := range peerAddrs {
 		peerAddrs[i] = 1 + int64(i)
 	}
 
@@ -1098,7 +1125,7 @@ func newNetwork(peers ...Interface) *network {
 		case *raft:
 			v.id = id
 			v.prs = make(map[int64]*progress)
-			for i := 0; i < size; i++ {
+			for i := range peerAddrs {
 				v.prs[peerAddrs[i]] = &progress{}
 			}
 			v.reset(0)
@@ -1137,7 +1164,7 @@ func (nw *network) cut(one, other int64) {
 // isolate disconnects the specified node (id)
 // from all other nodes in the network.
 func (nw *network) isolate(id int64) {
-	for i := 0; i < len(nw.peers); i++ {
+	for i := range len(nw.peers) {
 		nid := int64(i) + 1
 		if nid != id {
 			nw.drop(id, nid, 1.0)
