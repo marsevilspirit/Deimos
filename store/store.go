@@ -400,16 +400,19 @@ func (s *Store) Recovery(state []byte) error {
 
 // clean all expired keys
 func clean() {
-	// for key, node := range store.Nodes {
-	// 	if node.ExpireTime.Equal(PERMANENT) {
-	// 		continue
-	// 	} else {
-	// 		if node.ExpireTime.Sub(time.Now()) < 0 {
-	// 			node.update = make(chan time.Time)
-	// 			go expire(key, node.update, node.ExpireTime)
-	// 		} else {
-	// 			delete(store.Nodes, key)
-	// 		}
-	// 	}
-	// }
+	store.Tree.traverse(cleanNode, true)
+}
+
+func cleanNode(key string, node *Node) {
+	if node.ExpireTime.Equal(PERMANENT) {
+		return
+	} else {
+		if node.ExpireTime.Sub(time.Now()) >= time.Second {
+			node.update = make(chan time.Time)
+			go expire(key, node.update, node.ExpireTime)
+		} else {
+			// we should delete the node
+			store.Tree.delete(key)
+		}
+	}
 }
