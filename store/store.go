@@ -56,7 +56,7 @@ type Response struct {
 	Action    int    `json:"action"`
 	Key       string `json:"key"`
 	PrevValue string `json:"prevValue"`
-	Value     string `json:"Value"`
+	Value     string `json:"value"`
 
 	// if the key existed before the action, this field should be true
 	// if did not exist before the action, should be flase
@@ -70,18 +70,15 @@ type Response struct {
 	Index uint64 `json:"index"`
 }
 
-func init() {
-	store = createStore()
-	store.messager = nil
-	store.ResponseStartIndex = 0
-	store.ResponseMaxSize = 1024
-	store.ResponseCurrSize = 0
-}
-
+// make a new store
 func createStore() *Store {
 	return &Store{
-		Nodes:       make(map[string]Node),
-		ResponseMap: make(map[string]Response),
+		messager:           nil,
+		Nodes:              make(map[string]Node),
+		ResponseMap:        make(map[string]Response),
+		ResponseStartIndex: 0,
+		ResponseMaxSize:    1024,
+		ResponseCurrSize:   0,
 	}
 }
 
@@ -274,6 +271,7 @@ func updateMap(index uint64, resp *Response) {
 
 // get the value of key
 func Get(key string) Response {
+	key = "/" + key
 	key = path.Clean(key)
 	node, ok := store.Nodes[key]
 	if ok {
@@ -319,6 +317,7 @@ func Get(key string) Response {
 func Delete(key string, index uint64) ([]byte, error) {
 	// update index
 	store.Index = index
+	key = "/" + key
 	key = path.Clean(key)
 	node, ok := store.Nodes[key]
 	if ok {
