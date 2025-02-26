@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strconv"
 	"time"
 )
 
@@ -27,8 +28,11 @@ type Store struct {
 	// now we use it to send changes to the hub of the web service
 	messager *chan string
 
-	// previous response
-	Responses [1024]Response
+	ResponseMap map[string]Response
+
+	ResponseMaxSize int
+
+	ResponseCurrSize uint
 
 	// at some point, we may need to compact the Response
 	ResponseStartIndex uint64
@@ -70,11 +74,14 @@ func init() {
 	store = createStore()
 	store.messager = nil
 	store.ResponseStartIndex = 0
+	store.ResponseMaxSize = 1024
+	store.ResponseCurrSize = 0
 }
 
 func createStore() *Store {
 	return &Store{
-		Nodes: make(map[string]Node),
+		Nodes:       make(map[string]Node),
+		ResponseMap: make(map[string]Response),
 	}
 }
 
@@ -156,7 +163,7 @@ func Set(key string, value string, expireTime time.Time, index uint64) ([]byte, 
 			*store.messager <- string(msg)
 		}
 
-		store.Responses[index-store.ResponseStartIndex] = resp
+		updateMap(index, &resp)
 
 		return msg, err
 	} else { // add new node
@@ -189,7 +196,7 @@ func Set(key string, value string, expireTime time.Time, index uint64) ([]byte, 
 			*store.messager <- string(msg)
 		}
 
-		store.Responses[index-store.ResponseStartIndex] = resp
+		updateMap(index, &resp)
 		fmt.Println(index - store.ResponseStartIndex)
 		return msg, err
 	}
@@ -240,6 +247,28 @@ func expire(key string, update chan time.Time, expireTime time.Time) {
 			// update the duration
 			duration = updateTime.Sub(time.Now())
 		}
+	}
+}
+
+func updateMap(index uint64, resp *Response) {
+	if store.ResponseMaxSize == 0 {
+		return
+	}
+
+	strIndex := strconv.FormatUint(index, 10)
+	store.ResponseMap[strIndex] = *resp
+
+	// unlimited
+	if store.ResponseMaxSize < 0 {
+		store.ResponseCurrSize++
+		return
+	}
+
+	if store.ResponseCurrSize == uint(store.ResponseMaxSize) {
+		store.ResponseStartIndex++
+		delete(store.ResponseMap, strconv.FormatUint(store.ResponseStartIndex, 10))
+	} else {
+		store.ResponseCurrSize++
 	}
 }
 
@@ -322,7 +351,7 @@ func Delete(key string, index uint64) ([]byte, error) {
 		if (store.messager != nil) && (err == nil) {
 			*store.messager <- string(msg)
 		}
-		store.Responses[index-store.ResponseStartIndex] = resp
+		updateMap(index, &resp)
 		return msg, err
 	} else {
 		resp := Response{
@@ -335,9 +364,7 @@ func Delete(key string, index uint64) ([]byte, error) {
 			TTL:        0,
 			Index:      index,
 		}
-
-		store.Responses[index-store.ResponseStartIndex] = resp
-
+		updateMap(index, &resp)
 		return json.Marshal(resp)
 	}
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -37,7 +38,7 @@ func AddWatcher(prefix string, c chan Response, sinceIndex uint64) error {
 	if sinceIndex != 0 && sinceIndex >= store.ResponseStartIndex {
 		for i := sinceIndex; i <= store.ResponseStartIndex; i++ {
 			if check(prefix, i) {
-				c <- store.Responses[i]
+				c <- store.ResponseMap[strconv.FormatUint(i, 10)]
 				return nil
 			}
 		}
@@ -54,17 +55,19 @@ func AddWatcher(prefix string, c chan Response, sinceIndex uint64) error {
 	return nil
 }
 
-// check if the response has what we are waching
+// check if the response has what we are watching
 func check(prefix string, index uint64) bool {
-	index = index - store.ResponseStartIndex
-	if index < 0 {
+	resp, ok := store.ResponseMap[strconv.FormatUint(index, 10)]
+	if !ok {
+		// not storage system command
 		return false
-	}
-	path := store.Responses[index].Key
-	if strings.HasPrefix(path, prefix) {
-		prefixLen := len(prefix)
-		if len(path) == prefixLen || path[prefixLen] == '/' {
-			return true
+	} else {
+		path := resp.Key
+		if strings.HasPrefix(path, prefix) {
+			prefixLen := len(prefix)
+			if len(path) == prefixLen || path[prefixLen] == '/' {
+				return true
+			}
 		}
 	}
 	return false
