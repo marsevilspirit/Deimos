@@ -10,9 +10,9 @@ import (
 func TestStoreGet(t *testing.T) {
 	ts := &tree{
 		&treeNode{
-			Value:   CreateTestNode("/"),
-			Dir:     true,
-			NodeMap: make(map[string]*treeNode),
+			InternalNode: CreateTestNode("/"),
+			Dir:          true,
+			NodeMap:      make(map[string]*treeNode),
 		},
 	}
 
