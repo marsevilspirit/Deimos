@@ -61,13 +61,13 @@ func TestStoreGet(t *testing.T) {
 	ts.set("/hello/fooo", NewTestNode("barbarbar"))
 	ts.set("/hello/fooo/foo", NewTestNode("barbarbar"))
 
-	nodes, keys, dirs, ok := ts.list("/hello")
+	nodes, keys, ok := ts.list("/hello")
 	if !ok {
 		t.Fatalf("cannot list")
 	} else {
 		nodes, _ := nodes.([]*Node)
 		for i := range len(nodes) {
-			fmt.Println("List test: ", keys[i], "=", nodes[i].Value, "[", dirs[i], "]")
+			fmt.Println("List test: ", keys[i], "=", nodes[i].Value)
 		}
 	}
 

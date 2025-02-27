@@ -288,7 +288,7 @@ func (s *Store) Get(key string) ([]byte, error) {
 func (s *Store) RawGet(key string) ([]*Response, error) {
 	key = path.Clean("/" + key)
 
-	nodes, keys, dirs, ok := s.Tree.list(key)
+	nodes, keys, ok := s.Tree.list(key)
 	if ok {
 		node, ok := nodes.(*Node)
 
@@ -329,7 +329,7 @@ func (s *Store) RawGet(key string) ([]*Response, error) {
 				Key:    path.Join(key, keys[i]),
 			}
 
-			if !dirs[i] {
+			if len(nodes[i].Value) != 0 {
 				resps[i].Value = nodes[i].Value
 			} else {
 				resps[i].Dir = true

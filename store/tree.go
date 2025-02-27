@@ -34,7 +34,7 @@ func (t tnWithKeySlice) Less(i, j int) bool { return t[i].key < t[j].key }
 func (t tnWithKeySlice) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
 
 // represent an empty node
-var emptyNode = Node{".", PERMANENT, nil}
+var emptyNode = Node{"", PERMANENT, nil}
 
 // Set the key to the given value, return true if success
 // If any intermidate path of the key is not a directory type, it will fail
@@ -140,31 +140,25 @@ func (t *tree) get(key string) (Node, bool) {
 
 // get the internalNode of the key
 // the method can deal with file node
-func (t *tree) list(dir string) (interface{}, []string, []bool, bool) {
+func (t *tree) list(dir string) (any, []string, bool) {
 	treeNode, ok := t.internalGet(dir)
 	if !ok {
-		return nil, nil, nil, ok
+		return nil, nil, ok
 	} else {
 		if !treeNode.Dir {
-			return &treeNode.InternalNode, nil, nil, true
+			return &treeNode.InternalNode, nil, ok
 		}
 		length := len(treeNode.NodeMap)
 		nodes := make([]*Node, length)
 		keys := make([]string, length)
-		dirs := make([]bool, length)
-		i := 0
 
+		i := 0
 		for key, node := range treeNode.NodeMap {
 			nodes[i] = &node.InternalNode
 			keys[i] = key
-			if node.Dir {
-				dirs[i] = true
-			} else {
-				dirs[i] = false
-			}
 			i++
 		}
-		return nodes, keys, dirs, ok
+		return nodes, keys, ok
 	}
 }
 
