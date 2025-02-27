@@ -1,7 +1,7 @@
 package store
 
 import (
-	// "fmt"
+	"fmt"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -61,18 +61,18 @@ func TestStoreGet(t *testing.T) {
 	ts.set("/hello/fooo", NewTestNode("barbarbar"))
 	ts.set("/hello/fooo/foo", NewTestNode("barbarbar"))
 
-	// nodes, keys, ok := ts.list("/hello")
-	// if !ok {
-	// 	t.Fatalf("cannot list")
-	// } else {
-	// 	nodes, _ := nodes.([]*Node)
-	// 	for i := range len(nodes) {
-	// 		fmt.Println("List test: ", keys[i], "=", nodes[i].Value)
-	// 	}
-	// }
+	nodes, keys, ok := ts.list("/hello")
+	if !ok {
+		t.Fatalf("cannot list")
+	} else {
+		nodes, _ := nodes.([]*Node)
+		for i := range len(nodes) {
+			fmt.Println("List test: ", keys[i], "=", nodes[i].Value)
+		}
+	}
 
 	// speed test
-	keys := GenKeys(100, 10)
+	keys = GenKeys(100, 10)
 	for i := range 100 {
 		value := strconv.Itoa(rand.Int())
 		ts.set(keys[i], NewTestNode(value))
