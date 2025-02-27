@@ -57,6 +57,19 @@ func TestStoreGet(t *testing.T) {
 		t.Fatalf("Expect cannot delete /hello, but deleted!")
 	}
 
+	// test List
+	ts.set("/hello/fooo", CreateTestNode("barbarbar"))
+	ts.set("/hello/fooo/foo", CreateTestNode("barbarbar"))
+
+	nodes, keys, dirs, ok := ts.list("/hello")
+	if !ok {
+		t.Fatalf("cannot list")
+	} else {
+		for i := range len(nodes) {
+			fmt.Println("List test: ", keys[i], "=", nodes[i].Value, "[", dirs[i], "]")
+		}
+	}
+
 	// speed test
 	for range 100 {
 		key := "/"

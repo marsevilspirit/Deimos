@@ -72,6 +72,12 @@ type Response struct {
 	Index uint64 `json:"index"`
 }
 
+type ListNode struct {
+	Key   string
+	Value string
+	Type  string
+}
+
 // make a new store
 func createStore() *Store {
 	return &Store{
@@ -323,6 +329,23 @@ func Get(key string) Response {
 		}
 		return resp
 	}
+}
+
+// List all the item in the prefix
+func List(prefix string) ([]byte, error) {
+	var ln []ListNode
+	nodes, keys, dirs, ok := store.Tree.list(prefix)
+	if ok {
+		ln = make([]ListNode, len(nodes))
+		for i := range nodes {
+			ln[i] = ListNode{
+				Key:   keys[i],
+				Value: nodes[i].Value,
+				Type:  dirs[i],
+			}
+		}
+	}
+	return json.Marshal(ln)
 }
 
 // delete the key
