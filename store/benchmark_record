@@ -1,0 +1,26 @@
+goos: linux
+goarch: amd64
+pkg: github.com/marsevilspirit/marstore/store
+cpu: 13th Gen Intel(R) Core(TM) i9-13980HX
+BenchmarkStoreSet
+BenchmarkStoreSet-32             	     38	 36310184 ns/op
+BenchmarkStoreGet
+BenchmarkStoreGet-32             	  10000	   758144 ns/op
+BenchmarkStoreSnapshotCopy
+BenchmarkStoreSnapshotCopy-32    	    220	  5058210 ns/op
+BenchmarkSnapshotSaveJson
+BenchmarkSnapshotSaveJson-32     	   2205	 13875898 ns/op	178.71 MB/s
+BenchmarkSnapshotRecovery
+BenchmarkSnapshotRecovery-32     	     60	 21934515 ns/op	113.42 MB/s
+BenchmarkTreeStoreSet
+BenchmarkTreeStoreSet-32         	     81	 17757608 ns/op
+BenchmarkTreeStoreGet
+BenchmarkTreeStoreGet-32         	    288	  4059099 ns/op
+BenchmarkTreeStoreCopy
+BenchmarkTreeStoreCopy-32        	    129	 10560146 ns/op
+BenchmarkMakeSlice
+BenchmarkMakeSlice-32            	  78037	    13778 ns/op
+BenchmarkTreeStoreList
+BenchmarkTreeStoreList-32        	    220	207446336 ns/op
+BenchmarkWatch
+BenchmarkWatch-32                	    127	  9459370 ns/op
