@@ -22,7 +22,7 @@ type Store struct {
 	messager *chan string
 
 	// A map to keep the recent response to the clients
-	ResponseMap map[string]Response
+	ResponseMap map[string]*Response
 
 	// The max number of the recent responses we can record
 	ResponseMaxSize int
@@ -95,7 +95,7 @@ var PERMANENT = time.Unix(0, 0)
 func CreateStore(max int) *Store {
 	return &Store{
 		messager:           nil,
-		ResponseMap:        make(map[string]Response),
+		ResponseMap:        make(map[string]*Response),
 		ResponseStartIndex: 0,
 		ResponseMaxSize:    max,
 		ResponseCurrSize:   0,
@@ -260,18 +260,31 @@ func (s *Store) internalGet(key string) *Response {
 // If key is a file return the file
 // If key is a directory reuturn an array of files
 func (s *Store) Get(key string) ([]byte, error) {
+	resps, err := s.RawGet(key)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(resps) == 1 {
+		return json.Marshal(resps[0])
+	}
+
+	return json.Marshal(resps)
+}
+
+func (s *Store) RawGet(key string) ([]*Response, error) {
 	key = path.Clean("/" + key)
 
 	nodes, keys, dirs, ok := s.Tree.list(key)
 	if ok {
-		resps := make([]Response, len(nodes))
+		resps := make([]*Response, len(nodes))
 		for i := range nodes {
 			var TTL int64
 			var isExpire bool = false
 
 			isExpire = !nodes[i].ExpireTime.Equal(PERMANENT)
 
-			resps[i] = Response{
+			resps[i] = &Response{
 				Action: "GET",
 				Index:  s.Index,
 				Key:    path.Join(key, keys[i]),
@@ -290,9 +303,7 @@ func (s *Store) Get(key string) ([]byte, error) {
 				resps[i].TTL = TTL
 			}
 		}
-		if len(resps) == 1 {
-			return json.Marshal(resps[0])
-		}
+		return resps, nil
 	}
 	err := NotFoundError(key)
 	return nil, err
@@ -425,7 +436,7 @@ func (s *Store) addToResponseMap(index uint64, resp *Response) {
 	}
 
 	strIndex := strconv.FormatUint(index, 10)
-	s.ResponseMap[strIndex] = *resp
+	s.ResponseMap[strIndex] = resp
 
 	// unlimited
 	if s.ResponseMaxSize < 0 {
@@ -456,6 +467,10 @@ func (s *Store) Save() ([]byte, error) {
 
 // Recovery the state of the stroage system from a previous state
 func (s *Store) Recovery(state []byte) error {
+	// we need to stop all the current watchers
+	// recovery will clear watcherHub
+	s.watcher.stopWatchers()
+
 	err := json.Unmarshal(state, s)
 
 	// The only thing need to change after the recovery is the
