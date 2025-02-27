@@ -89,12 +89,12 @@ var PERMANENT = time.Unix(0, 0)
 
 // Create a new store
 // Argument max is the max number of response we want to record
-func createStore() *Store {
+func CreateStore(max int) *Store {
 	return &Store{
 		messager:           nil,
 		ResponseMap:        make(map[string]Response),
 		ResponseStartIndex: 0,
-		ResponseMaxSize:    1024,
+		ResponseMaxSize:    max,
 		ResponseCurrSize:   0,
 		watcher:            createWatcherHub(),
 		Tree: &tree{
@@ -343,7 +343,7 @@ func (s *Store) TestAndSet(key string, prevValue string, value string, expireTim
 		return s.Set(key, value, expireTime, index)
 	} else {
 		// If fails, return err
-		err := TestFail(fmt.Sprintf("%s==%s", resp.Value, prevValue))
+		err := TestFail(fmt.Sprintf("TestAndSet: %s!=%s", resp.Value, prevValue))
 		return nil, err
 	}
 }
