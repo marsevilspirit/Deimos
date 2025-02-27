@@ -42,6 +42,11 @@ var emptyNode = Node{".", PERMANENT, nil}
 func (t *tree) set(key string, value Node) bool {
 	nodesName := split(key)
 
+	// avoid set value to "/"
+	if len(nodesName) == 1 && len(nodesName[0]) == 0 {
+		return false
+	}
+
 	nodeMap := t.Root.NodeMap
 
 	i := 0
