@@ -20,7 +20,7 @@ type Store struct {
 	// the watching condition.
 	// It is needed so that clone() can atomically replicate the Store
 	// and do the log snapshot in a go routine.
-	mutex sync.Mutex
+	mutex sync.RWMutex
 
 	// WatcherHub is where we register all the clients
 	// who issue a watch request
@@ -276,15 +276,20 @@ func (s *Store) internalGet(key string) *Response {
 // If key is a file return the file
 // If key is a directory reuturn an array of files
 func (s *Store) Get(key string) ([]byte, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
 	resps, err := s.RawGet(key)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(resps) == 1 {
+	key = path.Clean("/" + key)
+
+	// If the number of resps == 1 and the response key
+	// is the key we query, a signal key-value should
+	// be returned
+	if len(resps) == 1 && resps[0].Key == key {
 		return json.Marshal(resps[0])
 	}
 
