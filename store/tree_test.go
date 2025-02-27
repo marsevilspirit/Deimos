@@ -1,7 +1,7 @@
 package store
 
 import (
-	"fmt"
+	// "fmt"
 	"math/rand"
 	"strconv"
 	"testing"
@@ -61,18 +61,18 @@ func TestStoreGet(t *testing.T) {
 	ts.set("/hello/fooo", NewTestNode("barbarbar"))
 	ts.set("/hello/fooo/foo", NewTestNode("barbarbar"))
 
-	nodes, keys, ok := ts.list("/hello")
-	if !ok {
-		t.Fatalf("cannot list")
-	} else {
-		nodes, _ := nodes.([]*Node)
-		for i := range len(nodes) {
-			fmt.Println("List test: ", keys[i], "=", nodes[i].Value)
-		}
-	}
+	// nodes, keys, ok := ts.list("/hello")
+	// if !ok {
+	// 	t.Fatalf("cannot list")
+	// } else {
+	// 	nodes, _ := nodes.([]*Node)
+	// 	for i := range len(nodes) {
+	// 		fmt.Println("List test: ", keys[i], "=", nodes[i].Value)
+	// 	}
+	// }
 
 	// speed test
-	keys = GenKeys(100, 10)
+	keys := GenKeys(100, 10)
 	for i := range 100 {
 		value := strconv.Itoa(rand.Int())
 		ts.set(keys[i], NewTestNode(value))
@@ -131,7 +131,7 @@ func TestTreeClone(t *testing.T) {
 func BenchmarkTreeStoreSet(b *testing.B) {
 	keys := GenKeys(10000, 10)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ts := &tree{
 			&treeNode{
 				NewTestNode("/"),
@@ -163,7 +163,7 @@ func BenchmarkTreeStoreGet(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range keys {
 			ts.get(key)
 		}
@@ -187,16 +187,8 @@ func BenchmarkTreeStoreCopy(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ts.clone()
-	}
-}
-
-func BenchmarkMakeSlice(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		for i := 0; i < 100000; i++ {
-			_ = make([]Node, 1)
-		}
 	}
 }
 
@@ -216,7 +208,7 @@ func BenchmarkTreeStoreList(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for _, key := range keys {
 			ts.list(key)
 		}

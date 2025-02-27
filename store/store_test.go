@@ -130,7 +130,7 @@ func BenchmarkStoreSet(b *testing.B) {
 	keys := GenKeys(10000, 5)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 
 		for i, key := range keys {
 			s.Set(key, "barbarbarbarbar", time.Unix(0, 0), uint64(i))
@@ -143,14 +143,14 @@ func BenchmarkStoreSet(b *testing.B) {
 func BenchmarkStoreGet(b *testing.B) {
 	s := CreateStore(100)
 
-	keys := GenKeys(100, 5)
+	keys := GenKeys(10000, 5)
 
 	for i, key := range keys {
 		s.Set(key, "barbarbarbarbar", time.Unix(0, 0), uint64(i))
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 
 		for _, key := range keys {
 			s.Get(key)
@@ -171,7 +171,7 @@ func BenchmarkStoreSnapshotCopy(b *testing.B) {
 	var state []byte
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s.clone()
 	}
 	b.SetBytes(int64(len(state)))
@@ -189,7 +189,7 @@ func BenchmarkSnapshotSaveJson(b *testing.B) {
 	var state []byte
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		state, _ = s.Save()
 	}
 	b.SetBytes(int64(len(state)))
@@ -207,7 +207,7 @@ func BenchmarkSnapshotRecovery(b *testing.B) {
 	state, _ := s.Save()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		newStore := CreateStore(100)
 		newStore.Recovery(state)
 	}
