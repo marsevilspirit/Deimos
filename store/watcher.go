@@ -16,13 +16,13 @@ type Watcher struct {
 }
 
 // create a new watcherHub
-func createWatcherHub() *WatcherHub {
+func newWatcherHub() *WatcherHub {
 	return &WatcherHub{
 		watchers: make(map[string][]*Watcher),
 	}
 }
 
-func CreateWatcher() *Watcher {
+func NewWatcher() *Watcher {
 	return &Watcher{
 		C: make(chan *Response, 1),
 	}
@@ -72,12 +72,11 @@ func checkResponse(prefix string, index uint64, resMap *map[string]*Response) bo
 func (w *WatcherHub) notify(resp Response) error {
 	resp.Key = path.Clean(resp.Key)
 	segments := strings.Split(resp.Key, "/")
-	currPath := ""
+	currPath := "/"
 
 	// walk through all the pathes
 	for _, segment := range segments {
 		currPath = path.Join(currPath, segment)
-
 		watchers, ok := w.watchers[currPath]
 		if ok {
 			newWatchers := make([]*Watcher, 0)

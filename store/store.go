@@ -99,7 +99,7 @@ func CreateStore(max int) *Store {
 		ResponseStartIndex: 0,
 		ResponseMaxSize:    max,
 		ResponseCurrSize:   0,
-		watcher:            createWatcherHub(),
+		watcher:            newWatcherHub(),
 		Tree: &tree{
 			&treeNode{
 				InternalNode: Node{
