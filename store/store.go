@@ -57,18 +57,18 @@ type Node struct {
 type Response struct {
 	Action    string `json:"action"`
 	Key       string `json:"key"`
-	PrevValue string `json:"prevValue"`
-	Value     string `json:"value"`
+	PrevValue string `json:"prevValue,omitempty"`
+	Value     string `json:"value,omitempty"`
 
 	// If the key existed before the action, this field should be true
 	// If did not exist before the action, should be flase
-	Exist bool `json:"exist"`
+	NewKey bool `json:"NewKey,omitempty"`
 
-	Expiration time.Time `json:"expiration"`
+	Expiration *time.Time `json:"expiration,omitempty"`
 
 	// Time to live in second
 	// For permanent value, we set ttl to -1
-	TTL int64 `json:"TTL"`
+	TTL int64 `json:"TTL,omitempty"`
 
 	// The command index of the raft machine when the command is executed
 	Index uint64 `json:"index"`
@@ -124,6 +124,14 @@ func (s *Store) Set(key string, value string, expireTime time.Time, index uint64
 
 	isExpire := !expireTime.Equal(PERMANENT)
 
+	// base response
+	resp := Response{
+		Action: "SET",
+		Key:    key,
+		Value:  value,
+		Index:  index,
+	}
+
 	// When the slow follower receive the set command
 	// the key may be expired, we should not add the node
 	// also if the node exist, we need to delete the node
@@ -135,9 +143,8 @@ func (s *Store) Set(key string, value string, expireTime time.Time, index uint64
 	// Update ttl
 	if isExpire {
 		TTL = int64(expireTime.Sub(time.Now()) / time.Second)
-	} else {
-		// For permanent value, we set ttl to -1
-		TTL = -1
+		resp.Expiration = &expireTime
+		resp.TTL = TTL
 	}
 
 	// Get the node
@@ -163,16 +170,7 @@ func (s *Store) Set(key string, value string, expireTime time.Time, index uint64
 		// Update the infomation of the node
 		s.Tree.set(key, Node{value, expireTime, node.update})
 
-		resp := Response{
-			Action:     "SET",
-			Key:        key,
-			PrevValue:  node.Value,
-			Value:      value,
-			Exist:      true,
-			Expiration: expireTime,
-			TTL:        TTL,
-			Index:      index,
-		}
+		resp.PrevValue = node.Value
 
 		s.watcher.notify(resp)
 
@@ -190,22 +188,17 @@ func (s *Store) Set(key string, value string, expireTime time.Time, index uint64
 		// Add new node
 		update := make(chan time.Time)
 
-		s.Tree.set(key, Node{value, expireTime, update})
+		ok := s.Tree.set(key, Node{value, expireTime, update})
+		if !ok {
+			err := NotFile(key)
+			return nil, err
+		}
 
 		if isExpire {
 			go s.monitorExpiration(key, update, expireTime)
 		}
 
-		resp := Response{
-			Action:     "SET",
-			Key:        key,
-			PrevValue:  "",
-			Value:      value,
-			Exist:      false,
-			Expiration: expireTime,
-			TTL:        TTL,
-			Index:      index,
-		}
+		resp.NewKey = true
 
 		msg, err := json.Marshal(resp)
 
@@ -223,7 +216,18 @@ func (s *Store) Set(key string, value string, expireTime time.Time, index uint64
 }
 
 // Get the value of key
-func (s *Store) Get(key string) Response {
+func (s *Store) Get(key string) ([]byte, error) {
+	resp := s.internalGet(key)
+	if resp != nil {
+		return json.Marshal(resp)
+	} else {
+		err := NotFoundError(key)
+		return nil, err
+	}
+}
+
+// Get the value of the key and return the raw response
+func (s *Store) internalGet(key string) *Response {
 	key = path.Clean("/" + key)
 	node, ok := s.Tree.get(key)
 	if ok {
@@ -231,38 +235,25 @@ func (s *Store) Get(key string) Response {
 		var isExpire bool = false
 
 		isExpire = !node.ExpireTime.Equal(PERMANENT)
+
+		resp := &Response{
+			Action: "GET",
+			Key:    key,
+			Value:  node.Value,
+			Index:  s.Index,
+		}
+
 		// Update ttl
 		if isExpire {
 			TTL = int64(node.ExpireTime.Sub(time.Now()) / time.Second)
-		} else {
-			// For permanent value, we set ttl to -1
-			TTL = -1
+			resp.Expiration = &node.ExpireTime
+			resp.TTL = TTL
 		}
 
-		resp := Response{
-			Action:     "GET",
-			Key:        key,
-			PrevValue:  node.Value,
-			Value:      node.Value,
-			Exist:      true,
-			Expiration: node.ExpireTime,
-			TTL:        TTL,
-			Index:      s.Index,
-		}
 		return resp
 	} else {
 		// we do not found the key
-		resp := Response{
-			Action:     "GET",
-			Key:        key,
-			PrevValue:  "",
-			Value:      "",
-			Exist:      false,
-			Expiration: PERMANENT,
-			TTL:        0,
-			Index:      s.Index,
-		}
-		return resp
+		return nil
 	}
 }
 
@@ -280,7 +271,8 @@ func (s *Store) List(prefix string) ([]byte, error) {
 			}
 		}
 	}
-	return json.Marshal(ln)
+	err := NotFoundError(prefix)
+	return nil, err
 }
 
 // delete the key
@@ -292,25 +284,20 @@ func (s *Store) Delete(key string, index uint64) ([]byte, error) {
 
 	node, ok := s.Tree.get(key)
 	if ok {
-		s.Tree.delete(key)
+		resp := Response{
+			Action:    "DELETE",
+			Key:       key,
+			PrevValue: node.Value,
+			Index:     index,
+		}
 
 		if node.ExpireTime.Equal(PERMANENT) {
 			s.Tree.delete(key)
 		} else {
+			resp.Expiration = &node.ExpireTime
 			// Kill the expire go routine
 			node.update <- PERMANENT
 			s.Tree.delete(key)
-		}
-
-		resp := Response{
-			Action:     "DELETE",
-			Key:        key,
-			PrevValue:  node.Value,
-			Value:      "",
-			Exist:      true,
-			Expiration: node.ExpireTime,
-			TTL:        0,
-			Index:      index,
 		}
 
 		msg, err := json.Marshal(resp)
@@ -324,32 +311,26 @@ func (s *Store) Delete(key string, index uint64) ([]byte, error) {
 		s.addToResponseMap(index, &resp)
 		return msg, err
 	} else {
-		resp := Response{
-			Action:     "DELETE",
-			Key:        key,
-			PrevValue:  "",
-			Value:      "",
-			Exist:      false,
-			Expiration: PERMANENT,
-			TTL:        0,
-			Index:      index,
-		}
-		s.addToResponseMap(index, &resp)
-		return json.Marshal(resp)
+		err := NotFoundError(key)
+		return nil, err
 	}
 }
 
 // Set the value of the key to the value if the given prevValue is equal to the value of the key
-func (s *Store) TestAndSet(key string, preValue string, value string, expireTime time.Time, index uint64) ([]byte, error) {
-	resp := s.Get(key)
+func (s *Store) TestAndSet(key string, prevValue string, value string, expireTime time.Time, index uint64) ([]byte, error) {
+	resp := s.internalGet(key)
+	if resp == nil {
+		err := NotFoundError(key)
+		return nil, err
+	}
 
-	if resp.PrevValue == preValue {
+	if resp.Value == prevValue {
 		// If test success, do set
 		return s.Set(key, value, expireTime, index)
 	} else {
-		// If fails, return the result of get which contains the current
-		// status of the key-value pair
-		return json.Marshal(resp)
+		// If fails, return err
+		err := TestFail(fmt.Sprintf("%s==%s", resp.Value, prevValue))
+		return nil, err
 	}
 }
 
@@ -378,10 +359,7 @@ func (s *Store) monitorExpiration(key string, update chan time.Time, expireTime 
 					Action:     "DELETE",
 					Key:        key,
 					PrevValue:  node.Value,
-					Value:      "",
-					Exist:      true,
-					Expiration: node.ExpireTime,
-					TTL:        0,
+					Expiration: &node.ExpireTime,
 					Index:      s.Index,
 				}
 
