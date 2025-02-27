@@ -57,11 +57,12 @@ type Node struct {
 type Response struct {
 	Action    string `json:"action"`
 	Key       string `json:"key"`
+	Dir       bool   `json:"dir,omitempty"`
 	PrevValue string `json:"prevValue,omitempty"`
 	Value     string `json:"value,omitempty"`
 
-	// If the key existed before the action, this field should be true
-	// If did not exist before the action, should be flase
+	// If the key did not exist before the action,
+	// this field should be set to true
 	NewKey bool `json:"NewKey,omitempty"`
 
 	Expiration *time.Time `json:"expiration,omitempty"`
@@ -215,17 +216,6 @@ func (s *Store) Set(key string, value string, expireTime time.Time, index uint64
 	}
 }
 
-// Get the value of key
-func (s *Store) Get(key string) ([]byte, error) {
-	resp := s.internalGet(key)
-	if resp != nil {
-		return json.Marshal(resp)
-	} else {
-		err := NotFoundError(key)
-		return nil, err
-	}
-}
-
 // Get the value of the key and return the raw response
 func (s *Store) internalGet(key string) *Response {
 	key = path.Clean("/" + key)
@@ -257,21 +247,45 @@ func (s *Store) internalGet(key string) *Response {
 	}
 }
 
-// List all the item in the prefix
-func (s *Store) List(prefix string) ([]byte, error) {
-	var ln []ListNode
-	nodes, keys, dirs, ok := s.Tree.list(prefix)
+// Get all the items under key
+// If key is a file return the file
+// If key is a directory reuturn an array of files
+func (s *Store) Get(key string) ([]byte, error) {
+	key = path.Clean("/" + key)
+
+	nodes, keys, dirs, ok := s.Tree.list(key)
 	if ok {
-		ln = make([]ListNode, len(nodes))
+		resps := make([]Response, len(nodes))
 		for i := range nodes {
-			ln[i] = ListNode{
-				Key:   keys[i],
-				Value: nodes[i].Value,
-				Type:  dirs[i],
+			var TTL int64
+			var isExpire bool = false
+
+			isExpire = !nodes[i].ExpireTime.Equal(PERMANENT)
+
+			resps[i] = Response{
+				Action: "GET",
+				Index:  s.Index,
+				Key:    path.Join(key, keys[i]),
+			}
+
+			if !dirs[i] {
+				resps[i].Value = nodes[i].Value
+			} else {
+				resps[i].Dir = true
+			}
+
+			// Update ttl
+			if isExpire {
+				TTL = int64(nodes[i].ExpireTime.Sub(time.Now()) / time.Second)
+				resps[i].Expiration = &nodes[i].ExpireTime
+				resps[i].TTL = TTL
 			}
 		}
+		if len(resps) == 1 {
+			return json.Marshal(resps[0])
+		}
 	}
-	err := NotFoundError(prefix)
+	err := NotFoundError(key)
 	return nil, err
 }
 
