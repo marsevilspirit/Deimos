@@ -7,22 +7,31 @@ import (
 )
 
 const (
-	Set         = "set"
-	Delete      = "delete"
-	TestAndSet  = "testAndSet"
-	TestIAndSet = "testiAndSet"
+	Get        = "get"
+	Set        = "set"
+	Delete     = "delete"
+	TestAndSet = "testAndSet"
 )
 
 type Event struct {
-	Action     string     `json:"action"`
-	Key        string     `json:"key"`
-	Dir        bool       `json:"dir,omitempty"`
-	PrevValue  string     `json:"prevValue,omitempty"`
-	Value      string     `json:"value,omitempty"`
-	Expiration *time.Time `json:"expiration,omitempty"`
-	TTL        int64      `json:"ttl,omitempty"` // Time to live in second
-	Index      uint64     `json:"index"`
-	Term       uint64     `json:"term"`
+	Action     string         `json:"action"`
+	Key        string         `json:"key"`
+	Dir        bool           `json:"dir,omitempty"`
+	PrevValue  string         `json:"prevValue,omitempty"`
+	Value      string         `json:"value,omitempty"`
+	KVPairs    []KeyValuePair `json:"kvs,omitempty"`
+	Expiration *time.Time     `json:"expiration,omitempty"`
+	TTL        int64          `json:"ttl,omitempty"` // Time to live in second
+	Index      uint64         `json:"index"`
+	Term       uint64         `json:"term"`
+}
+
+// When user list a directory, we add all the node into key-value pair slice
+type KeyValuePair struct {
+	Key     string         `json:"key,omitempty"`
+	Value   string         `json:"value,omitempty"`
+	Dir     bool           `json:"dir,omitempty"`
+	KVPairs []KeyValuePair `json:"kvs,omitempty"`
 }
 
 func newEvent(action string, key string, index uint64, term uint64) *Event {
@@ -43,17 +52,15 @@ type eventQueue struct {
 }
 
 // return true if the queue is full
-func (eq *eventQueue) insert(e *Event) bool {
+func (eq *eventQueue) insert(e *Event) {
 	eq.back = (eq.back + 1) % eq.capacity
 	eq.events[eq.back] = e
 
 	// check if full
 	if eq.size == eq.capacity {
 		eq.front = (eq.front + 1) % eq.capacity
-		return true
 	} else {
 		eq.size++
-		return false
 	}
 }
 
@@ -78,11 +85,8 @@ func (eh *EventHistory) addEvent(e *Event) {
 	eh.rwl.Lock()
 	defer eh.rwl.Unlock()
 
-	if eh.Queue.insert(e) {
-		eh.StartIndex++
-	} else {
-		eh.StartIndex = eh.Queue.events[eh.Queue.front].Index
-	}
+	eh.Queue.insert(e)
+	eh.StartIndex = eh.Queue.events[eh.Queue.front].Index
 }
 
 func (eh *EventHistory) scan(prefix string, index uint64) (*Event, error) {

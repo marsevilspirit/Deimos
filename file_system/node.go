@@ -19,40 +19,44 @@ const (
 )
 
 type Node struct {
-	Path        string
-	CreateIndex uint64
-	CreateTerm  uint64
-	Parent      *Node
-	ExpireTime  time.Time
-	ACL         string
-	Value       string           // for key-value pair
-	Children    map[string]*Node // for directory
-	status      int
-	mu          sync.Mutex
-	removeChan  chan bool // remove channel
+	Path          string
+	CreateIndex   uint64
+	CreateTerm    uint64
+	ModifiedIndex uint64
+	ModifiedTerm  uint64
+	Parent        *Node
+	ExpireTime    time.Time
+	ACL           string
+	Value         string           // for key-value pair
+	Children      map[string]*Node // for directory
+	status        int
+	mu            sync.Mutex
+	stopExpire    chan bool // stop expire routine channel
 }
 
-func newFile(path string, value string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
+func newFile(keyPath string, value string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
 	return &Node{
-		Path:        path,
-		CreateIndex: createIndex,
-		CreateTerm:  createTerm,
-		Parent:      parent,
-		ACL:         ACL,
-		removeChan:  make(chan bool, 1),
-		ExpireTime:  expireTime,
-		Value:       value,
+		Path:          keyPath,
+		CreateIndex:   createIndex,
+		CreateTerm:    createTerm,
+		ModifiedIndex: createIndex,
+		ModifiedTerm:  createTerm,
+		Parent:        parent,
+		ACL:           ACL,
+		stopExpire:    make(chan bool, 1),
+		ExpireTime:    expireTime,
+		Value:         value,
 	}
 }
 
-func newDir(path string, createIndex uint64, createTerm uint64, parent *Node, ACL string) *Node {
+func newDir(keyPath string, createIndex uint64, createTerm uint64, parent *Node, ACL string) *Node {
 	return &Node{
-		Path:        path,
+		Path:        keyPath,
 		CreateIndex: createIndex,
 		CreateTerm:  createTerm,
 		Parent:      parent,
 		ACL:         ACL,
-		removeChan:  make(chan bool, 1),
+		stopExpire:  make(chan bool, 1),
 		Children:    make(map[string]*Node),
 	}
 }
@@ -69,12 +73,14 @@ func (n *Node) Remove(recursive bool) error {
 		return nil
 	}
 
-	if !n.IsDir() { // key-value pair
+	if !n.IsDir() { // file node: key-value pair
 		_, name := filepath.Split(n.Path)
 
 		if n.Parent.Children[name] == n {
+			// This is the only pointer to Node object
+			// Handled by garbage collector
 			delete(n.Parent.Children, name)
-			n.removeChan <- true
+			n.stopExpire <- true
 			n.status = removed
 		}
 
@@ -85,15 +91,15 @@ func (n *Node) Remove(recursive bool) error {
 		return err.NewError(102, "")
 	}
 
-	for _, n := range n.Children { // delete all children
-		n.Remove(true)
+	for _, child := range n.Children { // delete all children
+		child.Remove(true)
 	}
 
 	// delete self
 	_, name := filepath.Split(n.Path)
 	if n.Parent.Children[name] == n {
 		delete(n.Parent.Children, name)
-		n.removeChan <- true
+		n.stopExpire <- true
 		n.status = removed
 	}
 
@@ -112,12 +118,14 @@ func (n *Node) Read() (string, error) {
 
 // Set function set the value of the node to the given value.
 // If the receiver node is a directory, a "Not A File" error will be returned.
-func (n *Node) Write(value string) error {
+func (n *Node) Write(value string, index uint64, term uint64) error {
 	if n.IsDir() {
 		return err.NewError(102, "")
 	}
 
 	n.Value = value
+	n.ModifiedIndex = index
+	n.ModifiedTerm = term
 
 	return nil
 }
@@ -126,7 +134,7 @@ func (n *Node) Write(value string) error {
 // If the receiver node is not a directory, a "Not A Directory" error will be returned.
 func (n *Node) List() ([]*Node, error) {
 	n.mu.Lock()
-	n.mu.Unlock()
+	defer n.mu.Unlock()
 	if !n.IsDir() {
 		return nil, err.NewError(104, "")
 	}
@@ -142,13 +150,36 @@ func (n *Node) List() ([]*Node, error) {
 	return nodes, nil
 }
 
+func (n *Node) GetFile(name string) (*Node, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if !n.IsDir() {
+		return nil, err.NewError(104, n.Path)
+	}
+
+	f, ok := n.Children[name]
+
+	if ok {
+		if !f.IsDir() {
+			return f, nil
+		} else {
+			return nil, err.NewError(102, f.Path)
+		}
+	}
+
+	return nil, nil
+
+}
+
 // Add function adds a node to the receiver node.
 // If the receiver is not a directory, a "Not A Directory" error will be returned.
 // If there is a existing node with the same name under the directory, a "Already Exist"
 // error will be returned
 func (n *Node) Add(child *Node) error {
 	n.mu.Lock()
-	n.mu.Unlock()
+	defer n.mu.Unlock()
+
 	if n.status == removed {
 		return err.NewError(100, "")
 	}
@@ -176,7 +207,8 @@ func (n *Node) Add(child *Node) error {
 // If the node is a key-value pair, it will clone the pair.
 func (n *Node) Clone() *Node {
 	n.mu.Lock()
-	n.mu.Unlock()
+	defer n.mu.Unlock()
+
 	if !n.IsDir() {
 		return newFile(n.Path, n.Value, n.CreateIndex, n.CreateTerm, n.Parent, n.ACL, n.ExpireTime)
 	}
@@ -201,24 +233,73 @@ func (n *Node) IsDir() bool {
 }
 
 func (n *Node) Expire() {
-	for {
-		duration := n.ExpireTime.Sub(time.Now())
-		if duration <= 0 {
-			n.Remove(true)
-			return
+	duration := n.ExpireTime.Sub(time.Now())
+	if duration <= 0 {
+		n.Remove(true)
+		return
+	}
+
+	select {
+	// if timeout, delete the node
+	case <-time.After(duration):
+		n.Remove(true)
+		return
+
+	// if stopped, return
+	case <-n.stopExpire:
+		fmt.Println("expire stopped")
+		return
+
+	}
+}
+
+// IsHidden function checks if the node is a hidden node. A hidden node
+// will begin with '_'
+//
+// A hidden node will not be shown via get command under a directory
+// For example if we have /foo/_hidden and /foo/notHidden, get "/foo"
+// will only return /foo/notHidden
+func (n *Node) IsHidden() bool {
+	_, name := filepath.Split(n.Path)
+
+	if name[0] == '_' { //hidden
+		return true
+	}
+
+	return false
+}
+
+func (n *Node) Pair(recurisive bool) KeyValuePair {
+	if n.IsDir() {
+		pair := KeyValuePair{
+			Key: n.Path,
+			Dir: true,
+		}
+		if !recurisive {
+			return pair
 		}
 
-		select {
-		// if timeout, delete the node
-		case <-time.After(duration):
-			n.Remove(true)
-			return
+		children, _ := n.List()
+		pair.KVPairs = make([]KeyValuePair, len(children))
 
-		// if removed, return
-		case <-n.removeChan:
-			fmt.Println("node removed")
-			return
+		// we do not use the index in the children slice directly
+		// we need to skip the hidden one
+		i := 0
 
+		for _, child := range children {
+			if child.IsHidden() { // get will not list hidden node
+				continue
+			}
+			pair.KVPairs[i] = child.Pair(recurisive)
+			i++
 		}
+
+		// eliminate hidden nodes
+		pair.KVPairs = pair.KVPairs[:i]
+		return pair
+	}
+	return KeyValuePair{
+		Key:   n.Path,
+		Value: n.Value,
 	}
 }
