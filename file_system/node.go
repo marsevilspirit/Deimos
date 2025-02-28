@@ -49,7 +49,7 @@ func newFile(keyPath string, value string, createIndex uint64, createTerm uint64
 	}
 }
 
-func newDir(keyPath string, createIndex uint64, createTerm uint64, parent *Node, ACL string) *Node {
+func newDir(keyPath string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
 	return &Node{
 		Path:        keyPath,
 		CreateIndex: createIndex,
@@ -57,6 +57,7 @@ func newDir(keyPath string, createIndex uint64, createTerm uint64, parent *Node,
 		Parent:      parent,
 		ACL:         ACL,
 		stopExpire:  make(chan bool, 1),
+		ExpireTime:  expireTime,
 		Children:    make(map[string]*Node),
 	}
 }
@@ -65,7 +66,7 @@ func newDir(keyPath string, createIndex uint64, createTerm uint64, parent *Node,
 // If the node is a directory and recursive is true,
 // the function will recursively remove
 // add nodes under the receiver node.
-func (n *Node) Remove(recursive bool) error {
+func (n *Node) Remove(recursive bool, callback func(path string)) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -80,6 +81,11 @@ func (n *Node) Remove(recursive bool) error {
 			// This is the only pointer to Node object
 			// Handled by garbage collector
 			delete(n.Parent.Children, name)
+
+			if callback != nil {
+				callback(n.Path)
+			}
+
 			n.stopExpire <- true
 			n.status = removed
 		}
@@ -92,13 +98,18 @@ func (n *Node) Remove(recursive bool) error {
 	}
 
 	for _, child := range n.Children { // delete all children
-		child.Remove(true)
+		child.Remove(true, callback)
 	}
 
 	// delete self
 	_, name := filepath.Split(n.Path)
 	if n.Parent.Children[name] == n {
 		delete(n.Parent.Children, name)
+
+		if callback != nil {
+			callback(n.Path)
+		}
+
 		n.stopExpire <- true
 		n.status = removed
 	}
@@ -213,7 +224,7 @@ func (n *Node) Clone() *Node {
 		return newFile(n.Path, n.Value, n.CreateIndex, n.CreateTerm, n.Parent, n.ACL, n.ExpireTime)
 	}
 
-	clone := newDir(n.Path, n.CreateIndex, n.CreateTerm, n.Parent, n.ACL)
+	clone := newDir(n.Path, n.CreateIndex, n.CreateTerm, n.Parent, n.ACL, n.ExpireTime)
 
 	for key, child := range n.Children {
 		clone.Children[key] = child.Clone()
@@ -235,14 +246,14 @@ func (n *Node) IsDir() bool {
 func (n *Node) Expire() {
 	duration := n.ExpireTime.Sub(time.Now())
 	if duration <= 0 {
-		n.Remove(true)
+		n.Remove(true, nil)
 		return
 	}
 
 	select {
 	// if timeout, delete the node
 	case <-time.After(duration):
-		n.Remove(true)
+		n.Remove(true, nil)
 		return
 
 	// if stopped, return

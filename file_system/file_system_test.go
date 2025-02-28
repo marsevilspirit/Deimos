@@ -19,10 +19,27 @@ func TestCreateAndGet(t *testing.T) {
 	}
 
 	// meet file, create should fail
-	_, err = fs.Create("/foo/bar/bar", "bar", Permanent, 1, 1)
+	_, err = fs.Create("/foo/bar/bar", "bar", Permanent, 2, 1)
 
 	if err == nil {
 		t.Fatal("Create should fail")
+	}
+
+	// create a directory
+	_, err = fs.Create("/fooDir", "", Permanent, 3, 1)
+	if err != nil {
+		t.Fatal("Cannot create")
+	}
+
+	e, err := fs.Get("/fooDir", false, 3, 1)
+	if err != nil || e.Dir != true {
+		t.Fatal("Cannot get /fooDir")
+	}
+
+	// create a file under directory
+	_, err = fs.Create("/fooDir/foo", "bar", Permanent, 4, 1)
+	if err != nil {
+		t.Fatal("Cannot create /fooDir/bar = bar")
 	}
 }
 
@@ -190,6 +207,28 @@ func TestTestAndSet(t *testing.T) {
 
 	if e.PrevValue != "car" || e.Value != "bar" {
 		t.Fatalf("[%v/%v] [%v/%v]", e.PrevValue, "car", e.Value, "bar")
+	}
+}
+
+func TestWatchRemove(t *testing.T) {
+	fs := New()
+	fs.Create("/foo/foo/foo", "bar", Permanent, 1, 1)
+
+	// watch at a deeper path
+	c, _ := fs.WatcherHub.watch("/foo/foo/foo", false, 0)
+	fs.Delete("/foo", true, 2, 1)
+	e := <-c
+	if e.Key != "/foo" {
+		t.Fatal("watch for delete fails")
+	}
+
+	fs.Create("/foo/foo/foo", "bar", Permanent, 3, 1)
+	// watch at a prefix
+	c, _ = fs.WatcherHub.watch("/foo", true, 0)
+	fs.Delete("/foo/foo/foo", false, 4, 1)
+	e = <-c
+	if e.Key != "/foo/foo/foo" {
+		t.Fatal("watch for delete fails")
 	}
 }
 

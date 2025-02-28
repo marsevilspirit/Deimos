@@ -19,7 +19,7 @@ type FileSystem struct {
 
 func New() *FileSystem {
 	return &FileSystem{
-		Root:       newDir("/", 0, 0, nil, ""),
+		Root:       newDir("/", 0, 0, nil, "", Permanent),
 		WatcherHub: newWatchHub(1000),
 	}
 
@@ -35,9 +35,10 @@ func (fs *FileSystem) Get(keyPath string, recusive bool, index uint64, term uint
 	e := newEvent(Get, keyPath, index, term)
 
 	if n.IsDir() { // node is dir
+		e.Dir = true
+
 		children, _ := n.List()
 		e.KVPairs = make([]KeyValuePair, len(children))
-
 		// we do not use the index in the children slice directly
 		// we need to skip the hidden one
 		i := 0
@@ -48,10 +49,8 @@ func (fs *FileSystem) Get(keyPath string, recusive bool, index uint64, term uint
 			e.KVPairs[i] = child.Pair(recusive)
 			i++
 		}
-
 		// eliminate hidden nodes
 		e.KVPairs = e.KVPairs[:i]
-
 	} else { // node is file
 		e.Value = n.Value
 	}
@@ -68,7 +67,6 @@ func (fs *FileSystem) Create(keyPath string, value string, expireTime time.Time,
 	}
 
 	error, _ := err.(Err.Error)
-
 	if error.ErrorCode == 104 { // we cannot create the key due to meet a file while walking
 		return nil, err
 	}
@@ -77,26 +75,31 @@ func (fs *FileSystem) Create(keyPath string, value string, expireTime time.Time,
 
 	// walk through the keyPath, create dirs and get the last directory node
 	d, err := fs.walk(dir, fs.checkDir)
-
 	if err != nil {
 		return nil, err
 	}
 
-	e := newEvent(Set, keyPath, fs.Index, fs.Term)
-	e.Value = value
+	e := newEvent(Get, keyPath, fs.Index, fs.Term)
 
-	f := newFile(keyPath, value, fs.Index, fs.Term, d, "", expireTime)
+	var n *Node
 
-	err = d.Add(f)
+	if len(value) != 0 { // create file
+		e.Value = value
+		n = newFile(keyPath, value, fs.Index, fs.Term, d, "", expireTime)
+	} else { // create directory
+		e.Dir = true
+		n = newDir(keyPath, fs.Index, fs.Term, d, "", expireTime)
+	}
 
+	err = d.Add(n)
 	if err != nil {
 		return nil, err
 	}
 
 	// Node with TTL
 	if expireTime != Permanent {
-		go f.Expire()
-		e.Expiration = &f.ExpireTime
+		go n.Expire()
+		e.Expiration = &n.ExpireTime
 		e.TTL = int64(expireTime.Sub(time.Now()) / time.Second)
 	}
 
@@ -109,7 +112,7 @@ func (fs *FileSystem) Update(keyPath string, value string, expireTime time.Time,
 		return nil, err
 	}
 
-	e := newEvent(Set, keyPath, fs.Index, fs.Term)
+	e := newEvent(Get, keyPath, fs.Index, fs.Term)
 
 	if n.IsDir() { // can only update file
 		if len(value) != 0 {
@@ -171,11 +174,6 @@ func (fs *FileSystem) Delete(keyPath string, recurisive bool, index uint64, term
 		return nil, err
 	}
 
-	err = n.Remove(recurisive)
-	if err != nil {
-		return nil, err
-	}
-
 	e := newEvent(Delete, keyPath, index, term)
 
 	if n.IsDir() {
@@ -183,6 +181,17 @@ func (fs *FileSystem) Delete(keyPath string, recurisive bool, index uint64, term
 	} else {
 		e.PrevValue = n.Value
 	}
+
+	callback := func(path string) {
+		fs.WatcherHub.notifyWithPath(e, path, true)
+	}
+
+	err = n.Remove(recurisive, callback)
+	if err != nil {
+		return nil, err
+	}
+
+	fs.WatcherHub.notify(e)
 
 	return e, nil
 }
@@ -239,7 +248,7 @@ func (fs *FileSystem) checkDir(parent *Node, dirName string) (*Node, error) {
 		return subDir, nil
 	}
 
-	n := newDir(path.Join(parent.Path, dirName), fs.Index, fs.Term, parent, parent.ACL)
+	n := newDir(path.Join(parent.Path, dirName), fs.Index, fs.Term, parent, parent.ACL, Permanent)
 
 	parent.Children[dirName] = n
 
