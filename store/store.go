@@ -130,6 +130,7 @@ func (s *Store) SetMessager(messager chan<- string) {
 	s.messager = messager
 }
 
+// index is command index
 func (s *Store) Set(key string, value string, expireTime time.Time, index uint64) ([]byte, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
