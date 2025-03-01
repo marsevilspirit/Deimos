@@ -14,8 +14,9 @@ type watcherHub struct {
 }
 
 type watcher struct {
-	eventChan chan *Event
-	recursive bool
+	eventChan  chan *Event
+	recursive  bool
+	sinceIndex uint64
 }
 
 func newWatchHub(capacity int) *watcherHub {
@@ -42,12 +43,12 @@ func (wh *watcherHub) watch(prefix string, recursive bool, index uint64) (<-chan
 	}
 
 	w := &watcher{
-		eventChan: eventChan,
-		recursive: recursive,
+		eventChan:  eventChan,
+		recursive:  recursive,
+		sinceIndex: index - 1, // to catch Expire()
 	}
 
 	l, ok := wh.watchers[prefix]
-
 	if ok { // add the new watcher to the back of the list
 		l.PushBack(w)
 	} else {
@@ -80,7 +81,7 @@ func (wh *watcherHub) notifyWithPath(e *Event, path string, force bool) {
 
 			w, _ := curr.Value.(*watcher)
 
-			if w.recursive || force || e.Key == path {
+			if w.recursive || force || e.Key == path && e.Index >= w.sinceIndex {
 				w.eventChan <- e
 				l.Remove(curr)
 				atomic.AddInt64(&wh.count, -1)
@@ -93,21 +94,7 @@ func (wh *watcherHub) notifyWithPath(e *Event, path string, force bool) {
 }
 
 func (wh *watcherHub) notify(e *Event) {
-	segments := strings.Split(e.Key, "/")
-	currPath := "/"
-
-	// walk through all the paths
-	for _, segment := range segments {
-		currPath = path.Join(currPath, segment)
-		wh.notifyWithPath(e, currPath, false)
-	}
-
-	wh.EventHistory.addEvent(e)
-}
-
-// notify with last event's index and term
-func (wh *watcherHub) notifyWithoutIndex(action, key string) {
-	e := wh.EventHistory.addEventWithoutIndex(action, key)
+	e = wh.EventHistory.addEvent(e)
 
 	segments := strings.Split(e.Key, "/")
 	currPath := "/"
