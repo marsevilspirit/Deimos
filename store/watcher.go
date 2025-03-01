@@ -1,108 +1,106 @@
 package store
 
 import (
+	"container/list"
 	"path"
-	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
-// WatcherHub is where the client register its watcher
-type WatcherHub struct {
-	watchers map[string][]*Watcher
+type watcherHub struct {
+	watchers     map[string]*list.List
+	count        int64 // current number of watchers.
+	EventHistory *EventHistory
 }
 
-type Watcher struct {
-	C chan *Response
+type watcher struct {
+	eventChan chan *Event
+	recursive bool
 }
 
-// create a new watcherHub
-func newWatcherHub() *WatcherHub {
-	return &WatcherHub{
-		watchers: make(map[string][]*Watcher),
+func newWatchHub(capacity int) *watcherHub {
+	return &watcherHub{
+		watchers:     make(map[string]*list.List),
+		EventHistory: newEventHistory(capacity),
 	}
 }
 
-func NewWatcher() *Watcher {
-	return &Watcher{
-		C: make(chan *Response, 1),
-	}
-}
+// watch function returns an Event channel.
+// If recursive is true, the first change after index under prefix will be sent to the event channel.
+// If recursive is false, the first change after index at prefix will be sent to the event channel.
+// If index is zero, watch will start from the current index + 1.
+func (wh *watcherHub) watch(prefix string, recursive bool, index uint64) (<-chan *Event, error) {
+	eventChan := make(chan *Event, 1)
 
-// add a watcher to the watcherHub
-func (w *WatcherHub) addWatcher(prefix string, watcher *Watcher, sinceIndex uint64,
-	responseStartIndex uint64, currentIndex uint64, resMap map[string]*Response) error {
-	prefix = path.Clean("/" + prefix)
-	if sinceIndex != 0 && sinceIndex >= responseStartIndex {
-		for i := sinceIndex; i <= currentIndex; i++ {
-			if checkResponse(prefix, i, resMap) {
-				watcher.C <- resMap[strconv.FormatUint(i, 10)]
-				return nil
-			}
-		}
+	e, err := wh.EventHistory.scan(prefix, index)
+	if err != nil {
+		return nil, err
 	}
-	_, ok := w.watchers[prefix]
-	if !ok {
-		w.watchers[prefix] = make([]*Watcher, 0)
+	if e != nil {
+		eventChan <- e
+		return eventChan, nil
 	}
-	w.watchers[prefix] = append(w.watchers[prefix], watcher)
 
-	return nil
-}
+	w := &watcher{
+		eventChan: eventChan,
+		recursive: recursive,
+	}
 
-// Check if the response has what we are watching
-func checkResponse(prefix string, index uint64, resMap map[string]*Response) bool {
-	resp, ok := resMap[strconv.FormatUint(index, 10)]
-	if !ok {
-		// not storage system command
-		return false
+	l, ok := wh.watchers[prefix]
+
+	if ok { // add the new watcher to the back of the list
+		l.PushBack(w)
 	} else {
-		path := resp.Key
-		if strings.HasPrefix(path, prefix) {
-			prefixLen := len(prefix)
-			if len(path) == prefixLen || path[prefixLen] == '/' {
-				return true
-			}
-		}
+		l := list.New()
+		l.PushBack(w)
+		wh.watchers[prefix] = l
 	}
-	return false
+
+	atomic.AddInt64(&wh.count, 1)
+
+	return eventChan, nil
 }
 
-// Notify the watcher a action happened
-func (w *WatcherHub) notify(resp Response) error {
-	resp.Key = path.Clean(resp.Key)
-	segments := strings.Split(resp.Key, "/")
+func (wh *watcherHub) notifyWithPath(e *Event, path string, force bool) {
+	l, ok := wh.watchers[path]
+	if ok {
+		curr := l.Front()
+		notifiedAll := true
+		for {
+			if curr == nil { // we have reached the end of the list
+				if notifiedAll {
+					// if we have notified all watcher in the list
+					// we can delete the list
+					delete(wh.watchers, path)
+				}
+				break
+			}
+
+			next := curr.Next() // save the next
+
+			w, _ := curr.Value.(*watcher)
+
+			if w.recursive || force || e.Key == path {
+				w.eventChan <- e
+				l.Remove(curr)
+				atomic.AddInt64(&wh.count, -1)
+			} else {
+				notifiedAll = false
+			}
+			curr = next // go to the next one
+		}
+	}
+}
+
+func (wh *watcherHub) notify(e *Event) {
+	segments := strings.Split(e.Key, "/")
 	currPath := "/"
 
-	// walk through all the pathes
+	// walk through all the paths
 	for _, segment := range segments {
 		currPath = path.Join(currPath, segment)
-		watchers, ok := w.watchers[currPath]
-		if ok {
-			newWatchers := make([]*Watcher, 0)
-			// notify all the watchers
-			for _, watcher := range watchers {
-				watcher.C <- &resp
-			}
-
-			if len(newWatchers) == 0 {
-				// we have notified all the watchers at this path
-				// delete the map
-				delete(w.watchers, currPath)
-			} else {
-				w.watchers[currPath] = newWatchers
-			}
-		}
+		wh.notifyWithPath(e, currPath, false)
 	}
-	return nil
-}
 
-// stopWatchers stop all the watchers
-// This function is used when the kvstore recovery from a snapshot at runtime
-func (w *WatcherHub) stopWatchers() {
-	for _, subWatchers := range w.watchers {
-		for _, watcher := range subWatchers {
-			watcher.C <- nil
-		}
-	}
-	w.watchers = nil
+	wh.EventHistory.addEvent(e)
 }
