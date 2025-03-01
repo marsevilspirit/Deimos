@@ -193,7 +193,7 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("cannot delete %s [%s]", "/foo", err.Error())
 	}
 
-	_, err = s.InternalGet("/foo", 1, 1)
+	_, err = s.internalGet("/foo", 1, 1)
 	if err == nil || err.Error() != "Key Not Found" {
 		t.Fatalf("can get the node after deletion")
 	}
@@ -226,14 +226,14 @@ func TestExpire(t *testing.T) {
 
 	s.Create("/foo", "bar", expire, 1, 1)
 
-	_, err := s.InternalGet("/foo", 1, 1)
+	_, err := s.internalGet("/foo", 1, 1)
 	if err != nil {
 		t.Fatalf("can not get the node")
 	}
 
 	time.Sleep(time.Second * 2)
 
-	_, err = s.InternalGet("/foo", 1, 1)
+	_, err = s.internalGet("/foo", 1, 1)
 	if err == nil {
 		t.Fatalf("can get the node after expiration time")
 	}
@@ -242,7 +242,7 @@ func TestExpire(t *testing.T) {
 	expire = time.Now().Add(time.Second)
 	s.Create("/foo", "bar", expire, 1, 1)
 	time.Sleep(time.Millisecond * 50)
-	_, err = s.InternalGet("/foo", 1, 1)
+	_, err = s.internalGet("/foo", 1, 1)
 	if err != nil {
 		t.Fatalf("cannot get the node before expiration [%s]", err.Error())
 	}
@@ -348,6 +348,33 @@ func TestWatch(t *testing.T) {
 	e = nonblockingRetrive(c)
 	if e.Key != "/foo/foo/boo" {
 		t.Fatal("watch for Delete subdirectory fails")
+	}
+
+	// watch expire
+	s.Create("/foo/foo/boo", "foo", time.Now().Add(time.Second*1), 9, 1)
+	c, _ = s.WatcherHub.watch("/foo", true, 0)
+	time.Sleep(time.Second * 2)
+	e = nonblockingRetrive(c)
+	if e.Key != "/foo/foo/boo" || e.Index != 9 {
+		t.Fatal("watch for Expiration of Create() subdirectory fails ", e)
+	}
+
+	s.Create("/foo/foo/boo", "foo", Permanent, 10, 1)
+	s.Update("/foo/foo/boo", "bar", time.Now().Add(time.Second*1), 11, 1)
+	c, _ = s.WatcherHub.watch("/foo", true, 0)
+	time.Sleep(time.Second * 2)
+	e = nonblockingRetrive(c)
+	if e.Key != "/foo/foo/boo" || e.Index != 11 {
+		t.Fatal("watch for Expiration of Update() subdirectory fails ", e)
+	}
+
+	s.Create("/foo/foo/boo", "foo", Permanent, 12, 1)
+	s.TestAndSet("/foo/foo/boo", "foo", 0, "bar", time.Now().Add(time.Second*1), 13, 1)
+	c, _ = s.WatcherHub.watch("/foo", true, 0)
+	time.Sleep(time.Second * 2)
+	e = nonblockingRetrive(c)
+	if e.Key != "/foo/foo/boo" || e.Index != 13 {
+		t.Fatal("watch for Expiration of TestAndSet() subdirectory fails ", e)
 	}
 }
 

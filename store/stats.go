@@ -19,7 +19,6 @@ const (
 )
 
 type Stats struct {
-
 	// Number of get requests
 	GetSuccess uint64 `json:"getsSuccess"`
 	GetFail    uint64 `json:"getsFail"`
@@ -52,6 +51,12 @@ func newStats() *Stats {
 func (s *Stats) toJson() []byte {
 	b, _ := json.Marshal(s)
 	return b
+}
+
+func (s *Stats) clone() *Stats {
+	return &Stats{s.GetSuccess, s.GetFail, s.SetSuccess, s.SetFail,
+		s.DeleteSuccess, s.DeleteFail, s.UpdateSuccess, s.UpdateFail,
+		s.TestAndSetSuccess, s.TestAndSetFail, s.Watchers}
 }
 
 func (s *Stats) TotalReads() uint64 {

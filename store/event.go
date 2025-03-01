@@ -16,6 +16,7 @@ const (
 	Delete      = "delete"
 	TestAndSet  = "testAndSet"
 	TestIAndSet = "testiAndSet"
+	Expire      = "expire"
 )
 
 type Event struct {
@@ -109,6 +110,18 @@ func (eh *EventHistory) addEvent(e *Event) {
 	eh.StartIndex = eh.Queue.Events[eh.Queue.Front].Index
 }
 
+func (eh *EventHistory) addEventWithoutIndex(action, key string) (e *Event) {
+	eh.rwl.Lock()
+	eh.rwl.Unlock()
+
+	LastEvent := eh.Queue.Events[eh.Queue.back()]
+	e = newEvent(action, key, LastEvent.Index, LastEvent.Term)
+	eh.Queue.insert(e)
+	eh.StartIndex = eh.Queue.Events[eh.Queue.Front].Index
+
+	return e
+}
+
 // scan function is enumerating events from the index in history and
 // stops till the first point where the key has identified prefix
 func (eh *EventHistory) scan(prefix string, index uint64) (*Event, error) {
@@ -146,4 +159,25 @@ func (eh *EventHistory) scan(prefix string, index uint64) (*Event, error) {
 			return nil, nil
 		}
 	}
+}
+
+// clone will be protected by a stop-world lock
+// do not need to obtain internal lock
+func (eh *EventHistory) clone() *EventHistory {
+	clonedQueue := eventQueue{
+		Capacity: eh.Queue.Capacity,
+		Events:   make([]*Event, eh.Queue.Capacity),
+		Size:     eh.Queue.Size,
+		Front:    eh.Queue.Front,
+	}
+
+	for i, e := range eh.Queue.Events {
+		clonedQueue.Events[i] = e
+	}
+
+	return &EventHistory{
+		StartIndex: eh.StartIndex,
+		Queue:      clonedQueue,
+	}
+
 }

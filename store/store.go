@@ -6,6 +6,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	Err "github.com/marsevilspirit/marstore/error"
@@ -17,6 +18,7 @@ type Store struct {
 	Index      uint64
 	Term       uint64
 	Stats      *Stats
+	worldLock  sync.RWMutex // stop the world lock. Used to do snapshot
 }
 
 func New() *Store {
@@ -25,13 +27,15 @@ func New() *Store {
 		WatcherHub: newWatchHub(1000),
 		Stats:      newStats(),
 	}
-
 }
 
 func (s *Store) Get(nodePath string, recursive, sorted bool, index uint64, term uint64) (*Event, error) {
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+
 	nodePath = path.Clean(path.Join("/", nodePath))
 
-	n, err := s.InternalGet(nodePath, index, term)
+	n, err := s.internalGet(nodePath, index, term)
 	if err != nil {
 		s.Stats.Inc(GetFail)
 		return nil, err
@@ -85,10 +89,13 @@ func (s *Store) Get(nodePath string, recursive, sorted bool, index uint64, term 
 // If the node has already existed, create will fail.
 // If any node on the path is a file, create will fail.
 func (s *Store) Create(nodePath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+
 	nodePath = path.Clean(path.Join("/", nodePath))
 
 	// make sure we can create the node
-	_, err := s.InternalGet(nodePath, index, term)
+	_, err := s.internalGet(nodePath, index, term)
 	if err == nil { // key already exists
 		s.Stats.Inc(SetFail)
 		return nil, Err.NewError(Err.EcodeNodeExist, nodePath)
@@ -130,7 +137,7 @@ func (s *Store) Create(nodePath string, value string, expireTime time.Time, inde
 
 	// Node with TTL
 	if expireTime.Sub(Permanent) != 0 {
-		n.Expire()
+		n.Expire(s.WatcherHub)
 		e.Expiration = &n.ExpireTime
 		e.TTL = int64(expireTime.Sub(time.Now())/time.Second) + 1
 	}
@@ -144,7 +151,10 @@ func (s *Store) Create(nodePath string, value string, expireTime time.Time, inde
 // If the node is a file, the value and the ttl can be updated.
 // If the node is a directory, only the ttl can be updated.
 func (s *Store) Update(nodePath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
-	n, err := s.InternalGet(nodePath, index, term)
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+
+	n, err := s.internalGet(nodePath, index, term)
 	if err != nil { // if the node does not exist, return error
 		s.Stats.Inc(UpdateFail)
 		return nil, err
@@ -169,49 +179,48 @@ func (s *Store) Update(nodePath string, value string, expireTime time.Time, inde
 	}
 
 	// update ttl
-	if !n.IsPermanent() {
-		n.stopExpire <- true
-	}
-
-	if expireTime != Permanent {
-		n.ExpireTime = expireTime
-		n.Expire()
-		e.Expiration = &n.ExpireTime
-		e.TTL = int64(expireTime.Sub(time.Now())/time.Second) + 1
-	}
+	n.UpdateTTL(expireTime, s.WatcherHub)
+	e.Expiration = &n.ExpireTime
+	e.TTL = int64(expireTime.Sub(time.Now())/time.Second) + 1
 
 	s.WatcherHub.notify(e)
 	s.Stats.Inc(UpdateSuccess)
+
 	return e, nil
 }
 
 func (s *Store) TestAndSet(nodePath string, prevValue string,
 	prevIndex uint64, value string, expireTime time.Time, index uint64,
 	term uint64) (*Event, error) {
-	f, err := s.InternalGet(nodePath, index, term)
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+
+	n, err := s.internalGet(nodePath, index, term)
 	if err != nil {
 		s.Stats.Inc(TestAndSetFail)
 		return nil, err
 	}
 
-	if f.IsDir() { // can only test and set file
+	if n.IsDir() { // can only test and set file
 		s.Stats.Inc(TestAndSetFail)
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath)
 	}
 
-	if f.Value == prevValue || f.ModifiedIndex == prevIndex {
+	if n.Value == prevValue || n.ModifiedIndex == prevIndex {
 		// if test succeed, write the value
 		e := newEvent(TestAndSet, nodePath, index, term)
-		e.PrevValue = f.Value
+		e.PrevValue = n.Value
 		e.Value = value
-		f.Write(value, index, term)
+		n.Write(value, index, term)
+
+		n.UpdateTTL(expireTime, s.WatcherHub)
 
 		s.WatcherHub.notify(e)
 		s.Stats.Inc(TestAndSetSuccess)
 		return e, nil
 	}
 
-	cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, f.Value, prevIndex, f.ModifiedIndex)
+	cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
 	s.Stats.Inc(TestAndSetFail)
 	return nil, Err.NewError(Err.EcodeTestFailed, cause)
 }
@@ -219,7 +228,10 @@ func (s *Store) TestAndSet(nodePath string, prevValue string,
 // Delete function deletes the node at the given path.
 // If the node is a directory, recursive must be true to delete it.
 func (s *Store) Delete(nodePath string, recursive bool, index uint64, term uint64) (*Event, error) {
-	n, err := s.InternalGet(nodePath, index, term)
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+
+	n, err := s.internalGet(nodePath, index, term)
 	if err != nil { // if the node does not exist, return error
 		s.Stats.Inc(DeleteFail)
 		return nil, err
@@ -249,6 +261,9 @@ func (s *Store) Delete(nodePath string, recursive bool, index uint64, term uint6
 }
 
 func (s *Store) Watch(prefix string, recursive bool, sinceIndex uint64, index uint64, term uint64) (<-chan *Event, error) {
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+
 	s.Index, s.Term = index, term
 
 	if sinceIndex == 0 {
@@ -278,8 +293,8 @@ func (s *Store) walk(nodePath string, walkFunc func(prev *Node, component string
 	return curr, nil
 }
 
-// InternalGet function get the node of the given nodePath.
-func (s *Store) InternalGet(nodePath string, index uint64, term uint64) (*Node, error) {
+// internalGet function get the node of the given nodePath.
+func (s *Store) internalGet(nodePath string, index uint64, term uint64) (*Node, error) {
 	nodePath = path.Clean(path.Join("/", nodePath))
 
 	// update file system known index and term
@@ -327,12 +342,17 @@ func (s *Store) checkDir(parent *Node, dirName string) (*Node, error) {
 // Save function will not save the parent field of the node.
 // Or there will be cyclic dependencies issue for the json package.
 func (s *Store) Save() ([]byte, error) {
+	s.worldLock.Lock()
+
 	clonedStore := New()
-	clonedStore.Root = s.Root.Clone()
-	clonedStore.WatcherHub = s.WatcherHub
 	clonedStore.Index = s.Index
 	clonedStore.Term = s.Term
-	clonedStore.Stats = s.Stats
+	clonedStore.Root = s.Root.Clone()
+	clonedStore.WatcherHub = s.WatcherHub
+	clonedStore.Stats = s.Stats.clone()
+
+	s.worldLock.Unlock()
+
 	b, err := json.Marshal(clonedStore)
 	if err != nil {
 		return nil, err
@@ -341,11 +361,14 @@ func (s *Store) Save() ([]byte, error) {
 }
 
 func (s *Store) Recovery(state []byte) error {
+	s.worldLock.Lock()
+	defer s.worldLock.Unlock()
+
 	err := json.Unmarshal(state, s)
 	if err != nil {
 		return err
 	}
-	s.Root.recoverAndclean()
+	s.Root.recoverAndclean(s.WatcherHub)
 	return nil
 }
 

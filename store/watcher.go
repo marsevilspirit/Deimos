@@ -104,3 +104,24 @@ func (wh *watcherHub) notify(e *Event) {
 
 	wh.EventHistory.addEvent(e)
 }
+
+// notify with last event's index and term
+func (wh *watcherHub) notifyWithoutIndex(action, key string) {
+	e := wh.EventHistory.addEventWithoutIndex(action, key)
+
+	segments := strings.Split(e.Key, "/")
+	currPath := "/"
+
+	// walk through all the paths
+	for _, segment := range segments {
+		currPath = path.Join(currPath, segment)
+		wh.notifyWithPath(e, currPath, false)
+	}
+}
+
+func (wh *watcherHub) clone() *watcherHub {
+	clonedHistory := wh.EventHistory.clone()
+	return &watcherHub{
+		EventHistory: clonedHistory,
+	}
+}
