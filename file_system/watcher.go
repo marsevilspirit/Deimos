@@ -97,4 +97,6 @@ func (wh *watcherHub) notify(e *Event) {
 		currPath = path.Join(currPath, segment)
 		wh.notifyWithPath(e, currPath, false)
 	}
+
+	wh.EventHistory.addEvent(e)
 }

@@ -1,8 +1,10 @@
 package fileSystem
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,11 +12,10 @@ import (
 )
 
 type FileSystem struct {
-	Root         *Node
-	EventHistory *EventHistory
-	WatcherHub   *watcherHub
-	Index        uint64
-	Term         uint64
+	Root       *Node
+	WatcherHub *watcherHub
+	Index      uint64
+	Term       uint64
 }
 
 func New() *FileSystem {
@@ -25,20 +26,22 @@ func New() *FileSystem {
 
 }
 
-func (fs *FileSystem) Get(keyPath string, recusive bool, index uint64, term uint64) (*Event, error) {
-	// TODO: add recursive get
-	n, err := fs.InternalGet(keyPath, index, term)
+func (fs *FileSystem) Get(nodePath string, recursive, sorted bool, index uint64, term uint64) (*Event, error) {
+	nodePath = path.Clean(path.Join("/", nodePath))
+
+	n, err := fs.InternalGet(nodePath, index, term)
 	if err != nil {
 		return nil, err
 	}
 
-	e := newEvent(Get, keyPath, index, term)
+	e := newEvent(Get, nodePath, index, term)
 
 	if n.IsDir() { // node is dir
 		e.Dir = true
 
 		children, _ := n.List()
 		e.KVPairs = make([]KeyValuePair, len(children))
+
 		// we do not use the index in the children slice directly
 		// we need to skip the hidden one
 		i := 0
@@ -46,32 +49,51 @@ func (fs *FileSystem) Get(keyPath string, recusive bool, index uint64, term uint
 			if child.IsHidden() { // get will not list hidden node
 				continue
 			}
-			e.KVPairs[i] = child.Pair(recusive)
+			e.KVPairs[i] = child.Pair(recursive, sorted)
 			i++
 		}
 		// eliminate hidden nodes
 		e.KVPairs = e.KVPairs[:i]
+
+		rootPairs := KeyValuePair{
+			KVPairs: e.KVPairs,
+		}
+
+		if sorted {
+			sort.Sort(rootPairs)
+		}
 	} else { // node is file
 		e.Value = n.Value
 	}
+
+	if n.ExpireTime.Sub(Permanent) != 0 {
+		e.Expiration = &n.ExpireTime
+		e.TTL = int64(n.ExpireTime.Sub(time.Now())/time.Second) + 1
+	}
+
 	return e, nil
 }
 
-func (fs *FileSystem) Create(keyPath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
-	keyPath = path.Clean("/" + keyPath)
+// Create function creates the Node at nodePath.
+// Create will help to create intermediate directories with no ttl.
+// value is "", then create a dir.
+// If the node has already existed, create will fail.
+// If any node on the path is a file, create will fail.
+func (fs *FileSystem) Create(nodePath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
+	nodePath = path.Clean(path.Join("/", nodePath))
 
 	// make sure we can create the node
-	_, err := fs.InternalGet(keyPath, index, term)
+	_, err := fs.InternalGet(nodePath, index, term)
 	if err == nil { // key already exists
-		return nil, Err.NewError(105, keyPath)
+		return nil, Err.NewError(Err.EcodeNodeExist, nodePath)
 	}
 
 	error, _ := err.(Err.Error)
-	if error.ErrorCode == 104 { // we cannot create the key due to meet a file while walking
+	if error.ErrorCode == Err.EcodeNotDir { // we cannot create the key due to meet a file while walking
 		return nil, err
 	}
 
-	dir, _ := path.Split(keyPath)
+	dir, _ := path.Split(nodePath)
 
 	// walk through the keyPath, create dirs and get the last directory node
 	d, err := fs.walk(dir, fs.checkDir)
@@ -79,16 +101,17 @@ func (fs *FileSystem) Create(keyPath string, value string, expireTime time.Time,
 		return nil, err
 	}
 
-	e := newEvent(Get, keyPath, fs.Index, fs.Term)
+	// create event of create
+	e := newEvent(Create, nodePath, fs.Index, fs.Term)
 
 	var n *Node
 
 	if len(value) != 0 { // create file
 		e.Value = value
-		n = newFile(keyPath, value, fs.Index, fs.Term, d, "", expireTime)
+		n = newFile(nodePath, value, fs.Index, fs.Term, d, "", expireTime)
 	} else { // create directory
 		e.Dir = true
-		n = newDir(keyPath, fs.Index, fs.Term, d, "", expireTime)
+		n = newDir(nodePath, fs.Index, fs.Term, d, "", expireTime)
 	}
 
 	err = d.Add(n)
@@ -97,30 +120,32 @@ func (fs *FileSystem) Create(keyPath string, value string, expireTime time.Time,
 	}
 
 	// Node with TTL
-	if expireTime != Permanent {
-		go n.Expire()
+	if expireTime.Sub(Permanent) != 0 {
+		n.Expire()
 		e.Expiration = &n.ExpireTime
-		e.TTL = int64(expireTime.Sub(time.Now()) / time.Second)
+		e.TTL = int64(expireTime.Sub(time.Now())/time.Second) + 1
 	}
+
+	fs.WatcherHub.notify(e)
 
 	return e, nil
 }
 
-func (fs *FileSystem) Update(keyPath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
-	n, err := fs.InternalGet(keyPath, index, term)
-	if err != nil { // if node does not exist, return error
+// Update function updates the value/ttl of the node.
+// If the node is a file, the value and the ttl can be updated.
+// If the node is a directory, only the ttl can be updated.
+func (fs *FileSystem) Update(nodePath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
+	n, err := fs.InternalGet(nodePath, index, term)
+	if err != nil { // if the node does not exist, return error
 		return nil, err
 	}
 
-	e := newEvent(Get, keyPath, fs.Index, fs.Term)
+	// create the event of update
+	e := newEvent(Update, nodePath, fs.Index, fs.Term)
 
-	if n.IsDir() { // can only update file
+	if n.IsDir() { // if the node is a directory, we can only update ttl
 		if len(value) != 0 {
-			return nil, Err.NewError(102, keyPath)
-		}
-
-		if n.ExpireTime != Permanent && expireTime == Permanent {
-			n.stopExpire <- true
+			return nil, Err.NewError(Err.EcodeNotFile, nodePath)
 		}
 	} else { // if the node is a file, we can update value and ttl
 		e.PrevValue = n.Value
@@ -130,51 +155,62 @@ func (fs *FileSystem) Update(keyPath string, value string, expireTime time.Time,
 		}
 
 		n.Write(value, index, term)
-
-		if n.ExpireTime != Permanent && expireTime == Permanent {
-			n.stopExpire <- true
-		}
-
-		// update ttl
-		if expireTime != Permanent {
-			go n.Expire()
-			e.Expiration = &n.ExpireTime
-			e.TTL = int64(expireTime.Sub(time.Now()) / time.Second)
-		}
 	}
+
+	// update ttl
+	if !n.IsPermanent() {
+		n.stopExpire <- true
+	}
+
+	if expireTime != Permanent {
+		n.ExpireTime = expireTime
+		n.Expire()
+		e.Expiration = &n.ExpireTime
+		e.TTL = int64(expireTime.Sub(time.Now())/time.Second) + 1
+	}
+
+	fs.WatcherHub.notify(e)
+
 	return e, nil
 }
 
-func (fs *FileSystem) TestAndSet(keyPath string, prevValue string, prevIndex uint64, value string, expireTime time.Time, index uint64, term uint64) (*Event, error) {
-	f, err := fs.InternalGet(keyPath, index, term)
+func (fs *FileSystem) TestAndSet(nodePath string, prevValue string,
+	prevIndex uint64, value string, expireTime time.Time, index uint64,
+	term uint64) (*Event, error) {
+	f, err := fs.InternalGet(nodePath, index, term)
 	if err != nil {
 		return nil, err
 	}
 
 	if f.IsDir() { // can only test and set file
-		return nil, Err.NewError(102, keyPath)
+		return nil, Err.NewError(Err.EcodeNotFile, nodePath)
 	}
 
 	if f.Value == prevValue || f.ModifiedIndex == prevIndex {
 		// if test succeed, write the value
-		e := newEvent(TestAndSet, keyPath, index, term)
+		e := newEvent(TestAndSet, nodePath, index, term)
 		e.PrevValue = f.Value
 		e.Value = value
 		f.Write(value, index, term)
+
+		fs.WatcherHub.notify(e)
+
 		return e, nil
 	}
 
-	cause := fmt.Sprintf("[%v/%v] [%v/%v]", prevValue, f.Value, prevIndex, f.ModifiedIndex)
-	return nil, Err.NewError(101, cause)
+	cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, f.Value, prevIndex, f.ModifiedIndex)
+	return nil, Err.NewError(Err.EcodeTestFailed, cause)
 }
 
-func (fs *FileSystem) Delete(keyPath string, recurisive bool, index uint64, term uint64) (*Event, error) {
-	n, err := fs.InternalGet(keyPath, index, term)
-	if err != nil {
+// Delete function deletes the node at the given path.
+// If the node is a directory, recursive must be true to delete it.
+func (fs *FileSystem) Delete(nodePath string, recursive bool, index uint64, term uint64) (*Event, error) {
+	n, err := fs.InternalGet(nodePath, index, term)
+	if err != nil { // if the node does not exist, return error
 		return nil, err
 	}
 
-	e := newEvent(Delete, keyPath, index, term)
+	e := newEvent(Delete, nodePath, index, term)
 
 	if n.IsDir() {
 		e.Dir = true
@@ -182,11 +218,11 @@ func (fs *FileSystem) Delete(keyPath string, recurisive bool, index uint64, term
 		e.PrevValue = n.Value
 	}
 
-	callback := func(path string) {
+	callback := func(path string) { // notify fuction
 		fs.WatcherHub.notifyWithPath(e, path, true)
 	}
 
-	err = n.Remove(recurisive, callback)
+	err = n.Remove(recursive, callback)
 	if err != nil {
 		return nil, err
 	}
@@ -196,9 +232,20 @@ func (fs *FileSystem) Delete(keyPath string, recurisive bool, index uint64, term
 	return e, nil
 }
 
-// walk function walks all the keyPath and apply the walkFunc on each directory
-func (fs *FileSystem) walk(keyPath string, walkFunc func(prev *Node, component string) (*Node, error)) (*Node, error) {
-	components := strings.Split(keyPath, "/")
+func (fs *FileSystem) Watch(prefix string, recursive bool, sinceIndex uint64, index uint64, term uint64) (<-chan *Event, error) {
+	fs.Index, fs.Term = index, term
+
+	if sinceIndex == 0 {
+		return fs.WatcherHub.watch(prefix, recursive, index+1)
+	}
+
+	return fs.WatcherHub.watch(prefix, recursive, sinceIndex)
+}
+
+// walk function walks all the nodePath and
+// apply the walkFunc on each directory
+func (fs *FileSystem) walk(nodePath string, walkFunc func(prev *Node, component string) (*Node, error)) (*Node, error) {
+	components := strings.Split(nodePath, "/")
 	curr := fs.Root
 	var err error
 	for i := 1; i < len(components); i++ {
@@ -215,23 +262,27 @@ func (fs *FileSystem) walk(keyPath string, walkFunc func(prev *Node, component s
 	return curr, nil
 }
 
-// InternalGet function get the node of the given keyPath.
-func (fs *FileSystem) InternalGet(keyPath string, index uint64, term uint64) (*Node, error) {
-	keyPath = path.Clean("/" + keyPath)
+// InternalGet function get the node of the given nodePath.
+func (fs *FileSystem) InternalGet(nodePath string, index uint64, term uint64) (*Node, error) {
+	nodePath = path.Clean(path.Join("/", nodePath))
 
 	// update file system known index and term
 	fs.Index, fs.Term = index, term
 
-	walkFunc := func(parent *Node, dirName string) (*Node, error) {
-		child, ok := parent.Children[dirName]
+	walkFunc := func(parent *Node, name string) (*Node, error) {
+		if !parent.IsDir() {
+			return nil, Err.NewError(Err.EcodeNotDir, parent.Path)
+		}
+
+		child, ok := parent.Children[name]
 		if ok {
 			return child, nil
 		}
 
-		return nil, Err.NewError(100, "get")
+		return nil, Err.NewError(Err.EcodeKeyNotFound, path.Join(parent.Path, name))
 	}
 
-	f, err := fs.walk(keyPath, walkFunc)
+	f, err := fs.walk(nodePath, walkFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -253,4 +304,28 @@ func (fs *FileSystem) checkDir(parent *Node, dirName string) (*Node, error) {
 	parent.Children[dirName] = n
 
 	return n, nil
+}
+
+// Save function saves the static state of the store system.
+// Save function will not be able to save the state of watchers.
+// Save function will not save the parent field of the node.
+// Or there will be cyclic dependencies issue for the json package.
+func (fs *FileSystem) Save() ([]byte, error) {
+	cloneFs := New()
+	cloneFs.Root = fs.Root.Clone()
+	b, err := json.Marshal(fs)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func (fs *FileSystem) Recovery(state []byte) error {
+	err := json.Unmarshal(state, fs)
+	if err != nil {
+		return err
+	}
+	fs.Root.recoverAndclean()
+
+	return nil
 }

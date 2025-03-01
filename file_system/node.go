@@ -1,12 +1,12 @@
 package fileSystem
 
 import (
-	"fmt"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
-	err "github.com/marsevilspirit/marstore/error"
+	Err "github.com/marsevilspirit/marstore/error"
 )
 
 var (
@@ -24,7 +24,7 @@ type Node struct {
 	CreateTerm    uint64
 	ModifiedIndex uint64
 	ModifiedTerm  uint64
-	Parent        *Node
+	Parent        *Node `json:"-"`
 	ExpireTime    time.Time
 	ACL           string
 	Value         string           // for key-value pair
@@ -34,9 +34,9 @@ type Node struct {
 	stopExpire    chan bool // stop expire routine channel
 }
 
-func newFile(keyPath string, value string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
+func newFile(nodePath string, value string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
 	return &Node{
-		Path:          keyPath,
+		Path:          nodePath,
 		CreateIndex:   createIndex,
 		CreateTerm:    createTerm,
 		ModifiedIndex: createIndex,
@@ -49,9 +49,9 @@ func newFile(keyPath string, value string, createIndex uint64, createTerm uint64
 	}
 }
 
-func newDir(keyPath string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
+func newDir(nodePath string, createIndex uint64, createTerm uint64, parent *Node, ACL string, expireTime time.Time) *Node {
 	return &Node{
-		Path:        keyPath,
+		Path:        nodePath,
 		CreateIndex: createIndex,
 		CreateTerm:  createTerm,
 		Parent:      parent,
@@ -77,7 +77,7 @@ func (n *Node) Remove(recursive bool, callback func(path string)) error {
 	if !n.IsDir() { // file node: key-value pair
 		_, name := filepath.Split(n.Path)
 
-		if n.Parent.Children[name] == n {
+		if n.Parent != nil && n.Parent.Children[name] == n {
 			// This is the only pointer to Node object
 			// Handled by garbage collector
 			delete(n.Parent.Children, name)
@@ -94,7 +94,7 @@ func (n *Node) Remove(recursive bool, callback func(path string)) error {
 	}
 
 	if !recursive {
-		return err.NewError(102, "")
+		return Err.NewError(Err.EcodeNotFile, "")
 	}
 
 	for _, child := range n.Children { // delete all children
@@ -103,7 +103,7 @@ func (n *Node) Remove(recursive bool, callback func(path string)) error {
 
 	// delete self
 	_, name := filepath.Split(n.Path)
-	if n.Parent.Children[name] == n {
+	if n.Parent != nil && n.Parent.Children[name] == n {
 		delete(n.Parent.Children, name)
 
 		if callback != nil {
@@ -121,7 +121,7 @@ func (n *Node) Remove(recursive bool, callback func(path string)) error {
 // If the receiver node is not a key-value pair, a "Not A File" error will be returned.
 func (n *Node) Read() (string, error) {
 	if n.IsDir() {
-		return "", err.NewError(102, "")
+		return "", Err.NewError(Err.EcodeNotFile, "")
 	}
 
 	return n.Value, nil
@@ -131,7 +131,7 @@ func (n *Node) Read() (string, error) {
 // If the receiver node is a directory, a "Not A File" error will be returned.
 func (n *Node) Write(value string, index uint64, term uint64) error {
 	if n.IsDir() {
-		return err.NewError(102, "")
+		return Err.NewError(Err.EcodeNotFile, "")
 	}
 
 	n.Value = value
@@ -147,7 +147,7 @@ func (n *Node) List() ([]*Node, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if !n.IsDir() {
-		return nil, err.NewError(104, "")
+		return nil, Err.NewError(Err.EcodeNotDir, "")
 	}
 
 	nodes := make([]*Node, len(n.Children))
@@ -161,12 +161,18 @@ func (n *Node) List() ([]*Node, error) {
 	return nodes, nil
 }
 
+// GetFile function returns the file node under the directory node.
+// On success, it returns the file node
+// If the node that calls this function is not a directory, it returns
+// Not Directory Error
+// If the node corresponding to the name string is not file, it returns
+// Not File Error
 func (n *Node) GetFile(name string) (*Node, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if !n.IsDir() {
-		return nil, err.NewError(104, n.Path)
+		return nil, Err.NewError(Err.EcodeNotDir, n.Path)
 	}
 
 	f, ok := n.Children[name]
@@ -175,7 +181,7 @@ func (n *Node) GetFile(name string) (*Node, error) {
 		if !f.IsDir() {
 			return f, nil
 		} else {
-			return nil, err.NewError(102, f.Path)
+			return nil, Err.NewError(Err.EcodeNotFile, f.Path)
 		}
 	}
 
@@ -192,11 +198,11 @@ func (n *Node) Add(child *Node) error {
 	defer n.mu.Unlock()
 
 	if n.status == removed {
-		return err.NewError(100, "")
+		return Err.NewError(Err.EcodeKeyNotFound, "")
 	}
 
 	if !n.IsDir() {
-		return err.NewError(104, "")
+		return Err.NewError(Err.EcodeNotDir, "")
 	}
 
 	_, name := filepath.Split(child.Path)
@@ -204,7 +210,7 @@ func (n *Node) Add(child *Node) error {
 	_, ok := n.Children[name]
 
 	if ok {
-		return err.NewError(105, "")
+		return Err.NewError(Err.EcodeNodeExist, "")
 	}
 
 	n.Children[name] = child
@@ -233,35 +239,44 @@ func (n *Node) Clone() *Node {
 	return clone
 }
 
-// IsDir function checks whether the node is a directory.
-// If the node is a directory, the function will return true.
-// Otherwise the function will return false.
-func (n *Node) IsDir() bool {
-	if n.Children == nil { // key-value pair
-		return false
+func (n *Node) recoverAndclean() {
+	if n.IsDir() {
+		for _, child := range n.Children {
+			child.Parent = n
+			child.recoverAndclean()
+		}
 	}
-	return true
+
+	n.stopExpire = make(chan bool, 1)
+
+	n.Expire()
 }
 
+// no block func
 func (n *Node) Expire() {
-	duration := n.ExpireTime.Sub(time.Now())
-	if duration <= 0 {
+	expired, duration := n.IsExpired()
+
+	if expired { // has been expired
 		n.Remove(true, nil)
 		return
 	}
 
-	select {
-	// if timeout, delete the node
-	case <-time.After(duration):
-		n.Remove(true, nil)
+	if duration == 0 { // Permanent Node
 		return
-
-	// if stopped, return
-	case <-n.stopExpire:
-		fmt.Println("expire stopped")
-		return
-
 	}
+
+	// do monitoring go routine
+	go func() {
+		select {
+		// if timeout, delete the node
+		case <-time.After(duration):
+			n.Remove(true, nil)
+			return
+		// if stopped, return
+		case <-n.stopExpire:
+			return
+		}
+	}()
 }
 
 // IsHidden function checks if the node is a hidden node. A hidden node
@@ -280,7 +295,30 @@ func (n *Node) IsHidden() bool {
 	return false
 }
 
-func (n *Node) Pair(recurisive bool) KeyValuePair {
+func (n *Node) IsPermanent() bool {
+	return n.ExpireTime.Sub(Permanent) == 0
+}
+
+func (n *Node) IsExpired() (bool, time.Duration) {
+	if n.IsPermanent() {
+		return false, 0
+	}
+
+	duration := n.ExpireTime.Sub(time.Now())
+	if duration <= 0 {
+		return true, 0
+	}
+	return false, duration
+}
+
+// IsDir function checks whether the node is a directory.
+// If the node is a directory, the function will return true.
+// Otherwise the function will return false.
+func (n *Node) IsDir() bool {
+	return !(n.Children == nil)
+}
+
+func (n *Node) Pair(recurisive, sorted bool) KeyValuePair {
 	if n.IsDir() {
 		pair := KeyValuePair{
 			Key: n.Path,
@@ -301,12 +339,17 @@ func (n *Node) Pair(recurisive bool) KeyValuePair {
 			if child.IsHidden() { // get will not list hidden node
 				continue
 			}
-			pair.KVPairs[i] = child.Pair(recurisive)
+			pair.KVPairs[i] = child.Pair(recurisive, sorted)
 			i++
 		}
 
 		// eliminate hidden nodes
 		pair.KVPairs = pair.KVPairs[:i]
+
+		if sorted {
+			sort.Sort(pair)
+		}
+
 		return pair
 	}
 	return KeyValuePair{

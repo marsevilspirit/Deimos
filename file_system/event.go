@@ -1,14 +1,18 @@
 package fileSystem
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	Err "github.com/marsevilspirit/marstore/error"
 )
 
 const (
 	Get         = "get"
-	Set         = "set"
+	Create      = "create"
+	Update      = "update"
 	Delete      = "delete"
 	TestAndSet  = "testAndSet"
 	TestIAndSet = "testiAndSet"
@@ -35,6 +39,19 @@ type KeyValuePair struct {
 	KVPairs []KeyValuePair `json:"kvs,omitempty"`
 }
 
+// interfaces for sorting
+func (k KeyValuePair) Len() int {
+	return len(k.KVPairs)
+}
+
+func (k KeyValuePair) Less(i, j int) bool {
+	return k.KVPairs[i].Key < k.KVPairs[j].Key
+}
+
+func (k KeyValuePair) Swap(i, j int) {
+	k.KVPairs[i], k.KVPairs[j] = k.KVPairs[j], k.KVPairs[i]
+}
+
 func newEvent(action string, key string, index uint64, term uint64) *Event {
 	return &Event{
 		Action: action,
@@ -45,23 +62,26 @@ func newEvent(action string, key string, index uint64, term uint64) *Event {
 }
 
 type eventQueue struct {
-	events   []*Event
-	size     int
-	front    int
-	back     int
-	capacity int
+	Events   []*Event
+	Size     int
+	Front    int
+	Capacity int
+}
+
+func (eq *eventQueue) back() int {
+	return (eq.Front + eq.Size - 1 + eq.Capacity) % eq.Capacity
 }
 
 // return true if the queue is full
 func (eq *eventQueue) insert(e *Event) {
-	eq.back = (eq.back + 1) % eq.capacity
-	eq.events[eq.back] = e
+	index := (eq.back() + 1) % eq.Capacity
+	eq.Events[index] = e
 
 	// check if full
-	if eq.size == eq.capacity {
-		eq.front = (eq.front + 1) % eq.capacity
+	if eq.Size == eq.Capacity {
+		eq.Front = (index + 1) % eq.Capacity
 	} else {
-		eq.size++
+		eq.Size++
 	}
 }
 
@@ -74,9 +94,8 @@ type EventHistory struct {
 func newEventHistory(capacity int) *EventHistory {
 	return &EventHistory{
 		Queue: eventQueue{
-			capacity: capacity,
-			events:   make([]*Event, capacity),
-			back:     -1,
+			Capacity: capacity,
+			Events:   make([]*Event, capacity),
 		},
 	}
 }
@@ -87,37 +106,42 @@ func (eh *EventHistory) addEvent(e *Event) {
 	defer eh.rwl.Unlock()
 
 	eh.Queue.insert(e)
-	eh.StartIndex = eh.Queue.events[eh.Queue.front].Index
+	eh.StartIndex = eh.Queue.Events[eh.Queue.Front].Index
 }
 
+// scan function is enumerating events from the index in history and
+// stops till the first point where the key has identified prefix
 func (eh *EventHistory) scan(prefix string, index uint64) (*Event, error) {
 	eh.rwl.RLock()
 	defer eh.rwl.RUnlock()
 
 	start := index - eh.StartIndex
 
+	// the index should locate after the event history's StartIndex
+	// and before its size
 	if start < 0 {
-
 		// TODO: Add error type
+		return nil,
+			Err.NewError(Err.EcodeEventIndexCleared,
+				fmt.Sprintf("prefix:%v, index:%v", prefix, index))
+	}
+
+	if start >= uint64(eh.Queue.Size) {
 		return nil, nil
 	}
 
-	if start >= uint64(eh.Queue.size) {
-
-		return nil, nil
-	}
-
-	i := int((start + uint64(eh.Queue.front)) % uint64(eh.Queue.capacity))
+	i := int((start + uint64(eh.Queue.Front)) %
+		uint64(eh.Queue.Capacity))
 
 	for {
-		e := eh.Queue.events[i]
+		e := eh.Queue.Events[i]
 		if strings.HasPrefix(e.Key, prefix) {
 			return e, nil
 		}
 
-		i = (i + 1) % eh.Queue.capacity
+		i = (i + 1) % eh.Queue.Capacity
 
-		if i == eh.Queue.back {
+		if i == eh.Queue.back() {
 			// TODO: Add error type
 			return nil, nil
 		}
