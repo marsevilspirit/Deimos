@@ -7,7 +7,7 @@ import (
 )
 
 func TestBasicStats(t *testing.T) {
-	s := New()
+	s := newStore()
 	keys := GenKeys(rand.Intn(100), 5)
 
 	var i uint64
@@ -16,7 +16,7 @@ func TestBasicStats(t *testing.T) {
 
 	for _, k := range keys {
 		i++
-		_, err := s.Create(k, "bar", time.Now().Add(time.Second*time.Duration(rand.Intn(6))), i, 1)
+		_, err := s.Create(k, "bar", false, false, time.Now().Add(time.Second*time.Duration(rand.Intn(6))), i, 1)
 		if err != nil {
 			SetFail++
 		} else {
@@ -140,13 +140,13 @@ func TestBasicStats(t *testing.T) {
 		t.Fatalf("TestAndSetFail [%d] != Stats.TestAndSetFail [%d]", TestAndSetFail, s.Stats.TestAndSetFail)
 	}
 
-	s = New()
+	s = newStore()
 	SetSuccess = 0
 	SetFail = 0
 
 	for _, k := range keys {
 		i++
-		_, err := s.Create(k, "bar", time.Now().Add(time.Second*3), i, 1)
+		_, err := s.Create(k, "bar", false, false, time.Now().Add(time.Second*3), i, 1)
 		if err != nil {
 			SetFail++
 		} else {

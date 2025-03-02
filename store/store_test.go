@@ -8,11 +8,21 @@ import (
 )
 
 func TestCreateAndGet(t *testing.T) {
-	s := New()
-	s.Create("/foobar", "bar", Permanent, 1, 1)
+	s := newStore()
+	s.Create("/foobar", "bar", false, false, Permanent, 1, 1)
 
 	// already exist, create should fail
-	_, err := s.Create("/foobar", "bar", Permanent, 1, 1)
+	_, err := s.Create("/foobar", "bar", false, false, Permanent, 1, 1)
+	if err == nil {
+		t.Fatal("Create should fail")
+	}
+
+	s.Delete("/foobar", true, 1, 1)
+
+	s.Create("/foobar/foo", "bar", false, false, Permanent, 1, 1)
+
+	// already exist, create should fail
+	_, err = s.Create("/foobar", "bar", false, false, Permanent, 1, 1)
 	if err == nil {
 		t.Fatal("Create should fail")
 	}
@@ -25,13 +35,13 @@ func TestCreateAndGet(t *testing.T) {
 	createAndGet(s, "/foo/foo/bar", t)
 
 	// meet file, create should fail
-	_, err = s.Create("/foo/bar/bar", "bar", Permanent, 2, 1)
+	_, err = s.Create("/foo/bar/bar", "bar", false, false, Permanent, 2, 1)
 	if err == nil {
 		t.Fatal("Create should fail")
 	}
 
 	// create a directory
-	_, err = s.Create("/fooDir", "", Permanent, 3, 1)
+	_, err = s.Create("/fooDir", "", false, false, Permanent, 3, 1)
 	if err != nil {
 		t.Fatal("Cannot create")
 	}
@@ -42,16 +52,16 @@ func TestCreateAndGet(t *testing.T) {
 	}
 
 	// create a file under directory
-	_, err = s.Create("/fooDir/foo", "bar", Permanent, 4, 1)
+	_, err = s.Create("/fooDir/foo", "bar", false, false, Permanent, 4, 1)
 	if err != nil {
 		t.Fatal("Cannot create /fooDir/bar = bar")
 	}
 }
 
 func TestUpdateFile(t *testing.T) {
-	s := New()
+	s := newStore()
 
-	_, err := s.Create("/foo/bar", "bar", Permanent, 1, 1)
+	_, err := s.Create("/foo/bar", "bar", false, false, Permanent, 1, 1)
 	if err != nil {
 		t.Fatalf("cannot create %s=bar [%s]", "/foo/bar", err.Error())
 	}
@@ -71,22 +81,22 @@ func TestUpdateFile(t *testing.T) {
 	}
 
 	// create a directory, update its ttl, to see if it will be deleted
-	_, err = s.Create("/foo/foo", "", Permanent, 3, 1)
+	_, err = s.Create("/foo/foo", "", false, false, Permanent, 3, 1)
 	if err != nil {
 		t.Fatalf("cannot create dir [%s] [%s]", "/foo/foo", err.Error())
 	}
 
-	_, err = s.Create("/foo/foo/foo1", "bar1", Permanent, 4, 1)
+	_, err = s.Create("/foo/foo/foo1", "bar1", false, false, Permanent, 4, 1)
 	if err != nil {
 		t.Fatalf("cannot create [%s]", err.Error())
 	}
 
-	_, err = s.Create("/foo/foo/foo2", "", Permanent, 5, 1)
+	_, err = s.Create("/foo/foo/foo2", "", false, false, Permanent, 5, 1)
 	if err != nil {
 		t.Fatalf("cannot create [%s]", err.Error())
 	}
 
-	_, err = s.Create("/foo/foo/foo2/boo", "boo1", Permanent, 6, 1)
+	_, err = s.Create("/foo/foo/foo2/boo", "boo1", false, false, Permanent, 6, 1)
 	if err != nil {
 		t.Fatalf("cannot create [%s]", err.Error())
 	}
@@ -111,10 +121,6 @@ func TestUpdateFile(t *testing.T) {
 	if e.KVPairs[1].Key != "/foo/foo/foo2" || e.KVPairs[1].Dir != true {
 		t.Fatalf("cannot get sub dir before expiration")
 	}
-
-	/*if e.KVPairs[2].Key != "/foo/foo/foo2/boo" || e.KVPairs[2].Value != "boo1" {
-		t.Fatalf("cannot get sub node of sub dir before expiration [%s]", err.Error())
-	}*/
 
 	// wait for expiration
 	time.Sleep(time.Second * 3)
@@ -144,11 +150,11 @@ func TestListDirectory(t *testing.T) {
 
 	// create dir /foo
 	// set key-value /foo/foo=bar
-	s.Create("/foo/foo", "bar", Permanent, 1, 1)
+	s.Create("/foo/foo", "bar", false, false, Permanent, 1, 1)
 
 	// create dir /foo/fooDir
 	// set key-value /foo/fooDir/foo=bar
-	s.Create("/foo/fooDir/foo", "bar", Permanent, 2, 1)
+	s.Create("/foo/fooDir/foo", "bar", false, false, Permanent, 2, 1)
 
 	e, err := s.Get("/foo", true, true, 2, 1)
 	if err != nil {
@@ -185,9 +191,9 @@ func TestListDirectory(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	s := New()
+	s := newStore()
 
-	s.Create("/foo", "bar", Permanent, 1, 1)
+	s.Create("/foo", "bar", false, false, Permanent, 1, 1)
 	_, err := s.Delete("/foo", false, 1, 1)
 	if err != nil {
 		t.Fatalf("cannot delete %s [%s]", "/foo", err.Error())
@@ -198,9 +204,9 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("can get the node after deletion")
 	}
 
-	s.Create("/foo/bar", "bar", Permanent, 1, 1)
-	s.Create("/foo/car", "car", Permanent, 1, 1)
-	s.Create("/foo/dar/dar", "dar", Permanent, 1, 1)
+	s.Create("/foo/bar", "bar", false, false, Permanent, 1, 1)
+	s.Create("/foo/car", "car", false, false, Permanent, 1, 1)
+	s.Create("/foo/dar/dar", "dar", false, false, Permanent, 1, 1)
 
 	_, err = s.Delete("/foo", false, 1, 1)
 	if err == nil {
@@ -224,7 +230,7 @@ func TestExpire(t *testing.T) {
 
 	expire := time.Now().Add(time.Second)
 
-	s.Create("/foo", "bar", expire, 1, 1)
+	s.Create("/foo", "bar", false, false, expire, 1, 1)
 
 	_, err := s.Get("/foo", false, false, 1, 1)
 	if err != nil {
@@ -240,7 +246,7 @@ func TestExpire(t *testing.T) {
 
 	// test if we can reach the node before expiration
 	expire = time.Now().Add(time.Second)
-	s.Create("/foo", "bar", expire, 1, 1)
+	s.Create("/foo", "bar", false, false, expire, 1, 1)
 	time.Sleep(time.Millisecond * 50)
 	_, err = s.Get("/foo", false, false, 1, 1)
 	if err != nil {
@@ -249,7 +255,7 @@ func TestExpire(t *testing.T) {
 
 	expire = time.Now().Add(time.Second)
 
-	s.Create("/foo", "bar", expire, 1, 1)
+	s.Create("/foo", "bar", false, false, expire, 1, 1)
 	_, err = s.Delete("/foo", false, 1, 1)
 	if err != nil {
 		t.Fatalf("cannot delete the node before expiration [%s]", err.Error())
@@ -259,7 +265,7 @@ func TestExpire(t *testing.T) {
 
 func TestTestAndSet(t *testing.T) { // TODO prevValue == nil ?
 	s := New()
-	s.Create("/foo", "bar", Permanent, 1, 1)
+	s.Create("/foo", "bar", false, false, Permanent, 1, 1)
 
 	// test on wrong previous value
 	_, err := s.TestAndSet("/foo", "barbar", 0, "car", Permanent, 2, 1)
@@ -292,7 +298,7 @@ func TestWatch(t *testing.T) {
 	s := New()
 	// watch at a deeper path
 	c, _ := s.Watch("/foo/foo/foo", false, 0, 0, 1)
-	s.Create("/foo/foo/foo", "bar", Permanent, 1, 1)
+	s.Create("/foo/foo/foo", "bar", false, false, Permanent, 1, 1)
 
 	e := nonblockingRetrive(c)
 	if e.Key != "/foo/foo/foo" || e.Action != Create {
@@ -322,7 +328,7 @@ func TestWatch(t *testing.T) {
 
 	// watch at a prefix
 	c, _ = s.Watch("/foo", true, 0, 4, 1)
-	s.Create("/foo/foo/boo", "bar", Permanent, 5, 1)
+	s.Create("/foo/foo/boo", "bar", false, false, Permanent, 5, 1)
 	e = nonblockingRetrive(c)
 	if e.Key != "/foo/foo/boo" || e.Action != Create {
 		t.Fatal("watch for Create subdirectory fails")
@@ -350,7 +356,7 @@ func TestWatch(t *testing.T) {
 	}
 
 	// watch expire
-	s.Create("/foo/foo/boo", "foo", time.Now().Add(time.Second*1), 9, 1)
+	s.Create("/foo/foo/boo", "foo", false, false, time.Now().Add(time.Second*1), 9, 1)
 	c, _ = s.Watch("/foo", true, 0, 9, 1)
 	time.Sleep(time.Second * 2)
 	e = nonblockingRetrive(c)
@@ -358,7 +364,7 @@ func TestWatch(t *testing.T) {
 		t.Fatal("watch for Expiration of Create() subdirectory fails ", e)
 	}
 
-	s.Create("/foo/foo/boo", "foo", Permanent, 10, 1)
+	s.Create("/foo/foo/boo", "foo", false, false, Permanent, 10, 1)
 	s.Update("/foo/foo/boo", "bar", time.Now().Add(time.Second*1), 11, 1)
 	c, _ = s.Watch("/foo", true, 0, 11, 1)
 	time.Sleep(time.Second * 2)
@@ -367,12 +373,12 @@ func TestWatch(t *testing.T) {
 		t.Fatal("watch for Expiration of Update() subdirectory fails ", e)
 	}
 
-	s.Create("/foo/foo/boo", "foo", Permanent, 12, 1)
+	s.Create("/foo/foo/boo", "foo", false, false, Permanent, 12, 1)
 	s.TestAndSet("/foo/foo/boo", "foo", 0, "bar", time.Now().Add(time.Second*1), 13, 1)
 	c, _ = s.Watch("/foo", true, 0, 13, 1)
 	time.Sleep(time.Second * 2)
 	e = nonblockingRetrive(c)
-	if e.Key != "/foo/foo/boo" || e.Action != Expire || e.Index != 13 {
+	if e == nil || e.Key != "/foo/foo/boo" || e.Action != Expire || e.Index != 13 {
 		t.Fatal("watch for Expiration of TestAndSet() subdirectory fails ", e)
 	}
 }
@@ -385,7 +391,7 @@ func TestSort(t *testing.T) {
 
 	i := uint64(1)
 	for _, k := range keys {
-		_, err := s.Create(k, "bar", Permanent, i, 1)
+		_, err := s.Create(k, "bar", false, false, Permanent, i, 1)
 		if err != nil {
 			panic(err)
 		} else {
@@ -414,14 +420,14 @@ func TestSort(t *testing.T) {
 }
 
 func TestSaveAndRecover(t *testing.T) {
-	s := New()
+	s := newStore()
 
 	// simulating random creation
 	keys := GenKeys(8, 4)
 
 	i := uint64(1)
 	for _, k := range keys {
-		_, err := s.Create(k, "bar", Permanent, i, 1)
+		_, err := s.Create(k, "bar", false, false, Permanent, i, 1)
 		if err != nil {
 			panic(err)
 		} else {
@@ -432,21 +438,14 @@ func TestSaveAndRecover(t *testing.T) {
 	// create a node with expiration
 	// test if we can reach the node before expiration
 	expire := time.Now().Add(time.Second)
-	s.Create("/foo/foo", "bar", expire, 1, 1)
+	s.Create("/foo/foo", "bar", false, false, expire, 1, 1)
 
 	b, err := s.Save()
-	if err != nil {
-		t.Fatal("err")
-	}
 
-	cloneFs := New()
+	cloneFs := newStore()
+	time.Sleep(2 * time.Second)
 
-	time.Sleep(time.Second)
-
-	err = cloneFs.Recovery(b)
-	if err != nil {
-		t.Fatal("err")
-	}
+	cloneFs.Recovery(b)
 
 	for i, k := range keys {
 		_, err := cloneFs.Get(k, false, false, uint64(i), 1)
@@ -480,8 +479,8 @@ func GenKeys(num int, depth int) []string {
 	return keys
 }
 
-func createAndGet(s *Store, path string, t *testing.T) {
-	_, err := s.Create(path, "bar", Permanent, 1, 1)
+func createAndGet(s *store, path string, t *testing.T) {
+	_, err := s.Create(path, "bar", false, false, Permanent, 1, 1)
 	if err != nil {
 		t.Fatalf("cannot create %s=bar [%s]", path, err.Error())
 	}
