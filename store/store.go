@@ -13,7 +13,18 @@ import (
 	Err "github.com/marsevilspirit/marstore/error"
 )
 
+// The default version to set when the store is first initialized.
+const defaultVersion = 2
+
+var minExpireTime time.Time
+
+func init() {
+	minExpireTime, _ = time.Parse(time.RFC3339, "2000-01-01T00:00:00Z")
+}
+
 type Store interface {
+	Version() int
+	// CommandFactory() CommandFactory
 	Get(nodePath string, recursive, sorted bool, index uint64, term uint64) (*Event, error)
 	Set(nodePath string, value string, expireTime time.Time, index uint64, term uint64) (*Event, error)
 	Update(nodePath string, newValue string, expireTime time.Time, index uint64, term uint64) (*Event, error)
@@ -25,16 +36,19 @@ type Store interface {
 	Watch(prefix string, recursive bool, sinceIndex uint64, index uint64, term uint64) (<-chan *Event, error)
 	Save() ([]byte, error)
 	Recovery(state []byte) error
+	TotalTransactions() uint64
 	JsonStats() []byte
 }
 
 type store struct {
-	Root       *Node
-	WatcherHub *watcherHub
-	Index      uint64
-	Term       uint64
-	Stats      *Stats
-	worldLock  sync.RWMutex // stop the world lock
+	Root           *Node
+	WatcherHub     *watcherHub
+	Index          uint64
+	Term           uint64
+	Stats          *Stats
+	CurrentVersion int
+	ttlKeyHeap     *ttlKeyHeap  // need to recovery manually
+	worldLock      sync.RWMutex // stop the world lock
 }
 
 func New() Store {
@@ -43,11 +57,18 @@ func New() Store {
 
 func newStore() *store {
 	s := new(store)
+	s.CurrentVersion = defaultVersion
 	s.Root = newDir(s, "/", UndefIndex, UndefTerm, nil, "", Permanent)
 	s.Stats = newStats()
 	s.WatcherHub = newWatchHub(1000)
+	s.ttlKeyHeap = newTtlKeyHeap()
 
 	return s
+}
+
+// Version retrieves current version of the store.
+func (s *store) Version() int {
+	return s.CurrentVersion
 }
 
 // Get function returns a get event.
@@ -313,6 +334,12 @@ func (s *store) internalCreate(nodePath string, value string, unique bool, repla
 
 	nodePath = path.Clean(path.Join("/", nodePath))
 
+	// Assume expire times that are way in the past are not valid.
+	// This can occur when the time is serialized to JSON and read back in.
+	if expireTime.Before(minExpireTime) {
+		expireTime = Permanent
+	}
+
 	dir, newNodeName := path.Split(nodePath)
 
 	// walk through the nodePath, create dirs and get the last directory node
@@ -350,8 +377,9 @@ func (s *store) internalCreate(nodePath string, value string, unique bool, repla
 	d.Add(n)
 
 	// Node with TTL
-	if expireTime.Sub(Permanent) != 0 {
-		n.Expire()
+	if !n.IsPermanent() {
+		s.ttlKeyHeap.push(n)
+
 		e.Expiration, e.TTL = n.ExpirationAndTTL()
 	}
 
@@ -389,6 +417,27 @@ func (s *store) internalGet(nodePath string, index uint64, term uint64) (*Node, 
 	return f, nil
 }
 
+// deleteExpiredKyes will delete all
+func (s *store) deleteExpiredKeys(cutoff time.Time) {
+	s.worldLock.Lock()
+	defer s.worldLock.Unlock()
+
+	for {
+		node := s.ttlKeyHeap.top()
+		if node == nil || node.ExpireTime.After(cutoff) {
+			return
+		}
+
+		s.ttlKeyHeap.pop()
+		node.Remove(true, nil)
+
+		s.Stats.Inc(ExpireCount)
+		s.WatcherHub.notify(newEvent(Expire, node.Path, s.Index, s.Term))
+
+		s.WatcherHub.clearPendingWatchers()
+	}
+}
+
 // checkDir will check whether the component is a directory under parent node.
 // If it is a directory, this function will return the pointer to that node.
 // If it does not exist, will create a new directory and return the pointer to that node.
@@ -422,11 +471,13 @@ func (s *store) Save() ([]byte, error) {
 	clonedStore.Root = s.Root.Clone()
 	clonedStore.WatcherHub = s.WatcherHub.clone()
 	clonedStore.Stats = s.Stats.clone()
+	clonedStore.CurrentVersion = s.CurrentVersion
 
 	s.worldLock.Unlock()
 
 	b, err := json.Marshal(clonedStore)
 	if err != nil {
+		fmt.Println(err)
 		return nil, err
 	}
 
@@ -441,6 +492,9 @@ func (s *store) Recovery(state []byte) error {
 	if err != nil {
 		return err
 	}
+
+	s.ttlKeyHeap = newTtlKeyHeap()
+
 	s.Root.recoverAndclean()
 	return nil
 }
@@ -448,4 +502,8 @@ func (s *store) Recovery(state []byte) error {
 func (s *store) JsonStats() []byte {
 	s.Stats.Watchers = uint64(s.WatcherHub.count)
 	return s.Stats.toJson()
+}
+
+func (s *store) TotalTransactions() uint64 {
+	return s.Stats.TotalTranscations()
 }
