@@ -36,7 +36,7 @@ type Store interface {
 		value string, expireTime time.Time) (*Event, error)
 	Delete(nodePath string, dir, recursive bool) (*Event, error)
 	CompareAndDelete(nodePath string, prevValue string, prevIndex uint64) (*Event, error)
-	Watch(prefix string, recursive bool, sinceIndex uint64) (<-chan *Event, error)
+	Watch(prefix string, recursive, stream bool, sinceIndex uint64) (*Watcher, error)
 
 	Save() ([]byte, error)
 	Recovery(state []byte) error
@@ -186,33 +186,31 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, s.CurrentIndex)
 	}
 
-	// If both of the prevValue and prevIndex are given, we will test both of them.
-	// Command will be executed, only if both of the tests are successful.
-	if n.Compare(prevValue, prevIndex) {
-		// update marstore index
-		s.CurrentIndex++
+	if !n.Compare(prevValue, prevIndex) {
+		cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
+		s.Stats.Inc(CompareAndSwapFail)
+		return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
 
-		e := newEvent(CompareAndSwap, nodePath, s.CurrentIndex, n.CreatedIndex)
-		eNode := e.Node
-
-		eNode.PrevValue = n.Value
-
-		// if test succeed, write the value
-		n.Write(value, s.CurrentIndex)
-
-		n.UpdateTTL(expireTime)
-
-		eNode.Value = value
-		eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
-
-		s.WatcherHub.notify(e)
-		s.Stats.Inc(CompareAndSwapSuccess)
-		return e, nil
 	}
 
-	cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
-	s.Stats.Inc(CompareAndSwapFail)
-	return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
+	// update marstore index
+	s.CurrentIndex++
+
+	e := newEvent(CompareAndSwap, nodePath, s.CurrentIndex, n.CreatedIndex)
+	e.PrevNode = n.Repr(false, false)
+	eNode := e.Node
+
+	// if test succeed, write the value
+	n.Write(value, s.CurrentIndex)
+
+	n.UpdateTTL(expireTime)
+
+	eNode.Value = value
+	eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
+
+	s.WatcherHub.notify(e)
+	s.Stats.Inc(CompareAndSwapSuccess)
+	return e, nil
 }
 
 // Delete function deletes the node at the given path.
@@ -241,12 +239,11 @@ func (s *store) Delete(nodePath string, dir, recursive bool) (*Event, error) {
 	nextIndex := s.CurrentIndex + 1
 
 	e := newEvent(Delete, nodePath, nextIndex, n.CreatedIndex)
+	e.PrevNode = n.Repr(false, false)
 	eNode := e.Node
 
 	if n.IsDir() {
 		eNode.Dir = true
-	} else {
-		eNode.PrevValue = n.Value
 	}
 
 	callback := func(path string) { // notify fuction
@@ -289,28 +286,32 @@ func (s *store) CompareAndDelete(nodePath string, prevValue string, prevIndex ui
 
 	// If both of the prevValue and prevIndex are given, we will test both of them.
 	// Command will be executed, only if both of the tests are successful.
-	if n.Compare(prevValue, prevIndex) {
-		e := newEvent(CompareAndDelete, nodePath, s.CurrentIndex, n.CreatedIndex)
-
-		callback := func(path string) { // notify function
-			// notify the watchers with deleted set true
-			s.WatcherHub.notifyWatchers(e, path, true)
-		}
-
-		// delete a key-value pair, no error should happen
-		n.Remove(false, false, callback)
-
-		s.WatcherHub.notify(e)
-		s.Stats.Inc(CompareAndDeleteSuccess)
-		return e, nil
+	if !n.Compare(prevValue, prevIndex) {
+		cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
+		s.Stats.Inc(CompareAndDeleteFail)
+		return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
 	}
 
-	cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
-	s.Stats.Inc(CompareAndDeleteFail)
-	return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
+	// update etcd index
+	s.CurrentIndex++
+
+	e := newEvent(CompareAndDelete, nodePath, s.CurrentIndex, n.CreatedIndex)
+	e.PrevNode = n.Repr(false, false)
+
+	callback := func(path string) { // notify function
+		// notify the watchers with deleted set true
+		s.WatcherHub.notifyWatchers(e, path, true)
+	}
+
+	// delete a key-value pair, no error should happen
+	n.Remove(false, false, callback)
+
+	s.WatcherHub.notify(e)
+	s.Stats.Inc(CompareAndDeleteSuccess)
+	return e, nil
 }
 
-func (s *store) Watch(key string, recursive bool, sinceIndex uint64) (<-chan *Event, error) {
+func (s *store) Watch(key string, recursive, stream bool, sinceIndex uint64) (*Watcher, error) {
 	key = path.Clean(path.Join("/", key))
 
 	nextIndex := s.CurrentIndex + 1
@@ -318,13 +319,13 @@ func (s *store) Watch(key string, recursive bool, sinceIndex uint64) (<-chan *Ev
 	s.worldLock.RLock()
 	defer s.worldLock.RUnlock()
 
-	var c <-chan *Event
+	var w *Watcher
 	var err *Err.Error
 
 	if sinceIndex == 0 {
-		c, err = s.WatcherHub.watch(key, recursive, nextIndex)
+		w, err = s.WatcherHub.watch(key, recursive, stream, nextIndex)
 	} else {
-		c, err = s.WatcherHub.watch(key, recursive, sinceIndex)
+		w, err = s.WatcherHub.watch(key, recursive, stream, sinceIndex)
 	}
 
 	if err != nil {
@@ -334,7 +335,7 @@ func (s *store) Watch(key string, recursive bool, sinceIndex uint64) (<-chan *Ev
 		return nil, err
 	}
 
-	return c, nil
+	return w, nil
 }
 
 // walk function walks all the nodePath and
@@ -379,6 +380,7 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 	}
 
 	e := newEvent(Update, nodePath, nextIndex, n.CreatedIndex)
+	e.PrevNode = n.Repr(false, false)
 	eNode := e.Node
 
 	if n.IsDir() && len(newValue) != 0 {
@@ -387,7 +389,6 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, currIndex)
 	}
 
-	eNode.PrevValue = n.Value
 	n.Write(newValue, nextIndex)
 	eNode.Value = newValue
 
@@ -446,7 +447,8 @@ func (s *store) internalCreate(nodePath string, dir bool, value string, unique,
 			if n.IsDir() {
 				return nil, Err.NewError(Err.EcodeNotFile, nodePath, currIndex)
 			}
-			eNode.PrevValue, _ = n.Read()
+			e.PrevNode = n.Repr(false, false)
+
 			n.Remove(false, false, nil)
 		} else {
 			return nil, Err.NewError(Err.EcodeNodeExist, nodePath, currIndex)
@@ -515,8 +517,8 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 		}
 
 		s.CurrentIndex++
-
 		e := newEvent(Expire, node.Path, s.CurrentIndex, node.CreatedIndex)
+		e.PrevNode = node.Repr(false, false)
 
 		callback := func(path string) { // notify function
 			// notify the watchers with deleted set true

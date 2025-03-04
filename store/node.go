@@ -232,9 +232,9 @@ func (n *node) Remove(dir, recursive bool, callback func(path string)) *Err.Erro
 	return nil
 }
 
-func (n *node) Repr(recurisive, sorted bool) NodeExtern {
+func (n *node) Repr(recurisive, sorted bool) *NodeExtern {
 	if n.IsDir() {
-		node := NodeExtern{
+		node := &NodeExtern{
 			Key:           n.Path,
 			Dir:           true,
 			ModifiedIndex: n.ModifiedIndex,
@@ -271,7 +271,7 @@ func (n *node) Repr(recurisive, sorted bool) NodeExtern {
 
 		return node
 	}
-	node := NodeExtern{
+	node := &NodeExtern{
 		Key:           n.Path,
 		Value:         n.Value,
 		ModifiedIndex: n.ModifiedIndex,

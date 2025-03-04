@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"path"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	Err "github.com/marsevilspirit/marstore/error"
@@ -16,6 +17,7 @@ import (
 // Or a watcher might miss the event happens between the end of
 // the first watch command and the start of the second command.
 type watcherHub struct {
+	mutex        sync.Mutex // protect the hash map
 	watchers     map[string]*list.List
 	count        int64 // current number of watchers.
 	EventHistory *EventHistory
@@ -32,41 +34,60 @@ func newWatchHub(capacity int) *watcherHub {
 	}
 }
 
-// watch function returns an Event channel.
-// If recursive is true, the first change after index under key will be sent to the event channel.
-// If recursive is false, the first change after index at key will be sent to the event channel.
+// watch function returns a watch.
+// If recursive is true, the first change after index under key will be sent to the event channel of the watch.
+// If recursive is false, the first change after index at key will be sent to the event channel of the watch.
 // If index is zero, watch will start from the current index + 1.
-func (wh *watcherHub) watch(key string, recursive bool, index uint64) (<-chan *Event, *Err.Error) {
+func (wh *watcherHub) watch(key string, recursive bool, stream bool, index uint64) (*Watcher, *Err.Error) {
 	event, err := wh.EventHistory.scan(key, recursive, index)
 	if err != nil {
 		return nil, err
 	}
 
-	eventChan := make(chan *Event, 1) // use a buffered channel
-
-	if event != nil {
-		eventChan <- event
-		return eventChan, nil
-	}
-
-	w := &watcher{
-		eventChan:  eventChan,
+	w := &Watcher{
+		EventChan:  make(chan *Event, 1), // use a buffered channel
 		recursive:  recursive,
+		stream:     stream,
 		sinceIndex: index,
 	}
 
+	if event != nil {
+		w.EventChan <- event
+		return w, nil
+	}
+
+	wh.mutex.Lock()
+	defer wh.mutex.Unlock()
+
+	var elem *list.Element
 	l, ok := wh.watchers[key]
 	if ok { // add the new watcher to the back of the list
-		l.PushBack(w)
+		elem = l.PushBack(w)
 	} else {
-		l := list.New()
-		l.PushBack(w)
+		l = list.New()
+		elem = l.PushBack(w)
 		wh.watchers[key] = l
+	}
+
+	w.remove = func() {
+		if w.removed { // avoid remove it twice
+			return
+		}
+
+		wh.mutex.Lock()
+		defer wh.mutex.Unlock()
+
+		w.removed = true
+		l.Remove(elem)
+		atomic.AddInt64(&wh.count, -1)
+		if l.Len() == 0 {
+			delete(wh.watchers, key)
+		}
 	}
 
 	atomic.AddInt64(&wh.count, 1)
 
-	return eventChan, nil
+	return w, nil
 }
 
 func (wh *watcherHub) notify(e *Event) {
@@ -87,31 +108,35 @@ func (wh *watcherHub) notify(e *Event) {
 }
 
 func (wh *watcherHub) notifyWatchers(e *Event, path string, deleted bool) {
+	wh.mutex.Lock()
+	defer wh.mutex.Unlock()
+
 	l, ok := wh.watchers[path]
 	if ok {
 		curr := l.Front()
-		for {
-			if curr == nil { // we have reached the end of the list
-				if l.Len() == 0 {
-					// if we have notified all watcher in the list
-					// we can delete the list
-					delete(wh.watchers, path)
-				}
-				break
-			}
 
+		for curr != nil {
 			next := curr.Next() // save reference to the next one in the list
 
-			w, _ := curr.Value.(*watcher)
+			w, _ := curr.Value.(*Watcher)
 
 			if w.notify(e, e.Node.Key == path, deleted) {
-				// if we successfully notify a watcher
-				// we need to remove the watcher from the list
-				// and decrease the counter
-				l.Remove(curr)
-				atomic.AddInt64(&wh.count, -1)
+				if !w.stream { // do not remove the stream watcher
+					// if we successfully notify a watcher
+					// we need to remove the watcher from the list
+					// and decrease the counter
+					l.Remove(curr)
+					atomic.AddInt64(&wh.count, -1)
+				}
 			}
-			curr = next // update current to the next
+
+			curr = next // update current to the next element in the list
+		}
+
+		if l.Len() == 0 {
+			// if we have notified all watcher in the list
+			// we can delete the list
+			delete(wh.watchers, path)
 		}
 	}
 }

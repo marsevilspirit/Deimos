@@ -77,7 +77,6 @@ func TestSet(t *testing.T) {
 	assert.Equal(t, e.Action, "set", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 	assert.False(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "", "")
 	assert.Equal(t, e.Node.Value, "", "")
 	assert.Nil(t, e.Node.Nodes, "")
 	assert.Nil(t, e.Node.Expiration, "")
@@ -90,12 +89,17 @@ func TestSet(t *testing.T) {
 	assert.Equal(t, e.Action, "set", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 	assert.False(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "", "")
 	assert.Equal(t, e.Node.Value, "bar", "")
 	assert.Nil(t, e.Node.Nodes, "")
 	assert.Nil(t, e.Node.Expiration, "")
 	assert.Equal(t, e.Node.TTL, int64(0), "")
 	assert.Equal(t, e.Node.ModifiedIndex, uint64(2), "")
+
+	// check prevNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "", "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(1), "")
 
 	// Set /dir as a directory
 	e, err = s.Set("/dir", true, "", Permanent)
@@ -103,7 +107,6 @@ func TestSet(t *testing.T) {
 	assert.Equal(t, e.Action, "set", "")
 	assert.Equal(t, e.Node.Key, "/dir", "")
 	assert.True(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "", "")
 	assert.Equal(t, e.Node.Value, "", "")
 	assert.Nil(t, e.Node.Nodes, "")
 	assert.Nil(t, e.Node.Expiration, "")
@@ -120,7 +123,6 @@ func TestStoreCreateValue(t *testing.T) {
 	assert.Equal(t, e.Action, "create", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 	assert.False(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "", "")
 	assert.Equal(t, e.Node.Value, "bar", "")
 	assert.Nil(t, e.Node.Nodes, "")
 	assert.Nil(t, e.Node.Expiration, "")
@@ -133,7 +135,6 @@ func TestStoreCreateValue(t *testing.T) {
 	assert.Equal(t, e.Action, "create", "")
 	assert.Equal(t, e.Node.Key, "/empty", "")
 	assert.False(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "", "")
 	assert.Equal(t, e.Node.Value, "", "")
 	assert.Nil(t, e.Node.Nodes, "")
 	assert.Nil(t, e.Node.Expiration, "")
@@ -172,16 +173,22 @@ func TestStoreUpdateValue(t *testing.T) {
 	s := newStore()
 	// create /foo=bar
 	s.Create("/foo", false, "bar", false, Permanent)
-	// update /foo="baz"
+	// update /foo="bzr"
 	e, err := s.Update("/foo", "baz", Permanent)
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "update", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 	assert.False(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "bar", "")
 	assert.Equal(t, e.Node.Value, "baz", "")
 	assert.Equal(t, e.Node.TTL, int64(0), "")
 	assert.Equal(t, e.Node.ModifiedIndex, uint64(2), "")
+
+	// check prevNode
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "bar", "")
+	assert.Equal(t, e.PrevNode.TTL, int64(0), "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(1), "")
+
 	e, _ = s.Get("/foo", false, false)
 	assert.Equal(t, e.Node.Value, "baz", "")
 
@@ -191,10 +198,16 @@ func TestStoreUpdateValue(t *testing.T) {
 	assert.Equal(t, e.Action, "update", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 	assert.False(t, e.Node.Dir, "")
-	assert.Equal(t, e.Node.PrevValue, "baz", "")
 	assert.Equal(t, e.Node.Value, "", "")
 	assert.Equal(t, e.Node.TTL, int64(0), "")
 	assert.Equal(t, e.Node.ModifiedIndex, uint64(3), "")
+
+	// check prevNode
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "baz", "")
+	assert.Equal(t, e.PrevNode.TTL, int64(0), "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(2), "")
+
 	e, _ = s.Get("/foo", false, false)
 	assert.Equal(t, e.Node.Value, "", "")
 }
@@ -261,6 +274,10 @@ func TestStoreDeleteValue(t *testing.T) {
 	e, err := s.Delete("/foo", false, false)
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "delete", "")
+	// check pervNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "bar", "")
 }
 
 // Ensure that the store can delete a directory if recursive is specified.
@@ -273,6 +290,11 @@ func TestStoreDeleteDiretory(t *testing.T) {
 	e, err := s.Delete("/foo", true, false)
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "delete", "")
+
+	// check pervNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Dir, true, "")
 
 	// create directory /foo and directory /foo/bar
 	s.Create("/foo/bar", true, "", false, Permanent)
@@ -329,6 +351,13 @@ func TestStoreCompareAndDeletePrevValue(t *testing.T) {
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "compareAndDelete", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
+
+	// check pervNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "bar", "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(1), "")
+	assert.Equal(t, e.PrevNode.CreatedIndex, uint64(1), "")
 }
 
 func TestStoreCompareAndDeletePrevValueFailsIfNotMatch(t *testing.T) {
@@ -349,6 +378,13 @@ func TestStoreCompareAndDeletePrevIndex(t *testing.T) {
 	e, err := s.CompareAndDelete("/foo", "", 1)
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "compareAndDelete", "")
+
+	// check pervNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "bar", "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(1), "")
+	assert.Equal(t, e.PrevNode.CreatedIndex, uint64(1), "")
 }
 
 func TestStoreCompareAndDeletePrevIndexFailsIfNotMatch(t *testing.T) {
@@ -381,8 +417,15 @@ func TestStoreCompareAndSwapPrevValue(t *testing.T) {
 	e, err := s.CompareAndSwap("/foo", "bar", 0, "baz", Permanent)
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "compareAndSwap", "")
-	assert.Equal(t, e.Node.PrevValue, "bar", "")
 	assert.Equal(t, e.Node.Value, "baz", "")
+
+	// check pervNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "bar", "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(1), "")
+	assert.Equal(t, e.PrevNode.CreatedIndex, uint64(1), "")
+
 	e, _ = s.Get("/foo", false, false)
 	assert.Equal(t, e.Node.Value, "baz", "")
 }
@@ -407,8 +450,15 @@ func TestStoreCompareAndSwapPrevIndex(t *testing.T) {
 	e, err := s.CompareAndSwap("/foo", "", 1, "baz", Permanent)
 	assert.Nil(t, err, "")
 	assert.Equal(t, e.Action, "compareAndSwap", "")
-	assert.Equal(t, e.Node.PrevValue, "bar", "")
 	assert.Equal(t, e.Node.Value, "baz", "")
+
+	// check pervNode
+	assert.NotNil(t, e.PrevNode, "")
+	assert.Equal(t, e.PrevNode.Key, "/foo", "")
+	assert.Equal(t, e.PrevNode.Value, "bar", "")
+	assert.Equal(t, e.PrevNode.ModifiedIndex, uint64(1), "")
+	assert.Equal(t, e.PrevNode.CreatedIndex, uint64(1), "")
+
 	e, _ = s.Get("/foo", false, false)
 	assert.Equal(t, e.Node.Value, "baz", "")
 }
@@ -429,21 +479,21 @@ func TestStoreCompareAndSwapPrevIndexFailsIfNotMatch(t *testing.T) {
 // Ensure that the store can watch for key creation.
 func TestStoreWatchCreate(t *testing.T) {
 	s := newStore()
-	c, _ := s.Watch("/foo", false, 0)
+	w, _ := s.Watch("/foo", false, false, 0)
 	s.Create("/foo", false, "bar", false, Permanent)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "create", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
-	e = nbselect(c)
+	e = nbselect(w.EventChan)
 	assert.Nil(t, e, "")
 }
 
 // Ensure that the store can watch for recursive key creation.
 func TestStoreWatchRecursiveCreate(t *testing.T) {
 	s := newStore()
-	c, _ := s.Watch("/foo", true, 0)
+	w, _ := s.Watch("/foo", true, false, 0)
 	s.Create("/foo/bar", false, "baz", false, Permanent)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "create", "")
 	assert.Equal(t, e.Node.Key, "/foo/bar", "")
 }
@@ -452,9 +502,9 @@ func TestStoreWatchRecursiveCreate(t *testing.T) {
 func TestStoreWatchUpdate(t *testing.T) {
 	s := newStore()
 	s.Create("/foo", false, "bar", false, Permanent)
-	c, _ := s.Watch("/foo", false, 0)
+	w, _ := s.Watch("/foo", false, false, 0)
 	s.Update("/foo", "baz", Permanent)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "update", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 }
@@ -463,9 +513,9 @@ func TestStoreWatchUpdate(t *testing.T) {
 func TestStoreWatchRecursiveUpdate(t *testing.T) {
 	s := newStore()
 	s.Create("/foo/bar", false, "baz", false, Permanent)
-	c, _ := s.Watch("/foo", true, 0)
+	w, _ := s.Watch("/foo", true, false, 0)
 	s.Update("/foo/bar", "baz", Permanent)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "update", "")
 	assert.Equal(t, e.Node.Key, "/foo/bar", "")
 }
@@ -474,9 +524,9 @@ func TestStoreWatchRecursiveUpdate(t *testing.T) {
 func TestStoreWatchDelete(t *testing.T) {
 	s := newStore()
 	s.Create("/foo", false, "bar", false, Permanent)
-	c, _ := s.Watch("/foo", false, 0)
+	w, _ := s.Watch("/foo", false, false, 0)
 	s.Delete("/foo", false, false)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "delete", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 }
@@ -485,9 +535,9 @@ func TestStoreWatchDelete(t *testing.T) {
 func TestStoreWatchRecursiveDelete(t *testing.T) {
 	s := newStore()
 	s.Create("/foo/bar", false, "baz", false, Permanent)
-	c, _ := s.Watch("/foo", true, 0)
+	w, _ := s.Watch("/foo", true, false, 0)
 	s.Delete("/foo/bar", false, false)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "delete", "")
 	assert.Equal(t, e.Node.Key, "/foo/bar", "")
 }
@@ -496,9 +546,9 @@ func TestStoreWatchRecursiveDelete(t *testing.T) {
 func TestStoreWatchCompareAndSwap(t *testing.T) {
 	s := newStore()
 	s.Create("/foo", false, "bar", false, Permanent)
-	c, _ := s.Watch("/foo", false, 0)
+	w, _ := s.Watch("/foo", false, false, 0)
 	s.CompareAndSwap("/foo", "bar", 0, "baz", Permanent)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "compareAndSwap", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
 }
@@ -507,9 +557,9 @@ func TestStoreWatchCompareAndSwap(t *testing.T) {
 func TestStoreWatchRecursiveCompareAndSwap(t *testing.T) {
 	s := newStore()
 	s.Create("/foo/bar", false, "baz", false, Permanent)
-	c, _ := s.Watch("/foo", true, 0)
+	w, _ := s.Watch("/foo", true, false, 0)
 	s.CompareAndSwap("/foo/bar", "baz", 0, "bat", Permanent)
-	e := nbselect(c)
+	e := nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "compareAndSwap", "")
 	assert.Equal(t, e.Node.Key, "/foo/bar", "")
 }
@@ -527,17 +577,40 @@ func TestStoreWatchExpire(t *testing.T) {
 	s.Create("/foo", false, "bar", false, time.Now().Add(500*time.Millisecond))
 	s.Create("/foofoo", false, "barbarbar", false, time.Now().Add(500*time.Millisecond))
 
-	c, _ := s.Watch("/", true, 0)
+	w, _ := s.Watch("/", true, false, 0)
+	c := w.EventChan
 	e := nbselect(c)
 	assert.Nil(t, e, "")
 	time.Sleep(600 * time.Millisecond)
 	e = nbselect(c)
 	assert.Equal(t, e.Action, "expire", "")
 	assert.Equal(t, e.Node.Key, "/foo", "")
-	c, _ = s.Watch("/", true, 4)
-	e = nbselect(c)
+	w, _ = s.Watch("/", true, false, 4)
+	e = nbselect(w.EventChan)
 	assert.Equal(t, e.Action, "expire", "")
 	assert.Equal(t, e.Node.Key, "/foofoo", "")
+}
+
+// Ensure that the store can watch in streaming mode.
+func TestStoreWatchStream(t *testing.T) {
+	s := newStore()
+	w, _ := s.Watch("/foo", false, true, 0)
+	// first modification
+	s.Create("/foo", false, "bar", false, Permanent)
+	e := nbselect(w.EventChan)
+	assert.Equal(t, e.Action, "create", "")
+	assert.Equal(t, e.Node.Key, "/foo", "")
+	assert.Equal(t, e.Node.Value, "bar", "")
+	e = nbselect(w.EventChan)
+	assert.Nil(t, e, "")
+	// second modification
+	s.Update("/foo", "baz", Permanent)
+	e = nbselect(w.EventChan)
+	assert.Equal(t, e.Action, "update", "")
+	assert.Equal(t, e.Node.Key, "/foo", "")
+	assert.Equal(t, e.Node.Value, "baz", "")
+	e = nbselect(w.EventChan)
+	assert.Nil(t, e, "")
 }
 
 // Ensure that the store can recover from a previously saved state.
