@@ -14,7 +14,7 @@ func TestHeapPushPop(t *testing.T) {
 	for i := range 10 {
 		path := fmt.Sprintf("%v", 10-i)
 		m := time.Duration(10 - i)
-		n := newKV(nil, path, path, 0, 0, nil, "", time.Now().Add(time.Second*m))
+		n := newKV(nil, path, path, 0, nil, "", time.Now().Add(time.Second*m))
 		h.push(n)
 	}
 
@@ -33,14 +33,14 @@ func TestHeapPushPop(t *testing.T) {
 func TestHeapUpdate(t *testing.T) {
 	h := newTtlKeyHeap()
 
-	kvs := make([]*Node, 10)
+	kvs := make([]*node, 10)
 
 	// add from older expire time to earlier expire time
 	// the path is equal to ttl from now
 	for i, n := range kvs {
 		path := fmt.Sprintf("%v", 10-i)
 		m := time.Duration(10 - i)
-		n = newKV(nil, path, path, 0, 0, nil, "", time.Now().Add(time.Second*m))
+		n = newKV(nil, path, path, 0, nil, "", time.Now().Add(time.Second*m))
 		kvs[i] = n
 		h.push(n)
 	}

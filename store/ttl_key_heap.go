@@ -3,12 +3,12 @@ package store
 import "container/heap"
 
 type ttlKeyHeap struct {
-	array  []*Node
-	keyMap map[*Node]int
+	array  []*node
+	keyMap map[*node]int
 }
 
 func newTtlKeyHeap() *ttlKeyHeap {
-	h := &ttlKeyHeap{keyMap: make(map[*Node]int)}
+	h := &ttlKeyHeap{keyMap: make(map[*node]int)}
 	heap.Init(h)
 	return h
 }
@@ -31,7 +31,7 @@ func (h *ttlKeyHeap) Swap(i, j int) {
 }
 
 func (h *ttlKeyHeap) Push(x any) {
-	n, _ := x.(*Node)
+	n, _ := x.(*node)
 	h.keyMap[n] = len(h.array)
 	h.array = append(h.array, n)
 }
@@ -43,16 +43,16 @@ func (h *ttlKeyHeap) Pop() any {
 	return x
 }
 
-func (h *ttlKeyHeap) top() *Node {
+func (h *ttlKeyHeap) top() *node {
 	if h.Len() != 0 {
 		return h.array[0]
 	}
 	return nil
 }
 
-func (h *ttlKeyHeap) pop() *Node {
+func (h *ttlKeyHeap) pop() *node {
 	x := heap.Pop(h)
-	n, _ := x.(*Node)
+	n, _ := x.(*node)
 	return n
 }
 
@@ -60,7 +60,7 @@ func (h *ttlKeyHeap) push(x any) {
 	heap.Push(h, x)
 }
 
-func (h *ttlKeyHeap) update(n *Node) {
+func (h *ttlKeyHeap) update(n *node) {
 	index, ok := h.keyMap[n]
 	if ok {
 		heap.Remove(h, index)
@@ -68,7 +68,7 @@ func (h *ttlKeyHeap) update(n *Node) {
 	}
 }
 
-func (h *ttlKeyHeap) remove(n *Node) {
+func (h *ttlKeyHeap) remove(n *node) {
 	index, ok := h.keyMap[n]
 	if ok {
 		heap.Remove(h, index)

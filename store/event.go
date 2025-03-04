@@ -15,30 +15,23 @@ const (
 	Expire         = "expire"
 )
 
-const (
-	UndefIndex = 0
-	UndefTerm  = 0
-)
-
 type Event struct {
-	Action     string     `json:"action"`
-	Key        string     `json:"key"`
-	Dir        bool       `json:"dir,omitempty"`
-	PrevValue  string     `json:"prevValue,omitempty"`
-	Value      string     `json:"value,omitempty"`
-	KVPairs    kvPairs    `json:"kvs,omitempty"`
-	Expiration *time.Time `json:"expiration,omitempty"`
-	TTL        int64      `json:"ttl,omitempty"` // Time to live in second
-	Index      uint64     `json:"index"`
-	Term       uint64     `json:"term"`
+	Action        string     `json:"action"`
+	Key           string     `json:"key"`
+	Dir           bool       `json:"dir,omitempty"`
+	PrevValue     string     `json:"prevValue,omitempty"`
+	Value         string     `json:"value,omitempty"`
+	KVPairs       kvPairs    `json:"kvs,omitempty"`
+	Expiration    *time.Time `json:"expiration,omitempty"`
+	TTL           int64      `json:"ttl,omitempty"` // Time to live in second
+	ModifiedIndex uint64     `json:"modifiedIndex"`
 }
 
-func newEvent(action string, key string, index uint64, term uint64) *Event {
+func newEvent(action string, key string, index uint64) *Event {
 	return &Event{
-		Action: action,
-		Key:    key,
-		Index:  index,
-		Term:   term,
+		Action:        action,
+		Key:           key,
+		ModifiedIndex: index,
 	}
 }
 
@@ -54,6 +47,10 @@ func (e *Event) IsCreated() bool {
 	return false
 }
 
+func (e *Event) Index() uint64 {
+	return e.ModifiedIndex
+}
+
 // Converts an event object into a response object.
 func (event *Event) Response() any {
 	if !event.Dir {
@@ -62,7 +59,7 @@ func (event *Event) Response() any {
 			Key:        event.Key,
 			Value:      event.Value,
 			PrevValue:  event.PrevValue,
-			Index:      event.Index,
+			Index:      event.ModifiedIndex,
 			TTL:        event.TTL,
 			Expiration: event.Expiration,
 		}
@@ -87,7 +84,7 @@ func (event *Event) Response() any {
 				Key:    kv.Key,
 				Value:  kv.Value,
 				Dir:    kv.Dir,
-				Index:  event.Index,
+				Index:  event.ModifiedIndex,
 			}
 		}
 		return responses
