@@ -33,11 +33,11 @@ func newWatchHub(capacity int) *watcherHub {
 }
 
 // watch function returns an Event channel.
-// If recursive is true, the first change after index under prefix will be sent to the event channel.
-// If recursive is false, the first change after index at prefix will be sent to the event channel.
+// If recursive is true, the first change after index under key will be sent to the event channel.
+// If recursive is false, the first change after index at key will be sent to the event channel.
 // If index is zero, watch will start from the current index + 1.
-func (wh *watcherHub) watch(prefix string, recursive bool, index uint64) (<-chan *Event, *Err.Error) {
-	event, err := wh.EventHistory.scan(prefix, index)
+func (wh *watcherHub) watch(key string, recursive bool, index uint64) (<-chan *Event, *Err.Error) {
+	event, err := wh.EventHistory.scan(key, recursive, index)
 	if err != nil {
 		return nil, err
 	}
@@ -55,13 +55,13 @@ func (wh *watcherHub) watch(prefix string, recursive bool, index uint64) (<-chan
 		sinceIndex: index,
 	}
 
-	l, ok := wh.watchers[prefix]
+	l, ok := wh.watchers[key]
 	if ok { // add the new watcher to the back of the list
 		l.PushBack(w)
 	} else {
 		l := list.New()
 		l.PushBack(w)
-		wh.watchers[prefix] = l
+		wh.watchers[key] = l
 	}
 
 	atomic.AddInt64(&wh.count, 1)
@@ -73,7 +73,7 @@ func (wh *watcherHub) notify(e *Event) {
 	// add event into the eventHistory
 	e = wh.EventHistory.addEvent(e)
 
-	segments := strings.Split(e.Key, "/")
+	segments := strings.Split(e.Node.Key, "/")
 	currPath := "/"
 
 	// walk through all the segments of the path and notify the watchers
@@ -104,7 +104,7 @@ func (wh *watcherHub) notifyWatchers(e *Event, path string, deleted bool) {
 
 			w, _ := curr.Value.(*watcher)
 
-			if w.notify(e, e.Key == path, deleted) {
+			if w.notify(e, e.Node.Key == path, deleted) {
 				// if we successfully notify a watcher
 				// we need to remove the watcher from the list
 				// and decrease the counter

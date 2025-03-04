@@ -26,17 +26,21 @@ type Store interface {
 	Version() int
 	// CommandFactory() CommandFactory
 	Index() uint64
+
 	Get(nodePath string, recursive, sorted bool) (*Event, error)
-	Set(nodePath string, value string, expireTime time.Time) (*Event, error)
+	Set(nodePath string, dir bool, value string, expireTime time.Time) (*Event, error)
 	Update(nodePath string, newValue string, expireTime time.Time) (*Event, error)
-	Create(nodePath string, value string, incrementalSuffix bool,
+	Create(nodePath string, dir bool, value string, unique bool,
 		expireTime time.Time) (*Event, error)
 	CompareAndSwap(nodePath string, prevValue string, prevIndex uint64,
 		value string, expireTime time.Time) (*Event, error)
-	Delete(nodePath string, recursive bool) (*Event, error)
+	Delete(nodePath string, dir, recursive bool) (*Event, error)
+	CompareAndDelete(nodePath string, prevValue string, prevIndex uint64) (*Event, error)
 	Watch(prefix string, recursive bool, sinceIndex uint64) (<-chan *Event, error)
+
 	Save() ([]byte, error)
 	Recovery(state []byte) error
+
 	TotalTransactions() uint64
 	JsonStats() []byte
 	DeleteExpiredKeys(cutoff time.Time)
@@ -92,13 +96,14 @@ func (s *store) Get(nodePath string, recursive, sorted bool) (*Event, error) {
 		return nil, err
 	}
 
-	e := newEvent(Get, nodePath, n.ModifiedIndex)
+	e := newEvent(Get, nodePath, n.ModifiedIndex, n.CreatedIndex)
+	eNode := e.Node
 
 	if n.IsDir() { // node is dir
-		e.Dir = true
+		eNode.Dir = true
 
 		children, _ := n.List()
-		e.KVPairs = make([]KeyValuePair, len(children))
+		eNode.Nodes = make(Nodes, len(children))
 
 		// we do not use the index in the children slice directly
 		// we need to skip the hidden one
@@ -107,20 +112,20 @@ func (s *store) Get(nodePath string, recursive, sorted bool) (*Event, error) {
 			if child.IsHidden() { // get will not list hidden node
 				continue
 			}
-			e.KVPairs[i] = child.Pair(recursive, sorted)
+			eNode.Nodes[i] = child.Repr(recursive, sorted)
 			i++
 		}
 		// eliminate hidden nodes
-		e.KVPairs = e.KVPairs[:i]
+		eNode.Nodes = eNode.Nodes[:i]
 
 		if sorted {
-			sort.Sort(e.KVPairs)
+			sort.Sort(eNode.Nodes)
 		}
 	} else { // node is file
-		e.Value, _ = n.Read()
+		eNode.Value, _ = n.Read()
 	}
 
-	e.Expiration, e.TTL = n.ExpirationAndTTL()
+	eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
 
 	s.Stats.Inc(GetSuccess)
 
@@ -132,12 +137,12 @@ func (s *store) Get(nodePath string, recursive, sorted bool) (*Event, error) {
 // value is "", then create a dir.
 // If the node has already existed, create will fail.
 // If any node on the path is a file, create will fail.
-func (s *store) Create(nodePath string, value string, unique bool,
+func (s *store) Create(nodePath string, dir bool, value string, unique bool,
 	expireTime time.Time) (*Event, error) {
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
 
-	e, err := s.internalCreate(nodePath, value, unique, false, expireTime, Create)
+	e, err := s.internalCreate(nodePath, dir, value, unique, false, expireTime, Create)
 	if err != nil {
 		s.Stats.Inc(CreateFail)
 	} else {
@@ -147,12 +152,10 @@ func (s *store) Create(nodePath string, value string, unique bool,
 }
 
 // Set function creates or replace the Node at nodePath.
-func (s *store) Set(nodePath string, value string, expireTime time.Time) (*Event, error) {
-	nodePath = path.Clean(path.Join("/", nodePath))
-
+func (s *store) Set(nodePath string, dir bool, value string, expireTime time.Time) (*Event, error) {
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
-	e, err := s.internalCreate(nodePath, value, false, true, expireTime, Set)
+	e, err := s.internalCreate(nodePath, dir, value, false, true, expireTime, Set)
 	if err != nil {
 		s.Stats.Inc(SetFail)
 	} else {
@@ -164,6 +167,10 @@ func (s *store) Set(nodePath string, value string, expireTime time.Time) (*Event
 func (s *store) CompareAndSwap(nodePath string, prevValue string,
 	prevIndex uint64, value string, expireTime time.Time) (*Event, error) {
 	nodePath = path.Clean(path.Join("/", nodePath))
+	// we do not allow the user to change "/"
+	if nodePath == "/" {
+		return nil, Err.NewError(Err.EcodeRootROnly, "/", s.CurrentIndex)
+	}
 
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
@@ -174,27 +181,29 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 		return nil, err
 	}
 
-	if n.IsDir() { // can only test and set file
+	if n.IsDir() { // can only compare and swap file
 		s.Stats.Inc(CompareAndSwapFail)
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, s.CurrentIndex)
 	}
 
 	// If both of the prevValue and prevIndex are given, we will test both of them.
 	// Command will be executed, only if both of the tests are successful.
-	if (prevValue == "" || n.Value == prevValue) && (prevIndex == 0 || n.ModifiedIndex == prevIndex) {
+	if n.Compare(prevValue, prevIndex) {
 		// update marstore index
 		s.CurrentIndex++
 
-		e := newEvent(CompareAndSwap, nodePath, s.CurrentIndex)
-		e.PrevValue = n.Value
+		e := newEvent(CompareAndSwap, nodePath, s.CurrentIndex, n.CreatedIndex)
+		eNode := e.Node
+
+		eNode.PrevValue = n.Value
 
 		// if test succeed, write the value
 		n.Write(value, s.CurrentIndex)
 
 		n.UpdateTTL(expireTime)
 
-		e.Value = value
-		e.Expiration, e.TTL = n.ExpirationAndTTL()
+		eNode.Value = value
+		eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
 
 		s.WatcherHub.notify(e)
 		s.Stats.Inc(CompareAndSwapSuccess)
@@ -208,13 +217,20 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 
 // Delete function deletes the node at the given path.
 // If the node is a directory, recursive must be true to delete it.
-func (s *store) Delete(nodePath string, recursive bool) (*Event, error) {
+func (s *store) Delete(nodePath string, dir, recursive bool) (*Event, error) {
 	nodePath = path.Clean(path.Join("/", nodePath))
+	// we do not allow the user to change "/"
+	if nodePath == "/" {
+		return nil, Err.NewError(Err.EcodeRootROnly, "/", s.CurrentIndex)
+	}
 
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
 
-	nextIndex := s.CurrentIndex + 1
+	// recursive implies dir
+	if recursive == true {
+		dir = true
+	}
 
 	n, err := s.internalGet(nodePath)
 	if err != nil { // if the node does not exist, return error
@@ -222,12 +238,15 @@ func (s *store) Delete(nodePath string, recursive bool) (*Event, error) {
 		return nil, err
 	}
 
-	e := newEvent(Delete, nodePath, nextIndex)
+	nextIndex := s.CurrentIndex + 1
+
+	e := newEvent(Delete, nodePath, nextIndex, n.CreatedIndex)
+	eNode := e.Node
 
 	if n.IsDir() {
-		e.Dir = true
+		eNode.Dir = true
 	} else {
-		e.PrevValue = n.Value
+		eNode.PrevValue = n.Value
 	}
 
 	callback := func(path string) { // notify fuction
@@ -235,7 +254,7 @@ func (s *store) Delete(nodePath string, recursive bool) (*Event, error) {
 		s.WatcherHub.notifyWatchers(e, path, true)
 	}
 
-	err = n.Remove(recursive, callback)
+	err = n.Remove(dir, recursive, callback)
 	if err != nil {
 		s.Stats.Inc(DeleteFail)
 		return nil, err
@@ -250,8 +269,49 @@ func (s *store) Delete(nodePath string, recursive bool) (*Event, error) {
 	return e, nil
 }
 
-func (s *store) Watch(prefix string, recursive bool, sinceIndex uint64) (<-chan *Event, error) {
-	prefix = path.Clean(path.Join("/", prefix))
+func (s *store) CompareAndDelete(nodePath string, prevValue string, prevIndex uint64) (*Event, error) {
+	nodePath = path.Clean(path.Join("/", nodePath))
+
+	s.worldLock.Lock()
+	defer s.worldLock.Unlock()
+
+	n, err := s.internalGet(nodePath)
+
+	if err != nil { // if the node does not exist, return error
+		s.Stats.Inc(CompareAndDeleteFail)
+		return nil, err
+	}
+
+	if n.IsDir() { // can only compare and delete file
+		s.Stats.Inc(CompareAndSwapFail)
+		return nil, Err.NewError(Err.EcodeNotFile, nodePath, s.CurrentIndex)
+	}
+
+	// If both of the prevValue and prevIndex are given, we will test both of them.
+	// Command will be executed, only if both of the tests are successful.
+	if n.Compare(prevValue, prevIndex) {
+		e := newEvent(CompareAndDelete, nodePath, s.CurrentIndex, n.CreatedIndex)
+
+		callback := func(path string) { // notify function
+			// notify the watchers with deleted set true
+			s.WatcherHub.notifyWatchers(e, path, true)
+		}
+
+		// delete a key-value pair, no error should happen
+		n.Remove(false, false, callback)
+
+		s.WatcherHub.notify(e)
+		s.Stats.Inc(CompareAndDeleteSuccess)
+		return e, nil
+	}
+
+	cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
+	s.Stats.Inc(CompareAndDeleteFail)
+	return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
+}
+
+func (s *store) Watch(key string, recursive bool, sinceIndex uint64) (<-chan *Event, error) {
+	key = path.Clean(path.Join("/", key))
 
 	nextIndex := s.CurrentIndex + 1
 
@@ -262,9 +322,9 @@ func (s *store) Watch(prefix string, recursive bool, sinceIndex uint64) (<-chan 
 	var err *Err.Error
 
 	if sinceIndex == 0 {
-		c, err = s.WatcherHub.watch(prefix, recursive, nextIndex)
+		c, err = s.WatcherHub.watch(key, recursive, nextIndex)
 	} else {
-		c, err = s.WatcherHub.watch(prefix, recursive, sinceIndex)
+		c, err = s.WatcherHub.watch(key, recursive, sinceIndex)
 	}
 
 	if err != nil {
@@ -300,12 +360,16 @@ func (s *store) walk(nodePath string, walkFunc func(prev *node, component string
 // If the node is a file, the value and the ttl can be updated.
 // If the node is a directory, only the ttl can be updated.
 func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (*Event, error) {
+	nodePath = path.Clean(path.Join("/", nodePath))
+	// we do not allow the user to change "/"
+	if nodePath == "/" {
+		return nil, Err.NewError(Err.EcodeRootROnly, "/", s.CurrentIndex)
+	}
+
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
 
 	currIndex, nextIndex := s.CurrentIndex, s.CurrentIndex+1
-
-	nodePath = path.Clean(path.Join("/", nodePath))
 
 	n, err := s.internalGet(nodePath)
 
@@ -314,27 +378,23 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 		return nil, err
 	}
 
-	e := newEvent(Update, nodePath, nextIndex)
+	e := newEvent(Update, nodePath, nextIndex, n.CreatedIndex)
+	eNode := e.Node
 
-	if len(newValue) != 0 {
-		if n.IsDir() {
-			// if the node is a directory, we cannot update value
-			s.Stats.Inc(UpdateFail)
-			return nil, Err.NewError(Err.EcodeNotFile, nodePath, currIndex)
-		}
-
-		e.PrevValue = n.Value
-		n.Write(newValue, nextIndex)
-		e.Value = newValue
-	} else {
-		// do not update value
-		e.Value = n.Value
+	if n.IsDir() && len(newValue) != 0 {
+		// if the node is a directory, we cannot update to non-empty
+		s.Stats.Inc(UpdateFail)
+		return nil, Err.NewError(Err.EcodeNotFile, nodePath, currIndex)
 	}
+
+	eNode.PrevValue = n.Value
+	n.Write(newValue, nextIndex)
+	eNode.Value = newValue
 
 	// update ttl
 	n.UpdateTTL(expireTime)
 
-	e.Expiration, e.TTL = n.ExpirationAndTTL()
+	eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
 
 	s.WatcherHub.notify(e)
 
@@ -345,7 +405,7 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 	return e, nil
 }
 
-func (s *store) internalCreate(nodePath string, value string, unique bool,
+func (s *store) internalCreate(nodePath string, dir bool, value string, unique,
 	replace bool, expireTime time.Time, action string) (*Event, error) {
 	currIndex, nextIndex := s.CurrentIndex, s.CurrentIndex+1
 
@@ -355,6 +415,10 @@ func (s *store) internalCreate(nodePath string, value string, unique bool,
 	}
 
 	nodePath = path.Clean(path.Join("/", nodePath))
+	// we do not allow the user to change "/"
+	if nodePath == "/" {
+		return nil, Err.NewError(Err.EcodeRootROnly, "/", currIndex)
+	}
 
 	// Assume expire times that are way in the past are not valid.
 	// This can occur when the time is serialized to JSON and read back in.
@@ -362,37 +426,38 @@ func (s *store) internalCreate(nodePath string, value string, unique bool,
 		expireTime = Permanent
 	}
 
-	dir, newNodeName := path.Split(nodePath)
+	dirName, nodeName := path.Split(nodePath)
 
 	// walk through the nodePath, create dirs and get the last directory node
-	d, err := s.walk(dir, s.checkDir)
+	d, err := s.walk(dirName, s.checkDir)
 	if err != nil {
 		s.Stats.Inc(SetFail)
 		err.Index = currIndex
 		return nil, err
 	}
 
-	e := newEvent(action, nodePath, nextIndex)
+	e := newEvent(action, nodePath, nextIndex, nextIndex)
+	eNode := e.Node
 
-	n, _ := d.GetChild(newNodeName)
+	n, _ := d.GetChild(nodeName)
 	// force will try to replace the existing file
 	if n != nil {
 		if replace {
 			if n.IsDir() {
 				return nil, Err.NewError(Err.EcodeNotFile, nodePath, currIndex)
 			}
-			e.PrevValue, _ = n.Read()
-			n.Remove(false, nil)
+			eNode.PrevValue, _ = n.Read()
+			n.Remove(false, false, nil)
 		} else {
 			return nil, Err.NewError(Err.EcodeNodeExist, nodePath, currIndex)
 		}
 	}
 
-	if len(value) != 0 { // create file
-		e.Value = value
+	if !dir { // create file
+		eNode.Value = value
 		n = newKV(s, nodePath, value, nextIndex, d, "", expireTime)
 	} else { // create directory
-		e.Dir = true
+		eNode.Dir = true
 		n = newDir(s, nodePath, nextIndex, d, "", expireTime)
 
 	}
@@ -404,7 +469,7 @@ func (s *store) internalCreate(nodePath string, value string, unique bool,
 	if !n.IsPermanent() {
 		s.ttlKeyHeap.push(n)
 
-		e.Expiration, e.TTL = n.ExpirationAndTTL()
+		eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
 	}
 
 	s.CurrentIndex = nextIndex
@@ -449,13 +514,20 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 			break
 		}
 
-		s.ttlKeyHeap.pop()
-		node.Remove(true, nil)
-
 		s.CurrentIndex++
 
+		e := newEvent(Expire, node.Path, s.CurrentIndex, node.CreatedIndex)
+
+		callback := func(path string) { // notify function
+			// notify the watchers with deleted set true
+			s.WatcherHub.notifyWatchers(e, path, true)
+		}
+
+		s.ttlKeyHeap.pop()
+		node.Remove(true, true, callback)
+
 		s.Stats.Inc(ExpireCount)
-		s.WatcherHub.notify(newEvent(Expire, node.Path, s.CurrentIndex))
+		s.WatcherHub.notify(e)
 	}
 }
 
@@ -469,7 +541,7 @@ func (s *store) checkDir(parent *node, dirName string) (*node, *Err.Error) {
 		if node.IsDir() {
 			return node, nil
 		}
-		return nil, Err.NewError(Err.EcodeNotDir, parent.Path, s.CurrentIndex)
+		return nil, Err.NewError(Err.EcodeNotDir, node.Path, s.CurrentIndex)
 	}
 
 	n := newDir(s, path.Join(parent.Path, dirName), s.CurrentIndex+1, parent, parent.ACL, Permanent)

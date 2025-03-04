@@ -17,7 +17,7 @@ var Permanent time.Time
 type node struct {
 	Path string
 
-	CreateIndex   uint64
+	CreatedIndex  uint64
 	ModifiedIndex uint64
 
 	// should not encode this field! avoid circular dependency
@@ -33,12 +33,12 @@ type node struct {
 }
 
 // newKV creates a Key-Value pair
-func newKV(store *store, nodePath string, value string, createIndex uint64,
+func newKV(store *store, nodePath string, value string, createdIndex uint64,
 	parent *node, ACL string, expireTime time.Time) *node {
 	return &node{
 		Path:          nodePath,
-		CreateIndex:   createIndex,
-		ModifiedIndex: createIndex,
+		CreatedIndex:  createdIndex,
+		ModifiedIndex: createdIndex,
 		Parent:        parent,
 		ACL:           ACL,
 		store:         store,
@@ -48,12 +48,12 @@ func newKV(store *store, nodePath string, value string, createIndex uint64,
 }
 
 // newDir creates a directory
-func newDir(store *store, nodePath string, createIndex uint64,
+func newDir(store *store, nodePath string, createdIndex uint64,
 	parent *node, ACL string, expireTime time.Time) *node {
 	return &node{
 		Path:          nodePath,
-		CreateIndex:   createIndex,
-		ModifiedIndex: createIndex,
+		CreatedIndex:  createdIndex,
+		ModifiedIndex: createdIndex,
 		Parent:        parent,
 		ACL:           ACL,
 		ExpireTime:    expireTime,
@@ -178,10 +178,17 @@ func (n *node) Add(child *node) *Err.Error {
 }
 
 // Remove function remove the node.
-func (n *node) Remove(recursive bool, callback func(path string)) *Err.Error {
-	if n.IsDir() && !recursive {
-		// cannot delete a directory without set recursive to true
-		return Err.NewError(Err.EcodeNotFile, "", n.store.Index())
+func (n *node) Remove(dir, recursive bool, callback func(path string)) *Err.Error {
+	if n.IsDir() {
+		if !dir {
+			return Err.NewError(Err.EcodeNotFile, n.Path, n.store.Index())
+		}
+
+		if len(n.Children) != 0 && !recursive {
+			// cannot delete a directory if it is not empty and the operation
+			// is not recursive
+			return Err.NewError(Err.EcodeDirNotEmpty, n.Path, n.store.Index())
+		}
 	}
 
 	if !n.IsDir() { // key-value pair
@@ -206,7 +213,7 @@ func (n *node) Remove(recursive bool, callback func(path string)) *Err.Error {
 
 	// delete all children
 	for _, child := range n.Children {
-		child.Remove(true, callback)
+		child.Remove(true, true, callback)
 	}
 
 	// delete self
@@ -225,22 +232,23 @@ func (n *node) Remove(recursive bool, callback func(path string)) *Err.Error {
 	return nil
 }
 
-func (n *node) Pair(recurisive, sorted bool) KeyValuePair {
+func (n *node) Repr(recurisive, sorted bool) NodeExtern {
 	if n.IsDir() {
-		pair := KeyValuePair{
+		node := NodeExtern{
 			Key:           n.Path,
 			Dir:           true,
 			ModifiedIndex: n.ModifiedIndex,
+			CreatedIndex:  n.CreatedIndex,
 		}
 
-		pair.Expiration, pair.TTL = n.ExpirationAndTTL()
+		node.Expiration, node.TTL = n.ExpirationAndTTL()
 
 		if !recurisive {
-			return pair
+			return node
 		}
 
 		children, _ := n.List()
-		pair.KVPairs = make([]KeyValuePair, len(children))
+		node.Nodes = make(Nodes, len(children))
 
 		// we do not use the index in the children slice directly
 		// we need to skip the hidden one
@@ -250,26 +258,27 @@ func (n *node) Pair(recurisive, sorted bool) KeyValuePair {
 			if child.IsHidden() { // get will not list hidden node
 				continue
 			}
-			pair.KVPairs[i] = child.Pair(recurisive, sorted)
+			node.Nodes[i] = child.Repr(recurisive, sorted)
 			i++
 		}
 
 		// eliminate hidden nodes
-		pair.KVPairs = pair.KVPairs[:i]
+		node.Nodes = node.Nodes[:i]
 
 		if sorted {
-			sort.Sort(pair.KVPairs)
+			sort.Sort(node.Nodes)
 		}
 
-		return pair
+		return node
 	}
-	pair := KeyValuePair{
+	node := NodeExtern{
 		Key:           n.Path,
 		Value:         n.Value,
 		ModifiedIndex: n.ModifiedIndex,
+		CreatedIndex:  n.CreatedIndex,
 	}
-	pair.Expiration, pair.TTL = n.ExpirationAndTTL()
-	return pair
+	node.Expiration, node.TTL = n.ExpirationAndTTL()
+	return node
 }
 
 func (n *node) UpdateTTL(expireTime time.Time) {
@@ -295,15 +304,22 @@ func (n *node) UpdateTTL(expireTime time.Time) {
 	}
 }
 
+func (n *node) Compare(prevValue string, prevIndex uint64) bool {
+	compareValue := (prevValue == "" || n.Value == prevValue)
+	compareIndex := (prevIndex == 0 || n.ModifiedIndex == prevIndex)
+
+	return compareValue && compareIndex
+}
+
 // Clone function clone the node recursively and return the new node.
 // If the node is a directory, it will clone all the content under this directory.
 // If the node is a key-value pair, it will clone the pair.
 func (n *node) Clone() *node {
 	if !n.IsDir() {
-		return newKV(n.store, n.Path, n.Value, n.CreateIndex, n.Parent, n.ACL, n.ExpireTime)
+		return newKV(n.store, n.Path, n.Value, n.CreatedIndex, n.Parent, n.ACL, n.ExpireTime)
 	}
 
-	clone := newDir(n.store, n.Path, n.CreateIndex, n.Parent, n.ACL, n.ExpireTime)
+	clone := newDir(n.store, n.Path, n.CreatedIndex, n.Parent, n.ACL, n.ExpireTime)
 
 	for key, child := range n.Children {
 		clone.Children[key] = child.Clone()

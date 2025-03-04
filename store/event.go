@@ -1,37 +1,32 @@
 package store
 
-import (
-	"time"
-)
-
 const (
-	Get            = "get"
-	Create         = "create"
-	Set            = "set"
-	Update         = "update"
-	Delete         = "delete"
-	CompareAndSwap = "compareAndSwap"
-	TestIAndSet    = "testiAndSet"
-	Expire         = "expire"
+	Get              = "get"
+	Create           = "create"
+	Set              = "set"
+	Update           = "update"
+	Delete           = "delete"
+	CompareAndSwap   = "compareAndSwap"
+	CompareAndDelete = "compareAndDelete"
+	TestIAndSet      = "testiAndSet"
+	Expire           = "expire"
 )
 
 type Event struct {
-	Action        string     `json:"action"`
-	Key           string     `json:"key"`
-	Dir           bool       `json:"dir,omitempty"`
-	PrevValue     string     `json:"prevValue,omitempty"`
-	Value         string     `json:"value,omitempty"`
-	KVPairs       kvPairs    `json:"kvs,omitempty"`
-	Expiration    *time.Time `json:"expiration,omitempty"`
-	TTL           int64      `json:"ttl,omitempty"` // Time to live in second
-	ModifiedIndex uint64     `json:"modifiedIndex"`
+	Action string      `json:"action"`
+	Node   *NodeExtern `json:"node,omitempty"`
 }
 
-func newEvent(action string, key string, index uint64) *Event {
-	return &Event{
-		Action:        action,
+func newEvent(action string, key string, modifiedIndex, createdIndex uint64) *Event {
+	n := &NodeExtern{
 		Key:           key,
-		ModifiedIndex: index,
+		ModifiedIndex: modifiedIndex,
+		CreatedIndex:  createdIndex,
+	}
+
+	return &Event{
+		Action: action,
+		Node:   n,
 	}
 }
 
@@ -40,7 +35,7 @@ func (e *Event) IsCreated() bool {
 		return true
 	}
 
-	if e.Action == Set && e.PrevValue == "" {
+	if e.Action == Set && e.Node.PrevValue == "" {
 		return true
 	}
 
@@ -48,20 +43,24 @@ func (e *Event) IsCreated() bool {
 }
 
 func (e *Event) Index() uint64 {
-	return e.ModifiedIndex
+	return e.Node.ModifiedIndex
 }
 
 // Converts an event object into a response object.
-func (event *Event) Response() any {
-	if !event.Dir {
+func (event *Event) Response(currentIndex uint64) any {
+	if !event.Node.Dir {
 		response := &Response{
 			Action:     event.Action,
-			Key:        event.Key,
-			Value:      event.Value,
-			PrevValue:  event.PrevValue,
-			Index:      event.ModifiedIndex,
-			TTL:        event.TTL,
-			Expiration: event.Expiration,
+			Key:        event.Node.Key,
+			Value:      event.Node.Value,
+			PrevValue:  event.Node.PrevValue,
+			Index:      event.Node.ModifiedIndex,
+			TTL:        event.Node.TTL,
+			Expiration: event.Node.Expiration,
+		}
+
+		if currentIndex != 0 {
+			response.Index = currentIndex
 		}
 
 		if response.Action == Set {
@@ -76,15 +75,19 @@ func (event *Event) Response() any {
 
 		return response
 	} else {
-		responses := make([]*Response, len(event.KVPairs))
+		responses := make([]*Response, len(event.Node.Nodes))
 
-		for i, kv := range event.KVPairs {
+		for i, node := range event.Node.Nodes {
 			responses[i] = &Response{
 				Action: event.Action,
-				Key:    kv.Key,
-				Value:  kv.Value,
-				Dir:    kv.Dir,
-				Index:  event.ModifiedIndex,
+				Key:    node.Key,
+				Value:  node.Value,
+				Dir:    node.Dir,
+				Index:  node.ModifiedIndex,
+			}
+
+			if currentIndex != 0 {
+				responses[i].Index = currentIndex
 			}
 		}
 		return responses

@@ -19,6 +19,8 @@ const (
 	GetSuccess
 	GetFail
 	ExpireCount
+	CompareAndDeleteSuccess
+	CompareAndDeleteFail
 )
 
 type Stats struct {
@@ -46,6 +48,10 @@ type Stats struct {
 	CompareAndSwapSuccess uint64 `json:"CompareAndSwapSuccess"`
 	CompareAndSwapFail    uint64 `json:"CompareAndSwapFail"`
 
+	// Number of compareAndDelete requests
+	CompareAndDeleteSuccess uint64 `json:"compareAndDeleteSuccess"`
+	CompareAndDeleteFail    uint64 `json:"compareAndDeleteFail"`
+
 	ExpireCount uint64 `json:"expireCount"`
 
 	Watchers uint64 `json:"watchers"`
@@ -63,9 +69,24 @@ func (s *Stats) toJson() []byte {
 }
 
 func (s *Stats) clone() *Stats {
-	return &Stats{s.GetSuccess, s.GetFail, s.SetSuccess, s.SetFail,
-		s.DeleteSuccess, s.DeleteFail, s.UpdateSuccess, s.UpdateFail, s.CreateSuccess,
-		s.CreateFail, s.CompareAndSwapSuccess, s.CompareAndSwapFail, s.Watchers, s.ExpireCount}
+	return &Stats{
+		GetSuccess:              s.GetSuccess,
+		GetFail:                 s.GetFail,
+		SetSuccess:              s.SetSuccess,
+		SetFail:                 s.SetFail,
+		DeleteSuccess:           s.DeleteSuccess,
+		DeleteFail:              s.DeleteFail,
+		UpdateSuccess:           s.UpdateSuccess,
+		UpdateFail:              s.UpdateFail,
+		CreateSuccess:           s.CreateSuccess,
+		CreateFail:              s.CreateFail,
+		CompareAndSwapSuccess:   s.CompareAndSwapSuccess,
+		CompareAndSwapFail:      s.CompareAndSwapFail,
+		CompareAndDeleteSuccess: s.CompareAndDeleteSuccess,
+		CompareAndDeleteFail:    s.CompareAndDeleteFail,
+		ExpireCount:             s.ExpireCount,
+		Watchers:                s.Watchers,
+	}
 }
 
 func (s *Stats) TotalReads() uint64 {
@@ -76,6 +97,7 @@ func (s *Stats) TotalTranscations() uint64 {
 	return s.SetSuccess + s.SetFail +
 		s.DeleteSuccess + s.DeleteFail +
 		s.CompareAndSwapSuccess + s.CompareAndSwapFail +
+		s.CompareAndDeleteSuccess + s.CompareAndDeleteFail +
 		s.UpdateSuccess + s.UpdateFail
 }
 
@@ -105,6 +127,10 @@ func (s *Stats) Inc(field int) {
 		atomic.AddUint64(&s.CompareAndSwapSuccess, 1)
 	case CompareAndSwapFail:
 		atomic.AddUint64(&s.CompareAndSwapFail, 1)
+	case CompareAndDeleteSuccess:
+		atomic.AddUint64(&s.CompareAndDeleteSuccess, 1)
+	case CompareAndDeleteFail:
+		atomic.AddUint64(&s.CompareAndDeleteFail, 1)
 	case ExpireCount:
 		atomic.AddUint64(&s.ExpireCount, 1)
 	}

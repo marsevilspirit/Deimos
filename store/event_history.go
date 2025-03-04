@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"path"
 	"strings"
 	"sync"
 
@@ -33,41 +34,54 @@ func (eh *EventHistory) addEvent(e *Event) *Event {
 
 	eh.LastIndex = e.Index()
 
-	eh.StartIndex = eh.Queue.Events[eh.Queue.Front].ModifiedIndex
+	eh.StartIndex = eh.Queue.Events[eh.Queue.Front].Index()
 
 	return e
 }
 
-// scan function is enumerating events from the index in history and
-// stops till the first point where the key has identified prefix
-func (eh *EventHistory) scan(prefix string, index uint64) (*Event, *Err.Error) {
+// scan enumerates events from the index history and stops at the first point
+// where the key matches.
+func (eh *EventHistory) scan(key string, recursive bool, index uint64) (*Event, *Err.Error) {
 	eh.rwl.RLock()
 	defer eh.rwl.RUnlock()
 
-	// the index should locate after the event history's StartIndex
-	if index-eh.StartIndex < 0 {
+	// index should be after the event history's StartIndex
+	if index < eh.StartIndex {
 		return nil,
 			Err.NewError(Err.EcodeEventIndexCleared,
 				fmt.Sprintf("the requested history has been cleared [%v/%v]", eh.StartIndex, index), 0)
 	}
 
-	// the index should locate before the size of the queue minus the duplicate count
+	// the index should come before the size of the queue minus the duplicate count
 	if index > eh.LastIndex { // future index
 		return nil, nil
 	}
 
-	i := eh.Queue.Front
+	offset := index - eh.StartIndex
+	i := (eh.Queue.Front + int(offset)) % eh.Queue.Capacity
 
 	for {
 		e := eh.Queue.Events[i]
 
-		if strings.HasPrefix(e.Key, prefix) && index <= e.Index() { // make sure we bypass the smaller one
+		ok := (e.Node.Key == key)
+
+		if recursive {
+			// add tailing slash
+			key := path.Clean(key)
+			if key[len(key)-1] != '/' {
+				key = key + "/"
+			}
+
+			ok = ok || strings.HasPrefix(e.Node.Key, key)
+		}
+
+		if ok {
 			return e, nil
 		}
 
 		i = (i + 1) % eh.Queue.Capacity
 
-		if i > eh.Queue.back() {
+		if i == eh.Queue.Back {
 			return nil, nil
 		}
 	}
@@ -81,6 +95,7 @@ func (eh *EventHistory) clone() *EventHistory {
 		Events:   make([]*Event, eh.Queue.Capacity),
 		Size:     eh.Queue.Size,
 		Front:    eh.Queue.Front,
+		Back:     eh.Queue.Back,
 	}
 
 	for i, e := range eh.Queue.Events {
