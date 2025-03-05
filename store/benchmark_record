@@ -1,0 +1,82 @@
+goos: linux
+goarch: amd64
+pkg: github.com/marsevilspirit/marstore/store
+cpu: 13th Gen Intel(R) Core(TM) i9-13980HX
+BenchmarkStoreSet128Bytes
+
+Alloc: 487KB; Data: 0KB; Kvs: 1; Alloc/Data:3609
+
+Alloc: 498KB; Data: 13KB; Kvs: 100; Alloc/Data:36
+
+Alloc: 515KB; Data: 1367KB; Kvs: 10000; Alloc/Data:0
+
+Alloc: 625KB; Data: 74901KB; Kvs: 547924; Alloc/Data:0
+
+Alloc: 625KB; Data: 222618KB; Kvs: 1628522; Alloc/Data:0
+BenchmarkStoreSet128Bytes-32             	1628522	      799.6 ns/op
+BenchmarkStoreSet1024Bytes
+
+Alloc: 630KB; Data: 1KB; Kvs: 1; Alloc/Data:610
+
+Alloc: 630KB; Data: 103KB; Kvs: 100; Alloc/Data:6
+
+Alloc: 625KB; Data: 10326KB; Kvs: 10000; Alloc/Data:0
+
+Alloc: 625KB; Data: 1032700KB; Kvs: 1000000; Alloc/Data:0
+
+Alloc: 626KB; Data: 1609491KB; Kvs: 1558528; Alloc/Data:0
+BenchmarkStoreSet1024Bytes-32            	1558528	      802.1 ns/op
+BenchmarkStoreSet4096Bytes
+
+Alloc: 631KB; Data: 4KB; Kvs: 1; Alloc/Data:153
+
+Alloc: 631KB; Data: 410KB; Kvs: 100; Alloc/Data:1
+
+Alloc: 632KB; Data: 41047KB; Kvs: 10000; Alloc/Data:0
+
+Alloc: 632KB; Data: 4104700KB; Kvs: 1000000; Alloc/Data:0
+
+Alloc: 633KB; Data: 6219753KB; Kvs: 1515276; Alloc/Data:0
+BenchmarkStoreSet4096Bytes-32            	1515276	      817.4 ns/op
+BenchmarkStoreSetWithJson128Bytes
+
+Alloc: 638KB; Data: 0KB; Kvs: 1; Alloc/Data:4661
+
+Alloc: 638KB; Data: 13KB; Kvs: 100; Alloc/Data:46
+
+Alloc: 636KB; Data: 1367KB; Kvs: 10000; Alloc/Data:0
+
+Alloc: 641KB; Data: 98585KB; Kvs: 721186; Alloc/Data:0
+BenchmarkStoreSetWithJson128Bytes-32     	 721186	     1695 ns/op
+BenchmarkStoreSetWithJson1024Bytes
+
+Alloc: 647KB; Data: 1KB; Kvs: 1; Alloc/Data:627
+
+Alloc: 647KB; Data: 103KB; Kvs: 100; Alloc/Data:6
+
+Alloc: 671KB; Data: 10327KB; Kvs: 10000; Alloc/Data:0
+
+Alloc: 659KB; Data: 232105KB; Kvs: 224756; Alloc/Data:0
+BenchmarkStoreSetWithJson1024Bytes-32    	 224756	     4890 ns/op
+BenchmarkStoreSetWithJson4096Bytes
+
+Alloc: 660KB; Data: 4KB; Kvs: 1; Alloc/Data:160
+
+Alloc: 660KB; Data: 410KB; Kvs: 100; Alloc/Data:1
+
+Alloc: 704KB; Data: 41046KB; Kvs: 10000; Alloc/Data:0
+
+Alloc: 738KB; Data: 359965KB; Kvs: 87696; Alloc/Data:0
+BenchmarkStoreSetWithJson4096Bytes-32    	  87696	    14200 ns/op
+BenchmarkStoreDelete
+
+Before set Alloc: 648; After set Alloc: 644, After delete Alloc: 634
+
+Before set Alloc: 668; After set Alloc: 754, After delete Alloc: 634
+
+Before set Alloc: 2631; After set Alloc: 6826, After delete Alloc: 634
+
+Before set Alloc: 148713; After set Alloc: 240746, After delete Alloc: 634
+
+Before set Alloc: 324214; After set Alloc: 464756, After delete Alloc: 634
+BenchmarkStoreDelete-32                  	1636443	      676.6 ns/op
