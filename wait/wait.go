@@ -10,7 +10,9 @@ type List struct {
 }
 
 func New() *List {
-	return &List{m: make(map[int64]chan any)}
+	return &List{
+		m: make(map[int64]chan any),
+	}
 }
 
 func (w *List) Register(id int64) <-chan any {
