@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,7 +23,6 @@ func init() {
 
 type Store interface {
 	Version() int
-	// CommandFactory() CommandFactory
 	Index() uint64
 
 	Get(nodePath string, recursive, sorted bool) (*Event, error)
@@ -78,10 +76,12 @@ func (s *store) Version() int {
 
 // Retireves current of the store
 func (s *store) Index() uint64 {
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
 	return s.CurrentIndex
 }
 
-// Get function returns a get event.
+// Get returns a get event.
 // If recursive is true, it will return all the content under the node path.
 // If sorted is true, it will sort the content by keys.
 func (s *store) Get(nodePath string, recursive, sorted bool) (*Event, error) {
@@ -97,42 +97,15 @@ func (s *store) Get(nodePath string, recursive, sorted bool) (*Event, error) {
 	}
 
 	e := newEvent(Get, nodePath, n.ModifiedIndex, n.CreatedIndex)
-	eNode := e.Node
 
-	if n.IsDir() { // node is dir
-		eNode.Dir = true
-
-		children, _ := n.List()
-		eNode.Nodes = make(Nodes, len(children))
-
-		// we do not use the index in the children slice directly
-		// we need to skip the hidden one
-		i := 0
-		for _, child := range children {
-			if child.IsHidden() { // get will not list hidden node
-				continue
-			}
-			eNode.Nodes[i] = child.Repr(recursive, sorted)
-			i++
-		}
-		// eliminate hidden nodes
-		eNode.Nodes = eNode.Nodes[:i]
-
-		if sorted {
-			sort.Sort(eNode.Nodes)
-		}
-	} else { // node is file
-		eNode.Value, _ = n.Read()
-	}
-
-	eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
+	e.Node.loadInternalNode(n, recursive, sorted)
 
 	s.Stats.Inc(GetSuccess)
 
 	return e, nil
 }
 
-// Create function creates the Node at nodePath.
+// Create creates the Node at nodePath.
 // Create will help to create intermediate directories with no ttl.
 // value is "", then create a dir.
 // If the node has already existed, create will fail.
@@ -143,37 +116,76 @@ func (s *store) Create(nodePath string, dir bool, value string, unique bool,
 	defer s.worldLock.Unlock()
 
 	e, err := s.internalCreate(nodePath, dir, value, unique, false, expireTime, Create)
-	if err != nil {
-		s.Stats.Inc(CreateFail)
-	} else {
+	if err == nil {
+		s.WatcherHub.notify(e)
 		s.Stats.Inc(CreateSuccess)
+	} else {
+		s.Stats.Inc(CreateFail)
 	}
 	return e, err
 }
 
-// Set function creates or replace the Node at nodePath.
+// Set creates or replace the Node at nodePath.
 func (s *store) Set(nodePath string, dir bool, value string, expireTime time.Time) (*Event, error) {
+	var err error
+
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
+
+	defer func() {
+		if err == nil {
+			s.Stats.Inc(SetSuccess)
+		} else {
+			s.Stats.Inc(SetFail)
+		}
+	}()
+
+	// Get prevNode value
+	n, getErr := s.internalGet(nodePath)
+	if getErr != nil && getErr.ErrorCode != Err.EcodeKeyNotFound {
+		err = getErr
+		return nil, err
+	}
+
+	// Set new value
 	e, err := s.internalCreate(nodePath, dir, value, false, true, expireTime, Set)
 	if err != nil {
-		s.Stats.Inc(SetFail)
-	} else {
-		s.Stats.Inc(SetSuccess)
+		return nil, err
 	}
-	return e, err
+	// Put prevNode into event
+	if getErr == nil {
+		prev := newEvent(Get, nodePath, n.ModifiedIndex, n.CreatedIndex)
+		prev.Node.loadInternalNode(n, false, false)
+		e.PrevNode = prev.Node
+	}
+
+	s.WatcherHub.notify(e)
+
+	return e, nil
+}
+
+// returns user-readable cause of failed comparison
+func getCompareFailCause(n *node, which int, prevValue string, prevIndex uint64) string {
+	switch which {
+	case CompareIndexNotMatch:
+		return fmt.Sprintf("[%v != %v]", prevIndex, n.ModifiedIndex)
+	case CompareValueNotMatch:
+		return fmt.Sprintf("[%v != %v]", prevValue, n.Value)
+	default:
+		return fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
+	}
 }
 
 func (s *store) CompareAndSwap(nodePath string, prevValue string,
 	prevIndex uint64, value string, expireTime time.Time) (*Event, error) {
+	s.worldLock.Lock()
+	defer s.worldLock.Unlock()
+
 	nodePath = path.Clean(path.Join("/", nodePath))
 	// we do not allow the user to change "/"
 	if nodePath == "/" {
 		return nil, Err.NewError(Err.EcodeRootROnly, "/", s.CurrentIndex)
 	}
-
-	s.worldLock.Lock()
-	defer s.worldLock.Unlock()
 
 	n, err := s.internalGet(nodePath)
 	if err != nil {
@@ -186,8 +198,8 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, s.CurrentIndex)
 	}
 
-	if !n.Compare(prevValue, prevIndex) {
-		cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
+	if ok, which := n.Compare(prevValue, prevIndex); !ok {
+		cause := getCompareFailCause(n, which, prevValue, prevIndex)
 		s.Stats.Inc(CompareAndSwapFail)
 		return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
 
@@ -205,7 +217,9 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 
 	n.UpdateTTL(expireTime)
 
-	eNode.Value = value
+	// copy the value for safety
+	valueCopy := value
+	eNode.Value = &valueCopy
 	eNode.Expiration, eNode.TTL = n.ExpirationAndTTL()
 
 	s.WatcherHub.notify(e)
@@ -213,17 +227,17 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 	return e, nil
 }
 
-// Delete function deletes the node at the given path.
+// Delete deletes the node at the given path.
 // If the node is a directory, recursive must be true to delete it.
 func (s *store) Delete(nodePath string, dir, recursive bool) (*Event, error) {
+	s.worldLock.Lock()
+	defer s.worldLock.Unlock()
+
 	nodePath = path.Clean(path.Join("/", nodePath))
 	// we do not allow the user to change "/"
 	if nodePath == "/" {
 		return nil, Err.NewError(Err.EcodeRootROnly, "/", s.CurrentIndex)
 	}
-
-	s.worldLock.Lock()
-	defer s.worldLock.Unlock()
 
 	// recursive implies dir
 	if recursive == true {
@@ -261,6 +275,7 @@ func (s *store) Delete(nodePath string, dir, recursive bool) (*Event, error) {
 	s.CurrentIndex++
 
 	s.WatcherHub.notify(e)
+
 	s.Stats.Inc(DeleteSuccess)
 
 	return e, nil
@@ -286,8 +301,8 @@ func (s *store) CompareAndDelete(nodePath string, prevValue string, prevIndex ui
 
 	// If both of the prevValue and prevIndex are given, we will test both of them.
 	// Command will be executed, only if both of the tests are successful.
-	if !n.Compare(prevValue, prevIndex) {
-		cause := fmt.Sprintf("[%v != %v] [%v != %v]", prevValue, n.Value, prevIndex, n.ModifiedIndex)
+	if ok, which := n.Compare(prevValue, prevIndex); !ok {
+		cause := getCompareFailCause(n, which, prevValue, prevIndex)
 		s.Stats.Inc(CompareAndDeleteFail)
 		return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
 	}
@@ -312,12 +327,11 @@ func (s *store) CompareAndDelete(nodePath string, prevValue string, prevIndex ui
 }
 
 func (s *store) Watch(key string, recursive, stream bool, sinceIndex uint64) (*Watcher, error) {
-	key = path.Clean(path.Join("/", key))
-
-	nextIndex := s.CurrentIndex + 1
-
 	s.worldLock.RLock()
 	defer s.worldLock.RUnlock()
+
+	key = path.Clean(path.Join("/", key))
+	nextIndex := s.CurrentIndex + 1
 
 	var w *Watcher
 	var err *Err.Error
@@ -338,7 +352,7 @@ func (s *store) Watch(key string, recursive, stream bool, sinceIndex uint64) (*W
 	return w, nil
 }
 
-// walk function walks all the nodePath and
+// walk walks all the nodePath and
 // apply the walkFunc on each directory
 func (s *store) walk(nodePath string, walkFunc func(prev *node, component string) (*node, *Err.Error)) (*node, *Err.Error) {
 	components := strings.Split(nodePath, "/")
@@ -357,18 +371,18 @@ func (s *store) walk(nodePath string, walkFunc func(prev *node, component string
 	return curr, nil
 }
 
-// Update function updates the value/ttl of the node.
+// Update updates the value/ttl of the node.
 // If the node is a file, the value and the ttl can be updated.
 // If the node is a directory, only the ttl can be updated.
 func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (*Event, error) {
+	s.worldLock.Lock()
+	defer s.worldLock.Unlock()
+
 	nodePath = path.Clean(path.Join("/", nodePath))
 	// we do not allow the user to change "/"
 	if nodePath == "/" {
 		return nil, Err.NewError(Err.EcodeRootROnly, "/", s.CurrentIndex)
 	}
-
-	s.worldLock.Lock()
-	defer s.worldLock.Unlock()
 
 	currIndex, nextIndex := s.CurrentIndex, s.CurrentIndex+1
 
@@ -390,7 +404,14 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 	}
 
 	n.Write(newValue, nextIndex)
-	eNode.Value = newValue
+
+	if n.IsDir() {
+		eNode.Dir = true
+	} else {
+		// copy the value for safety
+		newValueCopy := newValue
+		eNode.Value = &newValueCopy
+	}
 
 	// update ttl
 	n.UpdateTTL(expireTime)
@@ -456,7 +477,9 @@ func (s *store) internalCreate(nodePath string, dir bool, value string, unique,
 	}
 
 	if !dir { // create file
-		eNode.Value = value
+		// copy the value for safety
+		valueCopy := value
+		eNode.Value = &valueCopy
 		n = newKV(s, nodePath, value, nextIndex, d, "", expireTime)
 	} else { // create directory
 		eNode.Dir = true
@@ -476,11 +499,10 @@ func (s *store) internalCreate(nodePath string, dir bool, value string, unique,
 
 	s.CurrentIndex = nextIndex
 
-	s.WatcherHub.notify(e)
 	return e, nil
 }
 
-// internalGet function get the node of the given nodePath.
+// internalGet get the node of the given nodePath.
 func (s *store) internalGet(nodePath string) (*node, *Err.Error) {
 	nodePath = path.Clean(path.Join("/", nodePath))
 
@@ -529,6 +551,7 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 		node.Remove(true, true, callback)
 
 		s.Stats.Inc(ExpireCount)
+
 		s.WatcherHub.notify(e)
 	}
 }
@@ -553,9 +576,9 @@ func (s *store) checkDir(parent *node, dirName string) (*node, *Err.Error) {
 	return n, nil
 }
 
-// Save function saves the static state of the store system.
-// Save function will not be able to save the state of watchers.
-// Save function will not save the parent field of the node.
+// Save saves the static state of the store system.
+// It will not be able to save the state of watchers.
+// It will not save the parent field of the node.
 // Or there will be cyclic dependencies issue for the json package.
 func (s *store) Save() ([]byte, error) {
 	s.worldLock.Lock()
@@ -577,6 +600,10 @@ func (s *store) Save() ([]byte, error) {
 	return b, nil
 }
 
+// Recovery recovers the store system from a static state
+// It needs to recover the parent field of the nodes.
+// It needs to delete the expired nodes since the saved time and also
+// needs to create monitoring go routines.
 func (s *store) Recovery(state []byte) error {
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()

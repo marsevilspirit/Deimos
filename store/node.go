@@ -9,6 +9,14 @@ import (
 	Err "github.com/marsevilspirit/marstore/error"
 )
 
+// explanations of Compare function result
+const (
+	CompareMatch         = 0
+	CompareIndexNotMatch = 1
+	CompareValueNotMatch = 2
+	CompareNotMatch      = 3
+)
+
 var Permanent time.Time
 
 // node is the basic element in the store system.
@@ -90,7 +98,7 @@ func (n *node) IsDir() bool {
 // If the receiver node is not a key-value pair, a "Not A File" error will be returned.
 func (n *node) Read() (string, *Err.Error) {
 	if n.IsDir() {
-		return "", Err.NewError(Err.EcodeNotFile, "", n.store.Index())
+		return "", Err.NewError(Err.EcodeNotFile, "", n.store.CurrentIndex)
 	}
 
 	return n.Value, nil
@@ -100,7 +108,7 @@ func (n *node) Read() (string, *Err.Error) {
 // If the receiver node is a directory, a "Not A File" error will be returned.
 func (n *node) Write(value string, index uint64) *Err.Error {
 	if n.IsDir() {
-		return Err.NewError(Err.EcodeNotFile, "", n.store.Index())
+		return Err.NewError(Err.EcodeNotFile, "", n.store.CurrentIndex)
 	}
 
 	n.Value = value
@@ -111,7 +119,19 @@ func (n *node) Write(value string, index uint64) *Err.Error {
 
 func (n *node) ExpirationAndTTL() (*time.Time, int64) {
 	if !n.IsPermanent() {
-		return &n.ExpireTime, int64(n.ExpireTime.Sub(time.Now())/time.Second) + 1
+		/* compute ttl as:
+		   ceiling( (expireTime - timeNow) / nanosecondsPerSecond )
+		   which ranges from 1..n
+		   rather than as:
+		   ( (expireTime - timeNow) / nanosecondsPerSecond ) + 1
+		   which ranges 1..n+1
+		*/
+		ttlN := n.ExpireTime.Sub(time.Now())
+		ttl := ttlN / time.Second
+		if (ttlN % time.Second) > 0 {
+			ttl++
+		}
+		return &n.ExpireTime, int64(ttl)
 	}
 	return nil, 0
 }
@@ -120,7 +140,7 @@ func (n *node) ExpirationAndTTL() (*time.Time, int64) {
 // If the receiver node is not a directory, a "Not A Directory" error will be returned.
 func (n *node) List() ([]*node, *Err.Error) {
 	if !n.IsDir() {
-		return nil, Err.NewError(Err.EcodeNotDir, "", n.store.Index())
+		return nil, Err.NewError(Err.EcodeNotDir, "", n.store.CurrentIndex)
 	}
 
 	nodes := make([]*node, len(n.Children))
@@ -142,7 +162,7 @@ func (n *node) List() ([]*node, *Err.Error) {
 // Not File Error
 func (n *node) GetChild(name string) (*node, *Err.Error) {
 	if !n.IsDir() {
-		return nil, Err.NewError(Err.EcodeNotDir, n.Path, n.store.Index())
+		return nil, Err.NewError(Err.EcodeNotDir, n.Path, n.store.CurrentIndex)
 	}
 
 	child, ok := n.Children[name]
@@ -161,14 +181,14 @@ func (n *node) GetChild(name string) (*node, *Err.Error) {
 // error will be returned
 func (n *node) Add(child *node) *Err.Error {
 	if !n.IsDir() {
-		return Err.NewError(Err.EcodeNotDir, "", n.store.Index())
+		return Err.NewError(Err.EcodeNotDir, "", n.store.CurrentIndex)
 	}
 
 	_, name := filepath.Split(child.Path)
 
 	_, ok := n.Children[name]
 	if ok {
-		return Err.NewError(Err.EcodeNodeExist, "", n.store.Index())
+		return Err.NewError(Err.EcodeNodeExist, "", n.store.CurrentIndex)
 	}
 
 	n.Children[name] = child
@@ -181,13 +201,13 @@ func (n *node) Add(child *node) *Err.Error {
 func (n *node) Remove(dir, recursive bool, callback func(path string)) *Err.Error {
 	if n.IsDir() {
 		if !dir {
-			return Err.NewError(Err.EcodeNotFile, n.Path, n.store.Index())
+			return Err.NewError(Err.EcodeNotFile, n.Path, n.store.CurrentIndex)
 		}
 
 		if len(n.Children) != 0 && !recursive {
 			// cannot delete a directory if it is not empty and the operation
 			// is not recursive
-			return Err.NewError(Err.EcodeDirNotEmpty, n.Path, n.store.Index())
+			return Err.NewError(Err.EcodeDirNotEmpty, n.Path, n.store.CurrentIndex)
 		}
 	}
 
@@ -248,7 +268,7 @@ func (n *node) Repr(recurisive, sorted bool) *NodeExtern {
 		}
 
 		children, _ := n.List()
-		node.Nodes = make(Nodes, len(children))
+		node.Nodes = make(NodeExterns, len(children))
 
 		// we do not use the index in the children slice directly
 		// we need to skip the hidden one
@@ -271,9 +291,12 @@ func (n *node) Repr(recurisive, sorted bool) *NodeExtern {
 
 		return node
 	}
+
+	// since n.Value could be changed later, so we need to copy the value out
+	value := n.Value
 	node := &NodeExtern{
 		Key:           n.Path,
-		Value:         n.Value,
+		Value:         &value,
 		ModifiedIndex: n.ModifiedIndex,
 		CreatedIndex:  n.CreatedIndex,
 	}
@@ -285,6 +308,7 @@ func (n *node) UpdateTTL(expireTime time.Time) {
 	if !n.IsPermanent() {
 		if expireTime.IsZero() {
 			// from ttl to permanent
+			n.ExpireTime = expireTime
 			// remove from ttl heap
 			n.store.ttlKeyHeap.remove(n)
 		} else {
@@ -304,11 +328,23 @@ func (n *node) UpdateTTL(expireTime time.Time) {
 	}
 }
 
-func (n *node) Compare(prevValue string, prevIndex uint64) bool {
-	compareValue := (prevValue == "" || n.Value == prevValue)
-	compareIndex := (prevIndex == 0 || n.ModifiedIndex == prevIndex)
-
-	return compareValue && compareIndex
+// Compare function compares node index and value with provided ones.
+// second result value explains result and equals to one of Compare.. constants
+func (n *node) Compare(prevValue string, prevIndex uint64) (ok bool, which int) {
+	indexMatch := (prevIndex == 0 || n.ModifiedIndex == prevIndex)
+	valueMatch := (prevValue == "" || n.Value == prevValue)
+	ok = valueMatch && indexMatch
+	switch {
+	case valueMatch && indexMatch:
+		which = CompareMatch
+	case indexMatch && !valueMatch:
+		which = CompareValueNotMatch
+	case valueMatch && !indexMatch:
+		which = CompareIndexNotMatch
+	default:
+		which = CompareNotMatch
+	}
+	return
 }
 
 // Clone function clone the node recursively and return the new node.
