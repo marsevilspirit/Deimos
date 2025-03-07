@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
@@ -34,7 +35,16 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if peers.Pick(id) == "" {
+		log.Fatalf("%d=<addr> must be specified in peers", id)
+	}
+
 	n := raft.StartNode(id, peers.Ids(), 10, 1)
+
+	ctx, _ := context.WithCancel(context.Background())
+
+	n.Campaign(ctx)
+
 	s := &server.Server{
 		Store: store.New(),
 		Node:  n,

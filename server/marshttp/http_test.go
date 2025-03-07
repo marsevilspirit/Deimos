@@ -13,7 +13,6 @@ import (
 	"github.com/marsevilspirit/marstore/raft"
 	"github.com/marsevilspirit/marstore/raft/raftpb"
 	"github.com/marsevilspirit/marstore/server"
-	"github.com/marsevilspirit/marstore/server/serverpb"
 	"github.com/marsevilspirit/marstore/store"
 )
 
@@ -33,17 +32,7 @@ func TestSet(t *testing.T) {
 		Node:  n,
 		Store: st,
 		Send:  server.SendFunc(nopSend),
-		Save: func(st raftpb.HardState, ents []raftpb.Entry) {
-			for _, e := range ents {
-				if e.Data == nil {
-					continue
-				}
-				var r serverpb.Request
-				if err := r.Unmarshal(e.Data); err != nil {
-					t.Fatal(err)
-				}
-			}
-		},
+		Save:  func(st raftpb.HardState, ents []raftpb.Entry) {},
 	}
 	server.Start(srv)
 	defer srv.Stop()

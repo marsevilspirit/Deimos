@@ -44,6 +44,8 @@ type Server struct {
 	// Save MUST block until st and ents are on stable storage.  If Send is
 	// nil, Server will panic.
 	Save func(st raftpb.HardState, ents []raftpb.Entry)
+
+	Ticker <-chan time.Time
 }
 
 // Start prepares and starts server in a new goroutine. It is no longer safe to
@@ -57,6 +59,8 @@ func Start(s *Server) {
 func (s *Server) run() {
 	for {
 		select {
+		case <-s.Ticker:
+			s.Node.Tick()
 		case rd := <-s.Node.Ready():
 			s.Save(rd.HardState, rd.Entries)
 			s.Send(rd.Messages)

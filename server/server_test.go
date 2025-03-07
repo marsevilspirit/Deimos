@@ -37,19 +37,25 @@ func testServer(t *testing.T, ns int64) {
 	for i := int64(0); i < ns; i++ {
 		n := raft.StartNode(i+1, peers, 10, 1)
 
+		tk := time.NewTicker(10 * time.Millisecond)
+		defer tk.Stop()
+
 		srv := &Server{
-			Node:  n,
-			Store: store.New(),
-			Send:  send,
-			Save:  func(_ raftpb.HardState, _ []raftpb.Entry) {},
+			Node:   n,
+			Store:  store.New(),
+			Send:   send,
+			Save:   func(_ raftpb.HardState, _ []raftpb.Entry) {},
+			Ticker: tk.C,
 		}
 		Start(srv)
 
 		ss[i] = srv
 	}
 
-	if err := ss[0].Node.Campaign(ctx); err != nil {
-		t.Fatal(err)
+	for i := int64(0); i < ns; i++ {
+		if err := ss[i].Node.Campaign(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	for i := 1; i <= 10; i++ {
