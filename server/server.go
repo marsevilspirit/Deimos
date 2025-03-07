@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"log"
 	"sync"
 	"time"
 
@@ -64,22 +63,17 @@ func Start(s *Server) {
 }
 
 func (s *Server) run() {
-	log.Printf("server.go/run:58 run\n")
 	for {
 		select {
 		case rd := <-s.Node.Ready():
-			log.Printf("server.go/run:62 rd: %+v\n", rd)
 			s.Save(rd.HardState, rd.Entries)
 			s.Send(rd.Messages)
-			log.Printf("server.go/run:66 rd.CommittedEntries: %+v\n", rd.CommittedEntries)
 
 			// TODO: do this in the background,
 			// but take care to apply entries in a single goroutine,
 			// and not race them.
 			for _, e := range rd.CommittedEntries {
-				log.Printf("server.go/run:71 e: %+v\n", e)
 				if e.Data == nil {
-					log.Printf("server.go/run:79 e.Data is nil, skip\n")
 					continue
 				}
 				var r pb.Request
