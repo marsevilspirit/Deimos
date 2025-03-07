@@ -1,8 +1,9 @@
 package marshttp
 
 import (
+	"bytes"
 	"context"
-	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -10,22 +11,113 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/marsevilspirit/marstore/elog"
+	Err "github.com/marsevilspirit/marstore/error"
 	"github.com/marsevilspirit/marstore/raft/raftpb"
 	"github.com/marsevilspirit/marstore/server"
 	"github.com/marsevilspirit/marstore/server/serverpb"
 	"github.com/marsevilspirit/marstore/store"
 )
 
+type Peers map[int64][]string
+
+func (ps Peers) Pick(id int64) string {
+	addrs := ps[id]
+	return fmt.Sprintf("http://%s", addrs[rand.Intn(len(addrs))])
+}
+
+// Set parses command line sets of names to ips formatted like:
+// a=1.1.1.1&a=1.1.1.2&b=2.2.2.2
+func (ps Peers) Set(s string) error {
+	v, err := url.ParseQuery(s)
+	if err != nil {
+		return err
+	}
+	for k, v := range v {
+		id, err := strconv.ParseInt(k, 0, 64)
+		if err != nil {
+			return err
+		}
+		ps[id] = v
+	}
+	return nil
+}
+
+func (ps Peers) String() string {
+	return "todo"
+}
+
+func (ps Peers) Ids() []int64 {
+	var ids []int64
+	for id, _ := range ps {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 var errClosed = errors.New("marshttp: client closed connection")
 
 const DefaultTimeout = 500 * time.Millisecond
 
+func Sender(p Peers) func(msgs []raftpb.Message) {
+	return func(msgs []raftpb.Message) {
+		for _, m := range msgs {
+			// TODO: create workers that deal with message sending
+			// concurrently as to not block progress
+			for {
+				url := p.Pick(m.To)
+				if url == "" {
+					// TODO: unknown peer id.. what do we do? I
+					// don't think his should ever happen, need to
+					// look into this further.
+					elog.TODO()
+					break
+				}
+
+				url += "/raft"
+
+				log.Printf("marsserver: sending to %d@%s", m.To, url)
+
+				// TODO: don't block. we should be able to have 1000s
+				// of messages out at a time.
+				data, err := m.Marshal()
+				if err != nil {
+					elog.TODO()
+					break // drop bad message
+				}
+				if httpPost(url, data) {
+					break // success
+				}
+
+				// TODO: backoff
+			}
+		}
+	}
+}
+
+func httpPost(url string, data []byte) bool {
+	// TODO: set timeouts
+	resp, err := http.Post(url, "application/protobuf", bytes.NewBuffer(data))
+	if err != nil {
+		elog.TODO()
+		return false
+	}
+	if resp.StatusCode != 200 {
+		elog.TODO()
+		return false
+	}
+	return true
+}
+
+// Handler implements the http.Handler interface and serves etcd client and
+// raft communication.
 type Handler struct {
 	Timeout time.Duration
 	Server  *server.Server
@@ -60,7 +152,14 @@ func (h *Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	resp, err := h.Server.Do(ctx, rr)
-	if err != nil {
+	switch e := err.(type) {
+	case nil:
+	case *Err.Error:
+		// TODO: gross. this should be handled in encodeResponse
+		log.Println(err)
+		e.Write(w)
+		return
+	default:
 		log.Println(err)
 		http.Error(w, "Internal Server Error", 500)
 	}
@@ -85,12 +184,18 @@ func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 }
 
+// genId generates a random id that is: n < 0 < n.
 func genId() int64 {
-	b := make([]byte, 8)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		panic(err) // really bad stuff happened
+	for {
+		b := make([]byte, 8)
+		if _, err := io.ReadFull(crand.Reader, b); err != nil {
+			panic(err) // really bad stuff happened
+		}
+		n := int64(binary.BigEndian.Uint64(b))
+		if n != 0 {
+			return n
+		}
 	}
-	return int64(binary.BigEndian.Uint64(b))
 }
 
 func parseRequest(r *http.Request) (serverpb.Request, error) {

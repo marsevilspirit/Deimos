@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"math/rand"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/marsevilspirit/marstore/raft"
 	"github.com/marsevilspirit/marstore/raft/raftpb"
@@ -11,43 +13,81 @@ import (
 	"github.com/marsevilspirit/marstore/store"
 )
 
-func TestServer(t *testing.T) {
+func TestClusterOf1(t *testing.T) { testServer(t, 1) }
+func TestClusterOf3(t *testing.T) { testServer(t, 3) }
+
+func testServer(t *testing.T, ns int64) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	n := raft.StartNode(1, []int64{1}, 10, 1)
-	n.Campaign(ctx)
+	ss := make([]*Server, ns)
 
-	srv := &Server{
-		Node:  n,
-		Store: store.New(),
-		Send:  func(_ []raftpb.Message) {},
-		Save:  func(_ raftpb.HardState, _ []raftpb.Entry) {},
+	send := func(msgs []raftpb.Message) {
+		for _, m := range msgs {
+			// t.Logf("m: %#v\n", m)
+			ss[m.To-1].Node.Step(ctx, m)
+		}
 	}
-	Start(srv)
-	defer srv.Stop()
 
-	r := pb.Request{
-		Method: "PUT",
-		Id:     1,
-		Path:   "/foo",
-		Val:    "bar",
+	peers := make([]int64, ns)
+	for i := int64(0); i < ns; i++ {
+		peers[i] = i + 1
 	}
-	resp, err := srv.Do(ctx, r)
-	if err != nil {
+
+	for i := int64(0); i < ns; i++ {
+		n := raft.StartNode(i+1, peers, 10, 1)
+
+		srv := &Server{
+			Node:  n,
+			Store: store.New(),
+			Send:  send,
+			Save:  func(_ raftpb.HardState, _ []raftpb.Entry) {},
+		}
+		Start(srv)
+
+		ss[i] = srv
+	}
+
+	if err := ss[0].Node.Campaign(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	g, w := resp.Event.Node, &store.NodeExtern{
-		Key:           "/foo",
-		ModifiedIndex: 1,
-		CreatedIndex:  1,
-		Value:         stringp("bar"),
+	for i := 1; i <= 10; i++ {
+		r := pb.Request{
+			Method: "PUT",
+			Id:     int64(1),
+			Path:   "/foo",
+			Val:    "bar",
+		}
+		j := rand.Intn(len(ss))
+		t.Logf("ss = %d", j)
+		resp, err := ss[j].Do(ctx, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		g, w := resp.Event.Node, &store.NodeExtern{
+			Key:           "/foo",
+			ModifiedIndex: uint64(i),
+			CreatedIndex:  uint64(i),
+			Value:         stringp("bar"),
+		}
+
+		if !reflect.DeepEqual(g, w) {
+			t.Errorf("g = %#v,\n               w = %#v", g, w)
+		}
 	}
 
-	if !reflect.DeepEqual(g, w) {
-		t.Error("value:", *g.Value)
-		t.Errorf("g = %+v, w = %+v", g, w)
+	time.Sleep(10 * time.Millisecond)
+
+	var last any
+	for i, sv := range ss {
+		sv.Stop()
+		g, _ := sv.Store.Get("/", true, true)
+		if last != nil && !reflect.DeepEqual(last, g) {
+			t.Errorf("server %d: Root = %#v, want %#v", i, g, last)
+		}
+		last = g
 	}
 }
 

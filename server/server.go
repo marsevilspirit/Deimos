@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/marsevilspirit/marstore/raft"
@@ -21,20 +20,12 @@ var (
 type SendFunc func(m []raftpb.Message)
 
 type Response struct {
-	// The last seen term raft was at when this request was built.
-	Term int64
-
-	// The last seen index raft was at when this request was built.
-	Commit int64
-
-	*store.Event
-	*store.Watcher
-
-	err error
+	Event   *store.Event
+	Watcher *store.Watcher
+	err     error
 }
 
 type Server struct {
-	once sync.Once
 	w    *wait.List
 	done chan struct{}
 
@@ -55,7 +46,8 @@ type Server struct {
 	Save func(st raftpb.HardState, ents []raftpb.Entry)
 }
 
-// Start prepares and starts the server in a new goroutine.
+// Start prepares and starts server in a new goroutine. It is no longer safe to
+// modify a Servers fields after it has been sent to Start.
 func Start(s *Server) {
 	s.w = wait.New()
 	s.done = make(chan struct{})
@@ -80,11 +72,7 @@ func (s *Server) run() {
 				if err := r.Unmarshal(e.Data); err != nil {
 					panic("TODO: this is bad, what do we do about it?")
 				}
-				var resp Response
-				resp.Event, resp.err = s.apply(context.TODO(), r)
-				resp.Term = rd.Term
-				resp.Commit = rd.Commit
-				s.w.Trigger(r.Id, resp)
+				s.w.Trigger(r.Id, s.apply(r))
 			}
 		case <-s.done:
 			return
@@ -92,16 +80,28 @@ func (s *Server) run() {
 	}
 }
 
+// Stop stops the server, and shutsdown the running goroutine.
+// Stop should be called after a Start(s), otherwise it will block forever.
 func (s *Server) Stop() {
-	close(s.done)
+	s.done <- struct{}{}
 }
 
+// Do interprets r and performs an operation on s.Store according to r.Method
+// and other fields. If r.Method is "POST", "PUT", "DELETE", or a "GET with
+// Quorum == true, r will be sent through consensus before performing its
+// respective operation. Do will block until an action is performed or there is
+// an error.
 func (s *Server) Do(ctx context.Context, r pb.Request) (Response, error) {
 	if r.Id == 0 {
 		panic("r.Id cannot be 0")
 	}
+
+	if r.Method == "GET" && r.Quorum {
+		r.Method = "QGET"
+	}
+
 	switch r.Method {
-	case "POST", "PUT", "DELETE":
+	case "POST", "PUT", "DELETE", "QGET":
 		data, err := r.Marshal()
 		if err != nil {
 			return Response{}, err
@@ -140,36 +140,42 @@ func (s *Server) Do(ctx context.Context, r pb.Request) (Response, error) {
 
 // apply interprets r as a call to store.X and returns an
 // Response interpreted from the store.Event
-func (s *Server) apply(ctx context.Context, r pb.Request) (*store.Event, error) {
+func (s *Server) apply(r pb.Request) Response {
+	f := func(ev *store.Event, err error) Response {
+		return Response{Event: ev, err: err}
+	}
+
 	expr := time.Unix(0, r.Expiration)
 
 	switch r.Method {
 	case "POST":
-		return s.Store.Create(r.Path, r.Dir, r.Val, true, expr)
+		return f(s.Store.Create(r.Path, r.Dir, r.Val, true, expr))
 	case "PUT":
 		exists, existSet := getBool(r.PrevExists)
 		switch {
 		case existSet:
 			if exists {
-				return s.Store.Update(r.Path, r.Val, expr)
+				return f(s.Store.Update(r.Path, r.Val, expr))
 			} else {
-				return s.Store.Create(r.Path, r.Dir, r.Val, false, expr)
+				return f(s.Store.Create(r.Path, r.Dir, r.Val, false, expr))
 			}
 		case r.PrevIndex > 0 || r.PrevValue != "":
-			return s.Store.CompareAndSwap(r.Path, r.PrevValue, r.PrevIndex, r.Val, expr)
+			return f(s.Store.CompareAndSwap(r.Path, r.PrevValue, r.PrevIndex, r.Val, expr))
 		default:
-			return s.Store.Set(r.Path, r.Dir, r.Val, expr)
+			return f(s.Store.Set(r.Path, r.Dir, r.Val, expr))
 		}
 	case "DELETE":
 		switch {
 		case r.PrevIndex > 0 || r.PrevValue != "":
-			return s.Store.CompareAndDelete(r.Path, r.PrevValue, r.PrevIndex)
+			return f(s.Store.CompareAndDelete(r.Path, r.PrevValue, r.PrevIndex))
 		default:
-			return s.Store.Delete(r.Path, r.Recursive, r.Dir)
+			return f(s.Store.Delete(r.Path, r.Recursive, r.Dir))
 		}
+	case "QGET":
+		return f(s.Store.Get(r.Path, r.Recursive, r.Sorted))
 	default:
 		// This should never reached, but just in case.
-		return nil, ErrUnknownMethod
+		return Response{err: ErrUnknownMethod}
 	}
 }
 
