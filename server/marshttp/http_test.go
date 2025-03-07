@@ -3,8 +3,6 @@ package marshttp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -38,14 +36,12 @@ func TestSet(t *testing.T) {
 		Save: func(st raftpb.HardState, ents []raftpb.Entry) {
 			for _, e := range ents {
 				if e.Data == nil {
-					log.Printf("marshttp/http_test.go:41 e.Data is nil")
 					continue
 				}
 				var r serverpb.Request
 				if err := r.Unmarshal(e.Data); err != nil {
 					t.Fatal(err)
 				}
-				fmt.Printf("r.Path: %q\n", r.Path)
 			}
 		},
 	}
@@ -81,8 +77,8 @@ func TestSet(t *testing.T) {
 		CreatedIndex:  1,
 	}
 	if !reflect.DeepEqual(g.Node, w) {
-		t.Errorf("value = %+v, want %+v", *g.Node.Value, *w.Value)
-		t.Errorf("g = %+v, want %+v", g.Node, w)
+		t.Errorf("value = %+v, \nwant %+v", *g.Node.Value, *w.Value)
+		t.Errorf("g = %+v, \nwant %+v", g.Node, w)
 	}
 }
 

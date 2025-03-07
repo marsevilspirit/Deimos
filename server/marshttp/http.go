@@ -53,15 +53,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	rr := parseRequest(r)
+	rr, err := parseRequest(r)
+	if err != nil {
+		log.Println(err) // reading of body failed
+		return
+	}
 
 	resp, err := h.Server.Do(ctx, rr)
 	if err != nil {
 		log.Println(err)
+		http.Error(w, "Internal Server Error", 500)
 	}
 
 	if err := encodeResponse(ctx, w, resp); err != nil {
 		http.Error(w, "Timeout while waiting for response", 504)
+		return
 	}
 }
 
@@ -87,13 +93,17 @@ func genId() int64 {
 	return int64(binary.BigEndian.Uint64(b))
 }
 
-func parseRequest(r *http.Request) serverpb.Request {
+func parseRequest(r *http.Request) (serverpb.Request, error) {
+	if err := r.ParseForm(); err != nil {
+		return serverpb.Request{}, err
+	}
+
 	q := r.URL.Query()
 	rr := serverpb.Request{
 		Id:        genId(),
 		Method:    r.Method,
+		Val:       r.FormValue("value"),
 		Path:      r.URL.Path[len("/keys"):],
-		Val:       q.Get("value"),
 		PrevValue: q.Get("prevValue"),
 		PrevIndex: parseUint64(q.Get("prevIndex")),
 		Recursive: parseBool(q.Get("recursive")),
@@ -116,7 +126,7 @@ func parseRequest(r *http.Request) serverpb.Request {
 		rr.Expiration = time.Now().Add(expr).UnixNano()
 	}
 
-	return rr
+	return rr, nil
 }
 
 func parseBool(s string) bool {
