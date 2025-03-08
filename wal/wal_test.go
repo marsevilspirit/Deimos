@@ -11,14 +11,14 @@ import (
 )
 
 var (
-	infoData  = []byte("\xef\xbe\x00\x00\x00\x00\x00\x00")
-	infoBlock = append([]byte("\x01\x00\x00\x00\x00\x00\x00\x00\b\x00\x00\x00\x00\x00\x00\x00"), infoData...)
+	infoData   = []byte("\b\xef\xfd\x02")
+	infoRecord = append([]byte("\n\x00\x00\x00\x00\x00\x00\x00\b\x01\x10\x00\x1a\x04"), infoData...)
 
-	stateJsonData = []byte("{\"term\":1,\"vote\":1,\"commit\":1}")
-	stateBlock    = append([]byte("\x03\x00\x00\x00\x00\x00\x00\x00\x1e\x00\x00\x00\x00\x00\x00\x00"), stateJsonData...)
+	stateData   = []byte("\b\x01\x10\x01\x18\x01")
+	stateRecord = append([]byte("\f\x00\x00\x00\x00\x00\x00\x00\b\x03\x10\x00\x1a\x06"), stateData...)
 
-	entryJsonData = []byte("{\"type\":1,\"term\":1,\"index\":1,\"data\":\"AQ==\"}")
-	entryBlock    = append([]byte("\x02\x00\x00\x00\x00\x00\x00\x00+\x00\x00\x00\x00\x00\x00\x00"), entryJsonData...)
+	entryData   = []byte("\b\x01\x10\x01\x18\x01\x22\x01\x01")
+	entryRecord = append([]byte("\x0f\x00\x00\x00\x00\x00\x00\x00\b\x02\x10\x00\x1a\t"), entryData...)
 )
 
 func TestNew(t *testing.T) {
@@ -68,8 +68,8 @@ func TestSaveEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b, entryBlock) {
-		t.Errorf("ent = %q,\n            want  %q", b, entryBlock)
+	if !reflect.DeepEqual(b, entryRecord) {
+		t.Errorf("ent = %q,\n            want  %q", b, entryRecord)
 	}
 
 	err = os.Remove(p)
@@ -84,23 +84,23 @@ func TestSaveInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := int64(0xBEEF)
-	err = w.SaveInfo(id)
+	i := &raftpb.Info{Id: int64(0xBEEF)}
+	err = w.SaveInfo(i)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// make sure we can only write info at the head of the wal file
 	// still in buffer
-	err = w.SaveInfo(id)
-	if err == nil || err.Error() != "cannot write info at 24, expect 0" {
+	err = w.SaveInfo(i)
+	if err == nil || err.Error() != "cannot write info at 18, expect 0" {
 		t.Errorf("err = %v, want cannot write info at 8, expect 0", err)
 	}
 
-	// flush to disk
-	w.Flush()
-	err = w.SaveInfo(id)
-	if err == nil || err.Error() != "cannot write info at 24, expect 0" {
+	// sync to disk
+	w.Sync()
+	err = w.SaveInfo(i)
+	if err == nil || err.Error() != "cannot write info at 18, expect 0" {
 		t.Errorf("err = %v, want cannot write info at 8, expect 0", err)
 	}
 	w.Close()
@@ -109,8 +109,8 @@ func TestSaveInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b, infoBlock) {
-		t.Errorf("ent = %q, want %q", b, infoBlock)
+	if !reflect.DeepEqual(b, infoRecord) {
+		t.Errorf("ent = %q, want %q", b, infoRecord)
 	}
 
 	err = os.Remove(p)
@@ -140,8 +140,8 @@ func TestSaveState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b, stateBlock) {
-		t.Errorf("ent = %q,\n              want %q", b, stateBlock)
+	if !reflect.DeepEqual(b, stateRecord) {
+		t.Errorf("ent = %q,\n              want %q", b, stateRecord)
 	}
 
 	err = os.Remove(p)
@@ -151,17 +151,17 @@ func TestSaveState(t *testing.T) {
 }
 
 func TestLoadInfo(t *testing.T) {
-	id, err := loadInfo(infoData)
+	i, err := loadInfo(infoData)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 0xBEEF {
-		t.Errorf("id = %x, want 0xBEEF", id)
+	if i.Id != 0xBEEF {
+		t.Errorf("id = %x, want 0xBEEF", i)
 	}
 }
 
 func TestLoadEntry(t *testing.T) {
-	e, err := loadEntry(entryJsonData)
+	e, err := loadEntry(entryData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestLoadEntry(t *testing.T) {
 }
 
 func TestLoadState(t *testing.T) {
-	s, err := loadState(stateJsonData)
+	s, err := loadState(stateData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +197,8 @@ func TestLoadNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := int64(0xBEEF)
-	if err = w.SaveInfo(id); err != nil {
+	i := &raftpb.Info{Id: int64(0xBEEF)}
+	if err = w.SaveInfo(i); err != nil {
 		t.Fatal(err)
 	}
 	ents := []raftpb.Entry{
@@ -247,8 +247,8 @@ func TestLoadNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.Id != id {
-		t.Errorf("id = %d, want %d", n.Id, id)
+	if n.Id != i.Id {
+		t.Errorf("id = %d, want %d", n.Id, i)
 	}
 	if !reflect.DeepEqual(n.Ents, ents) {
 		t.Errorf("ents = %+v, want %+v", n.Ents, ents)

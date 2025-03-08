@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 
 	"github.com/marsevilspirit/marstore/raft/raftpb"
@@ -29,6 +29,7 @@ func newWAL(f *os.File) *WAL {
 }
 
 func New(path string) (*WAL, error) {
+	log.Printf("path=%s wal.new", path)
 	f, err := os.Open(path)
 	if err == nil {
 		f.Close()
@@ -42,57 +43,66 @@ func New(path string) (*WAL, error) {
 }
 
 func Open(path string) (*WAL, error) {
-	f, err := os.Open(path)
+	log.Printf("path=%s wal.open", path)
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
 	}
 	return newWAL(f), nil
 }
 
+func (w *WAL) Sync() error {
+	if err := w.bw.Flush(); err != nil {
+		return err
+	}
+	return w.f.Sync()
+}
+
 func (w *WAL) Close() {
+	log.Printf("path=%s wal.close", w.f.Name())
 	if w.f != nil {
-		w.Flush()
+		w.Sync()
 		w.f.Close()
 	}
 }
 
 // | 8 bytes | 8 bytes | 8 bytes |
 // |  type   |   len   |  nodeid |
-func (w *WAL) SaveInfo(id int64) error {
+func (w *WAL) SaveInfo(i *raftpb.Info) error {
+	log.Printf("path=%s wal.saveInfo id=%d", w.f.Name(), i.Id)
 	if err := w.checkAtHead(); err != nil {
 		return err
 	}
-	w.buf.Reset()
-	err := binary.Write(w.buf, binary.LittleEndian, id)
+	b, err := i.Marshal()
 	if err != nil {
 		panic(err)
 	}
-	return writeBlock(w.bw, infoType, w.buf.Bytes())
+	rec := &Record{Type: infoType, Data: b}
+	return writeRecord(w.bw, rec)
 }
 
 // | 8 bytes | 8 bytes |  variable length |
 // | type    |   len   |   entry data     |
 func (w *WAL) SaveEntry(e *raftpb.Entry) error {
 	// protobuf?
-	b, err := json.Marshal(e)
+	b, err := e.Marshal()
 	if err != nil {
 		return err
 	}
-	return writeBlock(w.bw, entryType, b)
+	rec := &Record{Type: entryType, Data: b}
+	return writeRecord(w.bw, rec)
 }
 
+// | 8 bytes | 8 bytes |  24 bytes |
+// | type    |   len   |   state   |
 func (w *WAL) SaveState(s *raftpb.HardState) error {
-	// | 8 bytes | 8 bytes |  24 bytes |
-	// | type    |   len   |   state   |
-	b, err := json.Marshal(s)
+	log.Printf("path=%s wal.saveState state=\"%+v\"", w.f.Name(), s)
+	b, err := s.Marshal()
 	if err != nil {
 		return err
 	}
-	return writeBlock(w.bw, stateType, b)
-}
-
-func (w *WAL) Flush() error {
-	return w.bw.Flush()
+	rec := &Record{Type: stateType, Data: b}
+	return writeRecord(w.bw, rec)
 }
 
 func (w *WAL) checkAtHead() error {
@@ -113,66 +123,71 @@ type Node struct {
 }
 
 func (w *WAL) LoadNode() (*Node, error) {
+	log.Printf("path=%s wal.loadNode", w.f.Name())
 	if err := w.checkAtHead(); err != nil {
 		return nil, err
 	}
 
 	br := bufio.NewReader(w.f)
-	b := &block{}
+	rec := &Record{}
 
-	err := readBlock(br, b)
+	err := readRecord(br, rec)
 	if err != nil {
 		return nil, err
 	}
-	if b.typ != infoType {
-		return nil, fmt.Errorf("the first block of wal is not infoType but %d", b.typ)
+	if rec.Type != infoType {
+		return nil, fmt.Errorf("the first block of wal is not infoType but %d", rec.Type)
 	}
 
-	id, err := loadInfo(b.data)
+	i, err := loadInfo(rec.Data)
 	if err != nil {
 		return nil, err
 	}
 
 	ents := make([]raftpb.Entry, 0)
 	var state raftpb.HardState
-	for err := readBlock(br, b); err == nil; err = readBlock(br, b) {
-		switch b.typ {
+	for err = readRecord(br, rec); err == nil; err = readRecord(br, rec) {
+		switch rec.Type {
 		case entryType:
-			e, err := loadEntry(b.data)
+			e, err := loadEntry(rec.Data)
 			if err != nil {
 				return nil, err
 			}
-			ents = append(ents, e)
+			ents = append(ents[:e.Index-1], e)
 		case stateType:
-			s, err := loadState(b.data)
+			s, err := loadState(rec.Data)
 			if err != nil {
 				return nil, err
 			}
 			state = s
 		default:
-			return nil, fmt.Errorf("unexpected block type %d", b.typ)
+			return nil, fmt.Errorf("unexpected block type %d", rec.Type)
 		}
 	}
-	return &Node{id, ents, state}, nil
+	return &Node{i.Id, ents, state}, nil
 }
 
-func loadInfo(d []byte) (int64, error) {
-	if len(d) != 8 {
-		return 0, fmt.Errorf("len = %d, want 8", len(d))
+func loadInfo(d []byte) (raftpb.Info, error) {
+	var i raftpb.Info
+	err := i.Unmarshal(d)
+	if err != nil {
+		panic(err)
 	}
-	buf := bytes.NewBuffer(d)
-	return readInt64(buf)
+	return i, err
 }
 
 func loadEntry(d []byte) (raftpb.Entry, error) {
 	var e raftpb.Entry
-	err := json.Unmarshal(d, &e)
+	err := e.Unmarshal(d)
+	if err != nil {
+		panic(err)
+	}
 	return e, err
 }
 
 func loadState(d []byte) (raftpb.HardState, error) {
 	var s raftpb.HardState
-	err := json.Unmarshal(d, &s)
+	err := s.Unmarshal(d)
 	return s, err
 }
 
@@ -184,13 +199,6 @@ func readInt64(r io.Reader) (int64, error) {
 	var n int64
 	err := binary.Read(r, binary.LittleEndian, &n)
 	return n, err
-}
-
-func unexpectedEOF(err error) error {
-	if err == io.EOF {
-		return io.ErrUnexpectedEOF
-	}
-	return err
 }
 
 func max(a, b int64) int64 {
