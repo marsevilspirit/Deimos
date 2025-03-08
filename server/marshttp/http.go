@@ -80,19 +80,17 @@ func Sender(p Peers) func(msgs []raftpb.Message) {
 					// TODO: unknown peer id.. what do we do? I
 					// don't think his should ever happen, need to
 					// look into this further.
-					log.Println("etcdhttp: no addr for %d", m.To)
+					log.Printf("marshttp: no addr for %d", m.To)
 					break
 				}
 
 				url += "/raft"
 
-				log.Printf("marsserver: sending to %d@%s", m.To, url)
-
 				// TODO: don't block. we should be able to have 1000s
 				// of messages out at a time.
 				data, err := m.Marshal()
 				if err != nil {
-					log.Println("etcdhttp: dropping message:", err)
+					log.Println("marshttp: dropping message:", err)
 					break // drop bad message
 				}
 				if httpPost(url, data) {
@@ -119,7 +117,7 @@ func httpPost(url string, data []byte) bool {
 	return true
 }
 
-// Handler implements the http.Handler interface and serves etcd client and
+// Handler implements the http.Handler interface and serves mars client and
 // raft communication.
 type Handler struct {
 	Timeout time.Duration
@@ -176,14 +174,15 @@ func (h *Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.
 func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		log.Println("etcdhttp: error reading raft message:", err)
+		log.Println("marshttp: error reading raft message:", err)
 	}
 	var m raftpb.Message
 	if err := m.Unmarshal(b); err != nil {
-		log.Println("etcdhttp: error unmarshaling raft message:", err)
+		log.Println("marshttp: error unmarshaling raft message:", err)
 	}
+	log.Printf("marshttp: raft recv message from %#x: %+v", m.From, m)
 	if err := h.Server.Node.Step(ctx, m); err != nil {
-		log.Println("etcdhttp: error stepping raft messages:", err)
+		log.Println("marshttp: error stepping raft messages:", err)
 	}
 }
 

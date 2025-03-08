@@ -36,20 +36,23 @@ func main() {
 	}
 
 	if peers.Pick(id) == "" {
-		log.Fatalf("%d=<addr> must be specified in peers", id)
+		log.Fatalf("%#x=<addr> must be specified in peers", id)
 	}
 
 	n := raft.StartNode(id, peers.Ids(), 10, 1)
+
+	tk := time.NewTicker(100 * time.Millisecond)
 
 	ctx, _ := context.WithCancel(context.Background())
 
 	n.Campaign(ctx)
 
 	s := &server.Server{
-		Store: store.New(),
-		Node:  n,
-		Save:  func(st raftpb.HardState, ents []raftpb.Entry) {}, // TODO: use wal
-		Send:  marshttp.Sender(peers),
+		Store:  store.New(),
+		Node:   n,
+		Save:   func(st raftpb.HardState, ents []raftpb.Entry) {}, // TODO: use wal
+		Send:   marshttp.Sender(peers),
+		Ticker: tk.C,
 	}
 
 	server.Start(s)

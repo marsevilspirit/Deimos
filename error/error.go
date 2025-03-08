@@ -43,7 +43,7 @@ func init() {
 	errors[EcodeNotDir] = "Not A Directory"
 	errors[EcodeNodeExist] = "Key Already exists" // create
 	errors[EcodeRootROnly] = "Root is read only"
-	errors[EcodeKeyIsPreserved] = "The prefix of given key is a keyword in etcd"
+	errors[EcodeKeyIsPreserved] = "The prefix of given key is a keyword in mars"
 	errors[EcodeDirNotEmpty] = "The directory is not empty"
 
 	// Post form related errors
@@ -57,8 +57,8 @@ func init() {
 	errors[EcodeRaftInternal] = "Raft Internal Error"
 	errors[EcodeLeaderElect] = "During Leader Election"
 
-	// etcd related errors
-	errors[EcodeWatcherCleared] = "watcher is cleared due to etcd recovery"
+	// mars related errors
+	errors[EcodeWatcherCleared] = "watcher is cleared due to mars recovery"
 	errors[EcodeEventIndexCleared] = "The event in requested index is outdated and cleared"
 }
 

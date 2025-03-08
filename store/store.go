@@ -307,7 +307,7 @@ func (s *store) CompareAndDelete(nodePath string, prevValue string, prevIndex ui
 		return nil, Err.NewError(Err.EcodeTestFailed, cause, s.CurrentIndex)
 	}
 
-	// update etcd index
+	// update mars index
 	s.CurrentIndex++
 
 	e := newEvent(CompareAndDelete, nodePath, s.CurrentIndex, n.CreatedIndex)
