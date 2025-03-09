@@ -49,13 +49,11 @@ func testServer(t *testing.T, ns int64) {
 		}
 		Start(srv)
 
-		ss[i] = srv
-	}
+		//TODO: randomize election timeout
+		// then remove this sleep.
+		time.Sleep(1 * time.Millisecond)
 
-	for i := int64(0); i < ns; i++ {
-		if err := ss[i].Node.Campaign(ctx); err != nil {
-			t.Fatal(err)
-		}
+		ss[i] = srv
 	}
 
 	for i := 1; i <= 10; i++ {
