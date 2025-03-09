@@ -63,7 +63,7 @@ func TestFailback(t *testing.T) {
 	os.Mkdir(dir, 0700)
 	defer os.RemoveAll(dir)
 
-	large := fmt.Sprintf("%016x%016x%016x.snap", 0xFFFF, 0xFFFF, 0xFFFF)
+	large := fmt.Sprintf("%016x-%016x-%016x.snap", 0xFFFF, 0xFFFF, 0xFFFF)
 	err := ioutil.WriteFile(path.Join(dir, large), []byte("bad data"), 0666)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +81,37 @@ func TestFailback(t *testing.T) {
 	}
 	if !reflect.DeepEqual(g, testSnap) {
 		t.Errorf("snap = %#v, want %#v", g, testSnap)
+	}
+
+	if f, err := os.Open(path.Join(dir, large) + ".broken"); err != nil {
+		t.Fatal("broken snapshot does not exist")
+	} else {
+		f.Close()
+	}
+}
+
+func TestSnapNames(t *testing.T) {
+	dir := path.Join(os.TempDir(), "snapshot")
+	os.Mkdir(dir, 0700)
+	defer os.RemoveAll(dir)
+	for i := 1; i <= 5; i++ {
+		if f, err := os.Create(path.Join(dir, fmt.Sprintf("%d.snap", i))); err != nil {
+			t.Fatal(err)
+		} else {
+			f.Close()
+		}
+	}
+	ss := New(dir)
+	names, err := ss.snapNames()
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+	if len(names) != 5 {
+		t.Errorf("len = %d, want 10", len(names))
+	}
+	w := []string{"5.snap", "4.snap", "3.snap", "2.snap", "1.snap"}
+	if !reflect.DeepEqual(names, w) {
+		t.Errorf("names = %v, want %v", names, w)
 	}
 }
 

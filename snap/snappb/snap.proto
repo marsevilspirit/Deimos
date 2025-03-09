@@ -1,4 +1,4 @@
-package wal;
+package snappb;
 
 import "gogoproto/gogo.proto";
 
@@ -7,8 +7,7 @@ option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
 
-message Record {
-	required int64 type = 1 [(gogoproto.nullable) = false];
-	required uint32 crc = 2 [(gogoproto.nullable) = false];
-	optional bytes data = 3;
+message snapshot {
+	required uint64 crc = 1 [(gogoproto.nullable) = false];
+	optional bytes data = 2;
 }
