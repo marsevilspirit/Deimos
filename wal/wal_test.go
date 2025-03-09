@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
@@ -12,188 +13,131 @@ import (
 
 var (
 	infoData   = []byte("\b\xef\xfd\x02")
-	infoRecord = append([]byte("\n\x00\x00\x00\x00\x00\x00\x00\b\x01\x10\x00\x1a\x04"), infoData...)
+	infoRecord = append([]byte("\x0e\x00\x00\x00\x00\x00\x00\x00\b\x01\x10\x99\xb5\xe4\xd0\x03\x1a\x04"), infoData...)
 
-	stateData   = []byte("\b\x01\x10\x01\x18\x01")
-	stateRecord = append([]byte("\f\x00\x00\x00\x00\x00\x00\x00\b\x03\x10\x00\x1a\x06"), stateData...)
-
-	entryData   = []byte("\b\x01\x10\x01\x18\x01\x22\x01\x01")
-	entryRecord = append([]byte("\x0f\x00\x00\x00\x00\x00\x00\x00\b\x02\x10\x00\x1a\t"), entryData...)
+	firstWalName = "0000000000000000-0000000000000000.wal"
 )
 
 func TestNew(t *testing.T) {
-	f, err := ioutil.TempFile(os.TempDir(), "waltest")
+	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := f.Name()
-	_, err = New(p)
-	if err == nil || err != os.ErrExist {
+	defer os.RemoveAll(p)
+
+	w, err := Create(p)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if g := path.Base(w.f.Name()); g != firstWalName {
+		t.Errorf("name = %+v, want %+v", g, firstWalName)
+	}
+	w.Close()
+}
+
+func TestNewForInitedDir(t *testing.T) {
+	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(p)
+
+	os.Create(path.Join(p, firstWalName))
+	if _, err = Create(p); err == nil || err != os.ErrExist {
 		t.Errorf("err = %v, want %v", err, os.ErrExist)
 	}
-	err = os.Remove(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	w, err := New(p)
-	if err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-	w.Close()
-	err = os.Remove(p)
-	if err != nil {
-		t.Fatal(err)
-	}
 }
 
-func TestSaveEntry(t *testing.T) {
-	p := path.Join(os.TempDir(), "waltest")
-	w, err := New(p)
+func TestOpenFromIndex(t *testing.T) {
+	dir, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &raftpb.Entry{
-		Type:  1,
-		Term:  1,
-		Index: 1,
-		Data:  []byte{1},
-	}
-	err = w.SaveEntry(e)
+	defer os.RemoveAll(dir)
+
+	f, err := os.Create(path.Join(dir, firstWalName))
 	if err != nil {
 		t.Fatal(err)
+	}
+	f.Close()
+
+	w, err := OpenFromIndex(dir, 0)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if g := path.Base(w.f.Name()); g != firstWalName {
+		t.Errorf("name = %+v, want %+v", g, firstWalName)
 	}
 	w.Close()
 
-	b, err := ioutil.ReadFile(p)
+	wname := fmt.Sprintf("%016x-%016x.wal", 2, 10)
+	f, err = os.Create(path.Join(dir, wname))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b, entryRecord) {
-		t.Errorf("ent = %q,\n            want  %q", b, entryRecord)
-	}
+	f.Close()
 
-	err = os.Remove(p)
+	w, err = OpenFromIndex(dir, 5)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("err = %v, want nil", err)
 	}
-}
-
-func TestSaveInfo(t *testing.T) {
-	p := path.Join(os.TempDir(), "waltest")
-	w, err := New(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	i := &raftpb.Info{Id: int64(0xBEEF)}
-	err = w.SaveInfo(i)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// make sure we can only write info at the head of the wal file
-	// still in buffer
-	err = w.SaveInfo(i)
-	if err == nil || err.Error() != "cannot write info at 18, expect 0" {
-		t.Errorf("err = %v, want cannot write info at 8, expect 0", err)
-	}
-
-	// sync to disk
-	w.Sync()
-	err = w.SaveInfo(i)
-	if err == nil || err.Error() != "cannot write info at 18, expect 0" {
-		t.Errorf("err = %v, want cannot write info at 8, expect 0", err)
+	if g := path.Base(w.f.Name()); g != wname {
+		t.Errorf("name = %+v, want %+v", g, wname)
 	}
 	w.Close()
 
-	b, err := ioutil.ReadFile(p)
+	emptydir, err := ioutil.TempDir(os.TempDir(), "waltestempty")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b, infoRecord) {
-		t.Errorf("ent = %q, want %q", b, infoRecord)
-	}
-
-	err = os.Remove(p)
-	if err != nil {
-		t.Fatal(err)
+	defer os.RemoveAll(emptydir)
+	if _, err = OpenFromIndex(emptydir, 0); err != ErrNotFound {
+		t.Errorf("err = %v, want %v", err, ErrNotFound)
 	}
 }
 
-func TestSaveState(t *testing.T) {
-	p := path.Join(os.TempDir(), "waltest")
-	w, err := New(p)
+func TestCut(t *testing.T) {
+	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := &raftpb.HardState{
-		Term:   1,
-		Vote:   1,
-		Commit: 1,
-	}
-	err = w.SaveState(st)
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
+	defer os.RemoveAll(p)
 
-	b, err := ioutil.ReadFile(p)
+	w, err := Create(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b, stateRecord) {
-		t.Errorf("ent = %q,\n              want %q", b, stateRecord)
+	defer w.Close()
+
+	if err := w.Cut(0); err != nil {
+		t.Fatal(err)
+	}
+	wname := fmt.Sprintf("%016x-%016x.wal", 1, 0)
+	if g := path.Base(w.f.Name()); g != wname {
+		t.Errorf("name = %s, want %s", g, wname)
 	}
 
-	err = os.Remove(p)
-	if err != nil {
+	e := &raftpb.Entry{Index: 1, Term: 1, Data: []byte{1}}
+	if err := w.SaveEntry(e); err != nil {
 		t.Fatal(err)
+	}
+	if err := w.Cut(1); err != nil {
+		t.Fatal(err)
+	}
+	wname = fmt.Sprintf("%016x-%016x.wal", 2, 1)
+	if g := path.Base(w.f.Name()); g != wname {
+		t.Errorf("name = %s, want %s", g, wname)
 	}
 }
 
-func TestLoadInfo(t *testing.T) {
-	i, err := loadInfo(infoData)
+func TestRecover(t *testing.T) {
+	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if i.Id != 0xBEEF {
-		t.Errorf("id = %x, want 0xBEEF", i)
-	}
-}
+	defer os.RemoveAll(p)
 
-func TestLoadEntry(t *testing.T) {
-	e, err := loadEntry(entryData)
-	if err != nil {
-		t.Fatal(err)
-	}
-	we := raftpb.Entry{
-		Type:  1,
-		Term:  1,
-		Index: 1,
-		Data:  []byte{1},
-	}
-	if !reflect.DeepEqual(e, we) {
-		t.Errorf("ent = %v, want %v", e, we)
-	}
-}
-
-func TestLoadState(t *testing.T) {
-	s, err := loadState(stateData)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ws := raftpb.HardState{
-		Term:   1,
-		Vote:   1,
-		Commit: 1,
-	}
-	if !reflect.DeepEqual(s, ws) {
-		t.Errorf("state = %v, want %v", s, ws)
-	}
-}
-
-func TestLoadNode(t *testing.T) {
-	p := path.Join(os.TempDir(), "waltest")
-	w, err := New(p)
+	w, err := Create(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,37 +145,13 @@ func TestLoadNode(t *testing.T) {
 	if err = w.SaveInfo(i); err != nil {
 		t.Fatal(err)
 	}
-	ents := []raftpb.Entry{
-		{
-			Type:  1,
-			Term:  1,
-			Index: 1,
-			Data:  []byte{1},
-		},
-		{
-			Type:  2,
-			Term:  2,
-			Index: 2,
-			Data:  []byte{2},
-		},
-	}
+	ents := []raftpb.Entry{{Index: 1, Term: 1, Data: []byte{1}}, {Index: 2, Term: 2, Data: []byte{2}}}
 	for _, e := range ents {
 		if err = w.SaveEntry(&e); err != nil {
 			t.Fatal(err)
 		}
 	}
-	sts := []raftpb.HardState{
-		{
-			Term:   1,
-			Vote:   1,
-			Commit: 1,
-		},
-		{
-			Term:   2,
-			Vote:   2,
-			Commit: 2,
-		},
-	}
+	sts := []raftpb.HardState{{Term: 1, Vote: 1, Commit: 1}, {Term: 2, Vote: 2, Commit: 2}}
 	for _, s := range sts {
 		if err = w.SaveState(&s); err != nil {
 			t.Fatal(err)
@@ -239,28 +159,150 @@ func TestLoadNode(t *testing.T) {
 	}
 	w.Close()
 
-	w, err = Open(p)
+	if w, err = OpenFromIndex(p, 0); err != nil {
+		t.Fatal(err)
+	}
+	id, state, entries, err := w.ReadAll()
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := w.LoadNode()
-	if err != nil {
-		t.Fatal(err)
+
+	if id != i.Id {
+		t.Errorf("id = %d, want %d", id, i.Id)
 	}
-	if n.Id != i.Id {
-		t.Errorf("id = %d, want %d", n.Id, i)
-	}
-	if !reflect.DeepEqual(n.Ents, ents) {
-		t.Errorf("ents = %+v, want %+v", n.Ents, ents)
+	if !reflect.DeepEqual(entries, ents) {
+		t.Errorf("ents = %+v, want %+v", entries, ents)
 	}
 	// only the latest state is recorded
 	s := sts[len(sts)-1]
-	if !reflect.DeepEqual(n.State, s) {
-		t.Errorf("state = %+v, want %+v", n.State, s)
+	if !reflect.DeepEqual(state, s) {
+		t.Errorf("state = %+v, want %+v", state, s)
 	}
+}
 
-	err = os.Remove(p)
+func TestSearchIndex(t *testing.T) {
+	tests := []struct {
+		names []string
+		index int64
+		widx  int
+		wok   bool
+	}{
+		{
+			[]string{
+				"0000000000000000-0000000000000000.wal",
+				"0000000000000001-0000000000001000.wal",
+				"0000000000000002-0000000000002000.wal",
+			},
+			0x1000, 1, true,
+		},
+		{
+			[]string{
+				"0000000000000001-0000000000004000.wal",
+				"0000000000000002-0000000000003000.wal",
+				"0000000000000003-0000000000005000.wal",
+			},
+			0x4000, 1, true,
+		},
+		{
+			[]string{
+				"0000000000000001-0000000000002000.wal",
+				"0000000000000002-0000000000003000.wal",
+				"0000000000000003-0000000000005000.wal",
+			},
+			0x1000, -1, false,
+		},
+	}
+	for i, tt := range tests {
+		idx, ok := searchIndex(tt.names, tt.index)
+		if idx != tt.widx {
+			t.Errorf("#%d: idx = %d, want %d", i, idx, tt.widx)
+		}
+		if ok != tt.wok {
+			t.Errorf("#%d: ok = %v, want %v", i, ok, tt.wok)
+		}
+	}
+}
+
+func TestScanWalName(t *testing.T) {
+	tests := []struct {
+		str          string
+		wseq, windex int64
+		wok          bool
+	}{
+		{"0000000000000000-0000000000000000.wal", 0, 0, true},
+		{"0000000000000000.wal", 0, 0, false},
+		{"0000000000000000-0000000000000000.snap", 0, 0, false},
+	}
+	for i, tt := range tests {
+		s, index, err := parseWalName(tt.str)
+		if g := err == nil; g != tt.wok {
+			t.Errorf("#%d: ok = %v, want %v", i, g, tt.wok)
+		}
+		if s != tt.wseq {
+			t.Errorf("#%d: seq = %d, want %d", i, s, tt.wseq)
+		}
+		if index != tt.windex {
+			t.Errorf("#%d: index = %d, want %d", i, index, tt.windex)
+		}
+	}
+}
+
+func TestRecoverAfterCut(t *testing.T) {
+	p, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
+	}
+	defer os.RemoveAll(p)
+
+	w, err := Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &raftpb.Info{Id: int64(0xBEEF)}
+	if err = w.SaveInfo(info); err != nil {
+		t.Fatal(err)
+	}
+	if err = w.Cut(0); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < 10; i++ {
+		e := raftpb.Entry{Index: int64(i)}
+		if err = w.SaveEntry(&e); err != nil {
+			t.Fatal(err)
+		}
+		if err = w.Cut(e.Index); err != nil {
+			t.Fatal(err)
+		}
+		if err = w.SaveInfo(info); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+
+	if err := os.Remove(path.Join(p, "0000000000000004-0000000000000003.wal")); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 10; i++ {
+		w, err := OpenFromIndex(p, int64(i))
+		if i <= 3 {
+			if err != ErrNotFound {
+				t.Errorf("#%d: err = %v, want %v", i, err, ErrNotFound)
+			}
+			continue
+		}
+		id, _, entries, err := w.ReadAll()
+		if err != nil {
+			t.Errorf("#%d: err = %v, want nil", i, err)
+			continue
+		}
+		if id != info.Id {
+			t.Errorf("#%d: id = %d, want %d", i, id, info.Id)
+		}
+		for j, e := range entries {
+			if e.Index != int64(j+i+1) {
+				t.Errorf("#%d: ents[%d].Index = %+v, want %+v", i, j, e.Index, j+i+1)
+			}
+		}
 	}
 }
