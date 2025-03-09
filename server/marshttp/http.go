@@ -126,7 +126,6 @@ type Handler struct {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// TODO: set read/write timeout?
-
 	timeout := h.Timeout
 	if timeout == 0 {
 		timeout = DefaultTimeout
@@ -138,7 +137,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/raft"):
 		h.serveRaft(ctx, w, r)
-	case strings.HasPrefix(r.URL.Path, "/keys/"):
+	case strings.HasPrefix(r.URL.Path, "/v2/keys/"):
 		h.serveKeys(ctx, w, r)
 	default:
 		http.NotFound(w, r)
@@ -210,7 +209,7 @@ func parseRequest(r *http.Request) (serverpb.Request, error) {
 		Id:        genId(),
 		Method:    r.Method,
 		Val:       r.FormValue("value"),
-		Path:      r.URL.Path[len("/keys"):],
+		Path:      r.URL.Path[len("/v2/keys"):],
 		PrevValue: q.Get("prevValue"),
 		PrevIndex: parseUint64(q.Get("prevIndex")),
 		Recursive: parseBool(q.Get("recursive")),
