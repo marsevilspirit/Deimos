@@ -49,7 +49,7 @@ func testServer(t *testing.T, ns int64) {
 		}
 		Start(srv)
 
-		//TODO: randomize election timeout
+		// TODO: randomize election timeout
 		// then remove this sleep.
 		time.Sleep(1 * time.Millisecond)
 
@@ -78,7 +78,7 @@ func testServer(t *testing.T, ns int64) {
 		}
 
 		if !reflect.DeepEqual(g, w) {
-			t.Errorf("g = %#v,\n               w = %#v", g, w)
+			t.Errorf("#%v g = %#v,\n               #%v w = %#v", i, g, i, w)
 		}
 	}
 

@@ -21,13 +21,13 @@ import (
 var (
 	fid     = flag.String("id", "0x1", "The id of this server")
 	timeout = flag.Duration("timeout", 10*time.Second, "Request Timeout")
-	laddr   = flag.String("l", ":6618", "HTTP service address (e.g., ':6618')")
+	laddr   = flag.String("l", ":9927", "HTTP service address (e.g., ':9927')")
 	dir     = flag.String("data-dir", "", "Directry to store wal files and snapshot files")
-	peers   = marshttp.Peers{}
+	peers   = &marshttp.Peers{}
 )
 
 func init() {
-	peers.Set("0x1=localhost:6618")
+	peers.Set("0x1=localhost:9927")
 	flag.Var(peers, "peers", "your peers")
 }
 
@@ -46,37 +46,14 @@ func main() {
 	// n := raft.StartNode(id, peers.Ids(), 10, 1)
 
 	if *dir == "" {
-		*dir = fmt.Sprintf("%v", *fid)
-		log.Printf("main: no data-dir is given, use default data-dir ./%s", *dir)
+		*dir = fmt.Sprintf("%v_mars_data", *fid)
+		log.Printf("main: no data-dir is given, uing default data-dir ./%s", *dir)
 	}
 	if err := os.MkdirAll(*dir, 0700); err != nil {
-		log.Fatal(err)
+		log.Fatalf("main: cannot create data directory: %v", err)
 	}
 
-	waldir := path.Join(*dir, "wal")
-
-	var w *wal.WAL
-	var n raft.Node
-	if wal.Exist(waldir) {
-		// TODO: check snapshot; not open from zero
-		w, err = wal.OpenFromIndex(waldir, 0)
-		if err != nil {
-			log.Fatal(err)
-		}
-		// TODO: save/recovery nodeID?
-		_, st, ents, err := w.ReadAll()
-		if err != nil {
-			log.Fatal(err)
-		}
-		// WARN: warn nil
-		n = raft.RestartNode(id, peers.Ids(), 10, 1, nil, st, ents)
-	} else {
-		w, err = wal.Create(waldir)
-		if err != nil {
-			log.Fatal(err)
-		}
-		n = raft.StartNode(id, peers.Ids(), 10, 1)
-	}
+	n, w := startRaft(id, peers.Ids(), path.Join(*dir, "wal"))
 
 	tk := time.NewTicker(100 * time.Millisecond)
 
@@ -88,7 +65,7 @@ func main() {
 		Store:  store.New(),
 		Node:   n,
 		Save:   w.Save,
-		Send:   marshttp.Sender(peers),
+		Send:   marshttp.Sender(*peers),
 		Ticker: tk.C,
 	}
 
@@ -100,4 +77,32 @@ func main() {
 	}
 	http.Handle("/", h)
 	log.Fatal(http.ListenAndServe(*laddr, nil))
+}
+
+func startRaft(id int64, perrIds []int64, waldir string) (raft.Node, *wal.WAL) {
+	if !wal.Exist(waldir) {
+		w, err := wal.Create(waldir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		n := raft.StartNode(id, perrIds, 10, 1)
+		return n, w
+	}
+	// restart a node from previous wal
+	// TODO: check snapshot; not open from zero
+	w, err := wal.OpenFromIndex(waldir, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+	wid, st, ents, err := w.ReadAll()
+	// TODO: save/recovery nodeID?
+	if wid != 0 {
+		log.Fatal("unexpected nodeid %d: nodeid should always be zero until we save nodeid into wal", wid)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	// WARN: snapshot replaces nil
+	n := raft.RestartNode(id, perrIds, 10, 1, nil, st, ents)
+	return n, w
 }

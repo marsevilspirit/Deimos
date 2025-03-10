@@ -19,6 +19,9 @@ const (
 	entryType
 	stateType
 	crcType
+
+	// the owner can make/remove files inside the directory
+	privateDirMode = 0700
 )
 
 var (
@@ -51,7 +54,7 @@ func Create(dirpath string) (*WAL, error) {
 		return nil, os.ErrExist
 	}
 
-	if err := os.MkdirAll(dirpath, 0700); err != nil {
+	if err := os.MkdirAll(dirpath, privateDirMode); err != nil {
 		return nil, err
 	}
 
@@ -125,20 +128,16 @@ func OpenFromIndex(dirpath string, index int64) (*WAL, error) {
 
 // ReadAll reads out all records of the current WAL.
 // After ReadAll, the WAL will be ready for appending new records.
-func (w *WAL) ReadAll() (int64, raftpb.HardState, []raftpb.Entry, error) {
-	var id int64
-	var state raftpb.HardState
-	var entries []raftpb.Entry
-
+func (w *WAL) ReadAll() (id int64, state raftpb.HardState, ents []raftpb.Entry, err error) {
 	rec := &walpb.Record{}
 	decoder := w.decoder
-	var err error
+
 	for err = decoder.decode(rec); err == nil; err = decoder.decode(rec) {
 		switch rec.Type {
 		case entryType:
 			e := mustUnmarshalEntry(rec.Data)
 			if e.Index > w.readIndex {
-				entries = append(entries[:e.Index-w.readIndex-1], e)
+				ents = append(ents[:e.Index-w.readIndex-1], e)
 			}
 		case stateType:
 			state = mustUnmarshalState(rec.Data)
@@ -175,7 +174,7 @@ func (w *WAL) ReadAll() (int64, raftpb.HardState, []raftpb.Entry, error) {
 	// create encoder (chain crc with the decoder), enable appending
 	w.encoder = newEncoder(w.f, w.decoder.lastCRC())
 	w.decoder = nil
-	return id, state, entries, nil
+	return id, state, ents, nil
 }
 
 // index should be the index of last log entry.
@@ -248,7 +247,7 @@ func (w *WAL) SaveState(s *raftpb.HardState) error {
 }
 
 func (w *WAL) Save(st raftpb.HardState, ents []raftpb.Entry) {
-	// TODO: no addresses fly around
+	// TODO: no more reference operator
 	w.SaveState(&st)
 	for i := range ents {
 		w.SaveEntry(&ents[i])

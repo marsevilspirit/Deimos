@@ -38,7 +38,8 @@ func (ps Peers) Pick(id int64) string {
 
 // Set parses command line sets of names to ips formatted like:
 // a=1.1.1.1&a=1.1.1.2&b=2.2.2.2
-func (ps Peers) Set(s string) error {
+func (ps *Peers) Set(s string) error {
+	m := make(map[int64][]string)
 	v, err := url.ParseQuery(s)
 	if err != nil {
 		return err
@@ -48,8 +49,9 @@ func (ps Peers) Set(s string) error {
 		if err != nil {
 			return err
 		}
-		ps[id] = v
+		m[id] = v
 	}
+	*ps = m
 	return nil
 }
 
@@ -72,34 +74,39 @@ const DefaultTimeout = 500 * time.Millisecond
 func Sender(p Peers) func(msgs []raftpb.Message) {
 	return func(msgs []raftpb.Message) {
 		for _, m := range msgs {
-			// TODO: create workers that deal with message sending
-			// concurrently as to not block progress
-			for {
-				url := p.Pick(m.To)
-				if url == "" {
-					// TODO: unknown peer id.. what do we do? I
-					// don't think his should ever happen, need to
-					// look into this further.
-					log.Printf("marshttp: no addr for %d", m.To)
-					break
-				}
-
-				url += "/raft"
-
-				// TODO: don't block. we should be able to have 1000s
-				// of messages out at a time.
-				data, err := m.Marshal()
-				if err != nil {
-					log.Println("marshttp: dropping message:", err)
-					break // drop bad message
-				}
-				if httpPost(url, data) {
-					break // success
-				}
-
-				// TODO: backoff
-			}
+			// TODO: reuse go routines
+			// limit the number of outgoing connections for the same receiver
+			go send(p, m)
 		}
+	}
+}
+
+func send(p Peers, m raftpb.Message) {
+	// TODO: reasonable retry logic
+	for i := 0; i < 3; i++ {
+		url := p.Pick(m.To)
+		if url == "" {
+			// TODO: unknown peer id.. what do we do? I
+			// don't think his should ever happen, need to
+			// look into this further.
+			log.Printf("marshttp: no addr for %d", m.To)
+			break
+		}
+
+		url += "/raft"
+
+		// TODO: don't block. we should be able to have 1000s
+		// of messages out at a time.
+		data, err := m.Marshal()
+		if err != nil {
+			log.Println("marshttp: dropping message:", err)
+			break // drop bad message
+		}
+		if httpPost(url, data) {
+			break // success
+		}
+
+		// TODO: backoff
 	}
 }
 
@@ -110,6 +117,7 @@ func httpPost(url string, data []byte) bool {
 		elog.TODO()
 		return false
 	}
+	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		elog.TODO()
 		return false
