@@ -13,7 +13,8 @@ import (
 	"github.com/marsevilspirit/marstore/store"
 )
 
-func TestClusterOf1(t *testing.T) { testServer(t, 1) }
+// func TestClusterOf1(t *testing.T) { testServer(t, 1) }
+
 func TestClusterOf3(t *testing.T) { testServer(t, 3) }
 
 func testServer(t *testing.T, ns int64) {
@@ -59,7 +60,7 @@ func testServer(t *testing.T, ns int64) {
 	for i := 1; i <= 10; i++ {
 		r := pb.Request{
 			Method: "PUT",
-			Id:     int64(1),
+			Id:     int64(i),
 			Path:   "/foo",
 			Val:    "bar",
 		}

@@ -36,6 +36,7 @@ func (ps Peers) Pick(id int64) string {
 	return fmt.Sprintf("http://%s", addrs[rand.Intn(len(addrs))])
 }
 
+// Each time set will reset peers.
 // Set parses command line sets of names to ips formatted like:
 // a=1.1.1.1&a=1.1.1.2&b=2.2.2.2
 func (ps *Peers) Set(s string) error {
