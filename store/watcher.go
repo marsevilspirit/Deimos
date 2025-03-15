@@ -1,7 +1,12 @@
 package store
 
-type Watcher struct {
-	EventChan  chan *Event
+type Watcher interface {
+	EventChan() chan *Event
+	Remove()
+}
+
+type watcher struct {
+	eventChan  chan *Event
 	stream     bool
 	recursive  bool
 	sinceIndex uint64
@@ -10,9 +15,13 @@ type Watcher struct {
 	remove     func()
 }
 
+func (w *watcher) EventChan() chan *Event {
+	return w.eventChan
+}
+
 // notify function notifies the watcher. If the watcher interests in the given path,
 // the function will return true.
-func (w *Watcher) notify(e *Event, originalPath bool, deleted bool) bool {
+func (w *watcher) notify(e *Event, originalPath bool, deleted bool) bool {
 	// watcher is interested the path in three cases and under one condition
 	// the condition is that the event happens after the watcher's sinceIndex
 
@@ -30,12 +39,12 @@ func (w *Watcher) notify(e *Event, originalPath bool, deleted bool) bool {
 	// should get notified even if "/foo" is not the path it is watching.
 
 	if (w.recursive || originalPath || deleted) && e.Index() >= w.sinceIndex {
-		// We cannot block here if the EventChan capacity is full, otherwise
-		// marstore will hang. EventChan capacity is full when the rate of
+		// We cannot block here if the eventChan capacity is full, otherwise
+		// marstore will hang. eventChan capacity is full when the rate of
 		// notifications are higher than our send rate.
 		// If this happens, we close the channel.
 		select {
-		case w.EventChan <- e:
+		case w.eventChan <- e:
 		default:
 			// We have missed a notification. Remove the watcher.
 			// Removing the watcher also closes the EventChan.
@@ -48,11 +57,11 @@ func (w *Watcher) notify(e *Event, originalPath bool, deleted bool) bool {
 
 // Remove removes the watcher from watcherHub
 // The actual remove function is guaranteed to only be executed once
-func (w *Watcher) Remove() {
+func (w *watcher) Remove() {
 	w.hub.mutex.Lock()
 	defer w.hub.mutex.Unlock()
 
-	close(w.EventChan)
+	close(w.eventChan)
 	if w.remove != nil {
 		w.remove()
 	}

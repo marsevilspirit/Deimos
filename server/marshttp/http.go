@@ -57,12 +57,18 @@ func (ps *Peers) Set(s string) error {
 }
 
 func (ps Peers) String() string {
-	return "todo"
+	v := url.Values{}
+	for k, vv := range ps {
+		for i := range vv {
+			v.Add(strconv.FormatInt(k, 16), vv[i])
+		}
+	}
+	return v.Encode()
 }
 
 func (ps Peers) Ids() []int64 {
 	var ids []int64
-	for id, _ := range ps {
+	for id := range ps {
 		ids = append(ids, id)
 	}
 	return ids
@@ -281,7 +287,7 @@ func encodeResponse(ctx context.Context, w http.ResponseWriter, resp server.Resp
 	return nil
 }
 
-func waitForEvent(ctx context.Context, w http.ResponseWriter, wa *store.Watcher) (*store.Event, error) {
+func waitForEvent(ctx context.Context, w http.ResponseWriter, wa store.Watcher) (*store.Event, error) {
 	// TODO: support streaming?
 	defer wa.Remove()
 	var nch <-chan bool
@@ -290,7 +296,7 @@ func waitForEvent(ctx context.Context, w http.ResponseWriter, wa *store.Watcher)
 	}
 
 	select {
-	case ev := <-wa.EventChan:
+	case ev := <-wa.EventChan():
 		return ev, nil
 	case <-nch:
 		elog.TODO()

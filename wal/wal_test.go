@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -306,3 +307,17 @@ func TestRecoverAfterCut(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveEmpty(t *testing.T) {
+ 	var buf bytes.Buffer
+ 	var est raftpb.HardState
+ 	w := WAL{
+ 		encoder: newEncoder(&buf, 0),
+ 	}
+ 	if err := w.SaveState(&est); err != nil {
+ 		t.Errorf("err = %v, want nil", err)
+ 	}
+ 	if len(buf.Bytes()) != 0 {
+ 		t.Errorf("buf.Bytes = %d, want 0", len(buf.Bytes()))
+ 	}
+ }

@@ -10,6 +10,7 @@ import (
 	"path"
 	"sort"
 
+	"github.com/marsevilspirit/marstore/raft"
 	"github.com/marsevilspirit/marstore/raft/raftpb"
 	"github.com/marsevilspirit/marstore/wal/walpb"
 )
@@ -237,6 +238,9 @@ func (w *WAL) SaveEntry(e *raftpb.Entry) error {
 }
 
 func (w *WAL) SaveState(s *raftpb.HardState) error {
+	if raft.IsEmptyHardState(*s) {
+		return nil
+	}
 	log.Printf("path=%s wal.saveState state=\"%+v\"", w.f.Name(), s)
 	b, err := s.Marshal()
 	if err != nil {
