@@ -176,11 +176,11 @@ func (h *Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	default:
 		log.Println(err)
-		http.Error(w, "Internal Server Error", 500)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 
 	if err := encodeResponse(ctx, w, resp); err != nil {
-		http.Error(w, "Timeout while waiting for response", 504)
+		http.Error(w, "Timeout while waiting for response", http.StatusGatewayTimeout)
 		return
 	}
 }
@@ -260,6 +260,8 @@ func parseUint64(s string) uint64 {
 	return v
 }
 
+// encodeResponse serializes the given etcdserver Response and writes the
+// resulting JSON to the given ResponseWriter, utilizing the provided context
 func encodeResponse(ctx context.Context, w http.ResponseWriter, resp server.Response) (err error) {
 	var ev *store.Event
 	switch {
@@ -287,6 +289,8 @@ func encodeResponse(ctx context.Context, w http.ResponseWriter, resp server.Resp
 	return nil
 }
 
+// waitForEvent waits for a given watcher to return its associated event. It returns a non-nil error
+// if the given Context times out or the given ResponseWriter triggers a CloseNotify.
 func waitForEvent(ctx context.Context, w http.ResponseWriter, wa store.Watcher) (*store.Event, error) {
 	// TODO: support streaming?
 	defer wa.Remove()
