@@ -1,4 +1,4 @@
 *.txt
 *.log
 marstore
-0x*/
+*_mars_data/

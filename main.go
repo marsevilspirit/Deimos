@@ -18,6 +18,11 @@ import (
 	"github.com/marsevilspirit/marstore/wal"
 )
 
+const (
+	// the owner can make/remove files inside the directory
+	privateDirMode = 0700
+)
+
 var (
 	fid     = flag.String("id", "0x1", "The id of this server")
 	timeout = flag.Duration("timeout", 10*time.Second, "Request Timeout")
@@ -74,6 +79,7 @@ func main() {
 	h := &marshttp.Handler{
 		Timeout: *timeout,
 		Server:  s,
+		Peers:   *peers,
 	}
 	http.Handle("/", h)
 	log.Fatal(http.ListenAndServe(*laddr, nil))

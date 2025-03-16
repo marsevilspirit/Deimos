@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,11 @@ import (
 	"github.com/marsevilspirit/marstore/store"
 )
 
+const (
+	keysPrefix     = "/v2/keys"
+	machinesPrefix = "/v2/machines"
+)
+
 type Peers map[int64][]string
 
 func (ps Peers) Pick(id int64) string {
@@ -33,7 +39,11 @@ func (ps Peers) Pick(id int64) string {
 	if len(addrs) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("http://%s", addrs[rand.Intn(len(addrs))])
+	return addScheme(addrs[rand.Intn(len(addrs))])
+}
+
+func addScheme(addr string) string {
+	return fmt.Sprintf("http://%s", addr)
 }
 
 // Each time set will reset peers.
@@ -137,9 +147,10 @@ func httpPost(url string, data []byte) bool {
 type Handler struct {
 	Timeout time.Duration
 	Server  *server.Server
+	Peers   Peers
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// TODO: set read/write timeout?
 	timeout := h.Timeout
 	if timeout == 0 {
@@ -152,15 +163,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/raft"):
 		h.serveRaft(ctx, w, r)
-	case strings.HasPrefix(r.URL.Path, "/v2/keys/"):
+	case strings.HasPrefix(r.URL.Path, keysPrefix):
 		h.serveKeys(ctx, w, r)
+	case strings.HasPrefix(r.URL.Path, machinesPrefix):
+		h.serveMachines(w, r)
 	default:
 		http.NotFound(w, r)
 	}
 }
 
-func (h *Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	rr, err := parseRequest(r)
+func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	rr, err := parseRequest(r, genId())
 	if err != nil {
 		log.Println(err) // reading of body failed
 		return
@@ -177,12 +190,31 @@ func (h *Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.
 	default:
 		log.Println(err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
 
 	if err := encodeResponse(ctx, w, resp); err != nil {
 		http.Error(w, "Timeout while waiting for response", http.StatusGatewayTimeout)
 		return
 	}
+}
+
+// serveMachines responds address list in the format '0.0.0.0, 1.1.1.1'.
+// TODO: rethink the format of machine list because it is not json format.
+func (h Handler) serveMachines(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	urls := make([]string, 0)
+	for _, addrs := range h.Peers {
+		for _, addr := range addrs {
+			urls = append(urls, addScheme(addr))
+		}
+	}
+	sort.Sort(sort.StringSlice(urls))
+	w.Write([]byte(strings.Join(urls, ", ")))
 }
 
 func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.Request) {
@@ -214,17 +246,22 @@ func genId() int64 {
 	}
 }
 
-func parseRequest(r *http.Request) (serverpb.Request, error) {
+func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 	if err := r.ParseForm(); err != nil {
 		return serverpb.Request{}, err
 	}
+	if !strings.HasPrefix(r.URL.Path, keysPrefix) {
+		return serverpb.Request{}, errors.New("unexpected key prefix!")
+	}
 
 	q := r.URL.Query()
+	// TODO: perform strict validation of all parameters
+	// https://github.com/coreos/etcd/issues/1011
 	rr := serverpb.Request{
-		Id:        genId(),
+		Id:        id,
 		Method:    r.Method,
 		Val:       r.FormValue("value"),
-		Path:      r.URL.Path[len("/v2/keys"):],
+		Path:      r.URL.Path[len(keysPrefix):],
 		PrevValue: q.Get("prevValue"),
 		PrevIndex: parseUint64(q.Get("prevIndex")),
 		Recursive: parseBool(q.Get("recursive")),
@@ -233,8 +270,8 @@ func parseRequest(r *http.Request) (serverpb.Request, error) {
 		Wait:      parseBool(q.Get("wait")),
 	}
 
-	// PrevExists is nullable, so we leave it null
-	// if prevExists wasn't specified.
+	// PrevExists is nullable, so we leave it null if prevExist wasn't
+	// specified.
 	_, ok := q["prevExists"]
 	if ok {
 		bv := parseBool(q.Get("prevExists"))
@@ -244,6 +281,8 @@ func parseRequest(r *http.Request) (serverpb.Request, error) {
 	ttl := parseUint64(q.Get("ttl"))
 	if ttl > 0 {
 		expr := time.Duration(ttl) * time.Second
+		// TODO: use fake clock instead of time module
+		// https://github.com/coreos/etcd/issues/1021
 		rr.Expiration = time.Now().Add(expr).UnixNano()
 	}
 
@@ -289,8 +328,9 @@ func encodeResponse(ctx context.Context, w http.ResponseWriter, resp server.Resp
 	return nil
 }
 
-// waitForEvent waits for a given watcher to return its associated event. It returns a non-nil error
-// if the given Context times out or the given ResponseWriter triggers a CloseNotify.
+// waitForEvent waits for a given watcher to return its associated
+// event. It returns a non-nil error if the given Context times out
+// or the given ResponseWriter triggers a CloseNotify.
 func waitForEvent(ctx context.Context, w http.ResponseWriter, wa store.Watcher) (*store.Event, error) {
 	// TODO: support streaming?
 	defer wa.Remove()

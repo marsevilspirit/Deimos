@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"reflect"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +15,7 @@ import (
 	"github.com/marsevilspirit/marstore/raft"
 	"github.com/marsevilspirit/marstore/raft/raftpb"
 	"github.com/marsevilspirit/marstore/server"
+	"github.com/marsevilspirit/marstore/server/serverpb"
 	"github.com/marsevilspirit/marstore/store"
 )
 
@@ -74,6 +75,149 @@ func TestSet(t *testing.T) {
 }
 
 func stringp(s string) *string { return &s }
+func boolp(b bool) *bool       { return &b }
+
+func mustNewURL(t *testing.T, s string) *url.URL {
+	u, err := url.Parse(s)
+	if err != nil {
+		t.Fatalf("error creating URL from %q: %v", s, err)
+	}
+	return u
+}
+
+func TestBadParseRequest(t *testing.T) {
+	tests := []struct {
+		in *http.Request
+	}{
+		{
+			// parseForm failure
+			&http.Request{
+				Body:   nil,
+				Method: "PUT",
+			},
+		},
+		{
+			// bad key prefix
+			&http.Request{
+				URL: mustNewURL(t, "/badprefix/"),
+			},
+		},
+	}
+	for i, tt := range tests {
+		got, err := parseRequest(tt.in, 1234)
+		if err == nil {
+			t.Errorf("case %d: unexpected nil error!", i)
+		}
+		if !reflect.DeepEqual(got, serverpb.Request{}) {
+			t.Errorf("case %d: unexpected non-empty Request: %#v", i, got)
+		}
+	}
+}
+
+func TestGoodParseRequest(t *testing.T) {
+	tests := []struct {
+		in *http.Request
+		w  serverpb.Request
+	}{
+		{
+			// good prefix, all other values default
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo")),
+			},
+			serverpb.Request{
+				Id:   1234,
+				Path: "/foo",
+			},
+		},
+		{
+			// value specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?value=some_value")),
+			},
+			serverpb.Request{
+				Id:   1234,
+				Val:  "some_value",
+				Path: "/foo",
+			},
+		},
+		{
+			// prevIndex specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?prevIndex=98765")),
+			},
+			serverpb.Request{
+				Id:        1234,
+				PrevIndex: 98765,
+				Path:      "/foo",
+			},
+		},
+		{
+			// recursive specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?recursive=true")),
+			},
+			serverpb.Request{
+				Id:        1234,
+				Recursive: true,
+				Path:      "/foo",
+			},
+		},
+		{
+			// sorted specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?sorted=true")),
+			},
+			serverpb.Request{
+				Id:     1234,
+				Sorted: true,
+				Path:   "/foo",
+			},
+		},
+		{
+			// wait specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?wait=true")),
+			},
+			serverpb.Request{
+				Id:   1234,
+				Wait: true,
+				Path: "/foo",
+			},
+		},
+		{
+			// prevExists should be non-null if specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?prevExists=true")),
+			},
+			serverpb.Request{
+				Id:         1234,
+				PrevExists: boolp(true),
+				Path:       "/foo",
+			},
+		},
+		{
+			// prevExists should be non-null if specified
+			&http.Request{
+				URL: mustNewURL(t, path.Join(keysPrefix, "foo?prevExists=false")),
+			},
+			serverpb.Request{
+				Id:         1234,
+				PrevExists: boolp(false),
+				Path:       "/foo",
+			},
+		},
+	}
+
+	for i, tt := range tests {
+		got, err := parseRequest(tt.in, 1234)
+		if err != nil {
+			t.Errorf("#%d: err = %v, want %v", i, err, nil)
+		}
+		if !reflect.DeepEqual(got, tt.w) {
+			t.Errorf("#%d: bad request: got %#v, want %#v", i, got, tt.w)
+		}
+	}
+}
 
 // eventingWatcher immediately returns a simple event of the given action on its channel
 type eventingWatcher struct {
@@ -94,16 +238,14 @@ func (w *eventingWatcher) EventChan() chan *store.Event {
 func (w *eventingWatcher) Remove() {}
 
 func TestEncodeResponse(t *testing.T) {
-	testCases := []struct {
-		ctx  context.Context
+	tests := []struct {
 		resp server.Response
-		idx  uint64
+		idx  string
 		code int
 		err  error
 	}{
 		// standard case, standard 200 response
 		{
-			context.Background(),
 			server.Response{
 				Event: &store.Event{
 					Action:   store.Get,
@@ -112,13 +254,12 @@ func TestEncodeResponse(t *testing.T) {
 				},
 				Watcher: nil,
 			},
-			0,
+			"0",
 			http.StatusOK,
 			nil,
 		},
 		// check new nodes return StatusCreated
 		{
-			context.Background(),
 			server.Response{
 				Event: &store.Event{
 					Action:   store.Create,
@@ -127,24 +268,23 @@ func TestEncodeResponse(t *testing.T) {
 				},
 				Watcher: nil,
 			},
-			0,
+			"0",
 			http.StatusCreated,
 			nil,
 		},
 		{
-			context.Background(),
 			server.Response{
 				Watcher: &eventingWatcher{store.Create},
 			},
-			0,
+			"0",
 			http.StatusCreated,
 			nil,
 		},
 	}
 
-	for i, tt := range testCases {
+	for i, tt := range tests {
 		rw := httptest.NewRecorder()
-		err := encodeResponse(tt.ctx, rw, tt.resp)
+		err := encodeResponse(context.Background(), rw, tt.resp)
 		if err != tt.err {
 			t.Errorf("case %d: unexpected err: got %v, want %v", i, err, tt.err)
 			continue
@@ -154,8 +294,8 @@ func TestEncodeResponse(t *testing.T) {
 			t.Errorf("case %d: bad Content-Type: got %q, want application/json", i, gct)
 		}
 
-		if gei := rw.Header().Get("X-Mars-Index"); gei != strconv.Itoa(int(tt.idx)) {
-			t.Errorf("case %d: bad X-Etcd-Index header: got %s, want %d", i, gei, tt.idx)
+		if gei := rw.Header().Get("X-Mars-Index"); gei != tt.idx {
+			t.Errorf("case %d: bad X-Etcd-Index header: got %s, want %s", i, gei, tt.idx)
 		}
 
 		if rw.Code != tt.code {
@@ -163,7 +303,6 @@ func TestEncodeResponse(t *testing.T) {
 		}
 
 	}
-
 }
 
 type dummyWatcher struct {
@@ -266,5 +405,49 @@ func TestWaitForEventCancelledContext(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatalf("nil err returned with cancelled context!")
+	}
+}
+
+func TestV2MachinesEndpoint(t *testing.T) {
+	tests := []struct {
+		method string
+		wcode  int
+	}{
+		{"GET", http.StatusOK},
+		{"HEAD", http.StatusOK},
+		{"POST", http.StatusMethodNotAllowed},
+	}
+
+	h := Handler{Peers: Peers{}}
+	s := httptest.NewServer(h)
+	defer s.Close()
+
+	for _, tt := range tests {
+		req, _ := http.NewRequest(tt.method, s.URL+machinesPrefix, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.StatusCode != tt.wcode {
+			t.Errorf("StatusCode = %d, expected %d", resp.StatusCode, tt.wcode)
+		}
+	}
+}
+
+func TestServeMachines(t *testing.T) {
+	peers := Peers{}
+	peers.Set("0xBEEF0=localhost:8080&0xBEEF1=localhost:8081&0xBEEF2=localhost:8082")
+	h := Handler{Peers: peers}
+
+	writer := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "", nil)
+	h.serveMachines(writer, req)
+	w := "http://localhost:8080, http://localhost:8081, http://localhost:8082"
+	if g := writer.Body.String(); g != w {
+		t.Errorf("data = %s, want %s", g, w)
+	}
+	if writer.Code != http.StatusOK {
+		t.Errorf("header = %d, want %d", writer.Code, http.StatusOK)
 	}
 }
