@@ -142,7 +142,7 @@ func TestRecover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	i := &raftpb.Info{Id: int64(0xBEEF)}
+	i := &raftpb.Info{Id: int64(0xBAD0)}
 	if err = w.SaveInfo(i); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestRecoverAfterCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := &raftpb.Info{Id: int64(0xBEEF)}
+	info := &raftpb.Info{Id: int64(0xBAD1)}
 	if err = w.SaveInfo(info); err != nil {
 		t.Fatal(err)
 	}
@@ -309,15 +309,15 @@ func TestRecoverAfterCut(t *testing.T) {
 }
 
 func TestSaveEmpty(t *testing.T) {
- 	var buf bytes.Buffer
- 	var est raftpb.HardState
- 	w := WAL{
- 		encoder: newEncoder(&buf, 0),
- 	}
- 	if err := w.SaveState(&est); err != nil {
- 		t.Errorf("err = %v, want nil", err)
- 	}
- 	if len(buf.Bytes()) != 0 {
- 		t.Errorf("buf.Bytes = %d, want 0", len(buf.Bytes()))
- 	}
- }
+	var buf bytes.Buffer
+	var est raftpb.HardState
+	w := WAL{
+		encoder: newEncoder(&buf, 0),
+	}
+	if err := w.SaveState(&est); err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+	if len(buf.Bytes()) != 0 {
+		t.Errorf("buf.Bytes = %d, want 0", len(buf.Bytes()))
+	}
+}

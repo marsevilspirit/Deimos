@@ -147,7 +147,9 @@ func httpPost(url string, data []byte) bool {
 type Handler struct {
 	Timeout time.Duration
 	Server  *server.Server
-	Peers   Peers
+	// TODO: dynamic configuration may make this outdated. take care of it.
+	// TODO: dynamic configuration may introduce race also.
+	Peers Peers
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +205,7 @@ func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.R
 // TODO: rethink the format of machine list because it is not json format.
 func (h Handler) serveMachines(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" && r.Method != "HEAD" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		allow(w, "GET", "HEAD")
 		return
 	}
 
@@ -213,7 +215,7 @@ func (h Handler) serveMachines(w http.ResponseWriter, r *http.Request) {
 			urls = append(urls, addScheme(addr))
 		}
 	}
-	sort.Sort(sort.StringSlice(urls))
+	sort.Strings(urls)
 	w.Write([]byte(strings.Join(urls, ", ")))
 }
 
@@ -349,4 +351,9 @@ func waitForEvent(ctx context.Context, w http.ResponseWriter, wa store.Watcher) 
 		return nil, ctx.Err()
 	}
 
+}
+
+func allow(w http.ResponseWriter, m ...string) {
+	w.Header().Set("Allow", strings.Join(m, ","))
+	http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 }

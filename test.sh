@@ -3,4 +3,5 @@
  	./snap \
  	./server/... \
  	./raft \
+	./wait \
  	./store

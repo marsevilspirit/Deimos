@@ -8,24 +8,22 @@ import (
 	pb "github.com/marsevilspirit/marstore/raft/raftpb"
 )
 
-// 表示缺失的领导者
 const None int64 = 0
 
 type messageType int64
 
 const (
-	msgHup      int64 = iota // 开始选举
-	msgBeat                  // 心跳
-	msgProp                  // 提议
-	msgApp                   // 附加日志
-	msgAppResp               // 附加日志响应
-	msgVote                  // 请求投票
-	msgVoteResp              // 请求投票响应
-	msgSnap                  // 快照
-	msgDenied                // 拒绝
+	msgHup int64 = iota
+	msgBeat
+	msgProp
+	msgApp
+	msgAppResp
+	msgVote
+	msgVoteResp
+	msgSnap
+	msgDenied
 )
 
-// 消息类型的字符串表示
 // example: msgHup -> "msgHup"
 var mtmap = [...]string{
 	msgHup:      "msgHup",
@@ -53,7 +51,6 @@ const (
 	StateLeader
 )
 
-// 状态类型的字符串表示
 var stmap = [...]string{
 	StateFollower:  "StateFollower",
 	StateCandidate: "StateCandidate",
@@ -67,17 +64,15 @@ func (st StateType) String() string {
 var EmptyState = pb.HardState{}
 
 type progress struct {
-	match int64 // 已匹配的日志条目索引
-	next  int64 // 下一个要发送的日志条目索引
+	match int64
+	next  int64
 }
 
-// 更新已匹配的日志条目索引和下一个要发送的日志条目索引
 func (pr *progress) update(n int64) {
 	pr.match = n
 	pr.next = n + 1
 }
 
-// 减少下一个要发送的日志条目索引
 func (pr *progress) decr() {
 	if pr.next--; pr.next < 1 {
 		pr.next = 1
@@ -182,7 +177,6 @@ func (r *raft) poll(id int64, v bool) (granted int) {
 	return granted
 }
 
-// 发送消息
 func (r *raft) send(m pb.Message) {
 	m.From = r.id
 	m.Term = r.Term
@@ -219,7 +213,6 @@ func (r *raft) sendHeartbeat(to int64) {
 	r.send(m)
 }
 
-// 广播附加日志消息
 func (r *raft) bcastAppend() {
 	for i := range r.prs {
 		if i == r.id {
@@ -238,10 +231,7 @@ func (r *raft) bcastHeartbeat() {
 	}
 }
 
-// 判断是否可以提交日志
-// 同时更新commit
 func (r *raft) maybeCommit() bool {
-	// 不需要0初始化，所以使用0
 	matchIndexs := make(int64Slice, 0, len(r.prs))
 	for i := range r.prs {
 		matchIndexs = append(matchIndexs, r.prs[i].match)
