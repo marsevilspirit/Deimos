@@ -6,61 +6,80 @@ import (
 	"net/http"
 )
 
-var errors map[int]string
+var errors = map[int]string{
+	// command related errors
+	EcodeKeyNotFound:      "Key not found",
+	EcodeTestFailed:       "Compare failed", //test and set
+	EcodeNotFile:          "Not a file",
+	EcodeNoMorePeer:       "Reached the max number of peers in the cluster",
+	EcodeNotDir:           "Not a directory",
+	EcodeNodeExist:        "Key already exists", // create
+	EcodeRootROnly:        "Root is read only",
+	EcodeKeyIsPreserved:   "The prefix of given key is a keyword in mars",
+	EcodeDirNotEmpty:      "Directory not empty",
+	EcodeExistingPeerAddr: "Peer address has existed",
+
+	// Post form related errors
+	EcodeValueRequired:        "Value is Required in POST form",
+	EcodePrevValueRequired:    "PrevValue is Required in POST form",
+	EcodeTTLNaN:               "The given TTL in POST form is not a number",
+	EcodeIndexNaN:             "The given index in POST form is not a number",
+	EcodeValueOrTTLRequired:   "Value or TTL is required in POST form",
+	EcodeTimeoutNaN:           "The given timeout in POST form is not a number",
+	EcodeNameRequired:         "Name is required in POST form",
+	EcodeIndexOrValueRequired: "Index or value is required",
+	EcodeIndexValueMutex:      "Index and value cannot both be specified",
+	EcodeInvalidField:         "Invalid field",
+
+	// raft related errors
+	EcodeRaftInternal: "Raft Internal Error",
+	EcodeLeaderElect:  "During Leader Election",
+
+	// mars related errors
+	EcodeWatcherCleared:     "watcher is cleared due to mars recovery",
+	EcodeEventIndexCleared:  "The event in requested index is outdated and cleared",
+	EcodeStandbyInternal:    "Standby Internal Error",
+	EcodeInvalidActiveSize:  "Invalid active size",
+	EcodeInvalidRemoveDelay: "Standby remove delay",
+
+	// client related errors
+	EcodeClientInternal: "Client Internal Error",
+}
 
 const (
-	EcodeKeyNotFound    = 100
-	EcodeTestFailed     = 101
-	EcodeNotFile        = 102
-	EcodeNoMoreMachine  = 103
-	EcodeNotDir         = 104
-	EcodeNodeExist      = 105
-	EcodeKeyIsPreserved = 106
-	EcodeRootROnly      = 107
-	EcodeDirNotEmpty    = 108
+	EcodeKeyNotFound      = 100
+	EcodeTestFailed       = 101
+	EcodeNotFile          = 102
+	EcodeNoMorePeer       = 103
+	EcodeNotDir           = 104
+	EcodeNodeExist        = 105
+	EcodeKeyIsPreserved   = 106
+	EcodeRootROnly        = 107
+	EcodeDirNotEmpty      = 108
+	EcodeExistingPeerAddr = 109
 
-	EcodeValueRequired      = 200
-	EcodePrevValueRequired  = 201
-	EcodeTTLNaN             = 202
-	EcodeIndexNaN           = 203
-	EcodeValueOrTTLRequired = 204
+	EcodeValueRequired        = 200
+	EcodePrevValueRequired    = 201
+	EcodeTTLNaN               = 202
+	EcodeIndexNaN             = 203
+	EcodeValueOrTTLRequired   = 204
+	EcodeTimeoutNaN           = 205
+	EcodeNameRequired         = 206
+	EcodeIndexOrValueRequired = 207
+	EcodeIndexValueMutex      = 208
+	EcodeInvalidField         = 209
 
 	EcodeRaftInternal = 300
 	EcodeLeaderElect  = 301
 
-	EcodeWatcherCleared    = 400
-	EcodeEventIndexCleared = 401
+	EcodeWatcherCleared     = 400
+	EcodeEventIndexCleared  = 401
+	EcodeStandbyInternal    = 402
+	EcodeInvalidActiveSize  = 403
+	EcodeInvalidRemoveDelay = 404
+
+	EcodeClientInternal = 500
 )
-
-func init() {
-	errors = make(map[int]string)
-
-	// command related errors
-	errors[EcodeKeyNotFound] = "Key Not Found"
-	errors[EcodeTestFailed] = "Compare failed" //test and set
-	errors[EcodeNotFile] = "Not a file"
-	errors[EcodeNoMoreMachine] = "Reached the max number of machines in the cluster"
-	errors[EcodeNotDir] = "Not A Directory"
-	errors[EcodeNodeExist] = "Key Already exists" // create
-	errors[EcodeRootROnly] = "Root is read only"
-	errors[EcodeKeyIsPreserved] = "The prefix of given key is a keyword in mars"
-	errors[EcodeDirNotEmpty] = "The directory is not empty"
-
-	// Post form related errors
-	errors[EcodeValueRequired] = "Value is Required in POST form"
-	errors[EcodePrevValueRequired] = "PrevValue is Required in POST form"
-	errors[EcodeTTLNaN] = "The given TTL in POST form is not a number"
-	errors[EcodeIndexNaN] = "The given index in POST form is not a number"
-	errors[EcodeValueOrTTLRequired] = "Value or TTL is required in POST form"
-
-	// raft related errors
-	errors[EcodeRaftInternal] = "Raft Internal Error"
-	errors[EcodeLeaderElect] = "During Leader Election"
-
-	// mars related errors
-	errors[EcodeWatcherCleared] = "watcher is cleared due to mars recovery"
-	errors[EcodeEventIndexCleared] = "The event in requested index is outdated and cleared"
-}
 
 type Error struct {
 	ErrorCode int    `json:"errorCode"`
@@ -84,7 +103,7 @@ func Message(code int) string {
 
 // Only for error interface
 func (e Error) Error() string {
-	return e.Message
+	return e.Message + " (" + e.Cause + ")"
 }
 
 func (e Error) toJsonString() string {
@@ -93,11 +112,21 @@ func (e Error) toJsonString() string {
 }
 
 func (e Error) Write(w http.ResponseWriter) {
-	w.Header().Add("X-Marstore-Index", fmt.Sprint(e.Index))
-	// 3xx is reft internal error
-	if e.ErrorCode/100 == 3 {
-		http.Error(w, e.toJsonString(), http.StatusInternalServerError)
-	} else {
-		http.Error(w, e.toJsonString(), http.StatusBadRequest)
+	w.Header().Add("X-Mars-Index", fmt.Sprint(e.Index))
+	// 3xx is raft internal error
+	status := http.StatusBadRequest
+	switch e.ErrorCode {
+	case EcodeKeyNotFound:
+		status = http.StatusNotFound
+	case EcodeNotFile, EcodeDirNotEmpty:
+		status = http.StatusForbidden
+	case EcodeTestFailed, EcodeNodeExist:
+		status = http.StatusPreconditionFailed
+	default:
+		if e.ErrorCode/100 == 3 {
+			status = http.StatusInternalServerError
+		}
 	}
+	w.WriteHeader(status)
+	fmt.Fprintln(w, e.toJsonString())
 }

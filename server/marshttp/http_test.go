@@ -3,6 +3,7 @@ package marshttp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	Err "github.com/marsevilspirit/marstore/error"
 	"github.com/marsevilspirit/marstore/raft"
 	"github.com/marsevilspirit/marstore/raft/raftpb"
 	"github.com/marsevilspirit/marstore/server"
@@ -85,6 +87,12 @@ func mustNewURL(t *testing.T, s string) *url.URL {
 	return u
 }
 
+func mustNewRequest(t *testing.T, p string) *http.Request {
+	return &http.Request{
+		URL: mustNewURL(t, path.Join(keysPrefix, p)),
+	}
+}
+
 func TestBadParseRequest(t *testing.T) {
 	tests := []struct {
 		in *http.Request
@@ -101,6 +109,47 @@ func TestBadParseRequest(t *testing.T) {
 			&http.Request{
 				URL: mustNewURL(t, "/badprefix/"),
 			},
+		},
+		// bad values for prevIndex, waitIndex, ttl
+		{
+			mustNewRequest(t, "?prevIndex=notanumber"),
+		},
+		{
+			mustNewRequest(t, "?waitIndex=1.5"),
+		},
+		{
+			mustNewRequest(t, "?prevIndex=-1"),
+		},
+		{
+			mustNewRequest(t, "?waitIndex=garbage"),
+		},
+		{
+			mustNewRequest(t, "?waitIndex=??"),
+		},
+		{
+			mustNewRequest(t, "?ttl=-1"),
+		},
+		// bad values for recursive, sorted, wait
+		{
+			mustNewRequest(t, "?recursive=hahaha"),
+		},
+		{
+			mustNewRequest(t, "?recursive=1234"),
+		},
+		{
+			mustNewRequest(t, "?recursive=?"),
+		},
+		{
+			mustNewRequest(t, "?sorted=hahaha"),
+		},
+		{
+			mustNewRequest(t, "?sorted=!!"),
+		},
+		{
+			mustNewRequest(t, "?wait=notreally"),
+		},
+		{
+			mustNewRequest(t, "?wait=what!"),
 		},
 	}
 	for i, tt := range tests {
@@ -121,9 +170,7 @@ func TestGoodParseRequest(t *testing.T) {
 	}{
 		{
 			// good prefix, all other values default
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo")),
-			},
+			mustNewRequest(t, "foo"),
 			serverpb.Request{
 				Id:   1234,
 				Path: "/foo",
@@ -131,9 +178,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// value specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?value=some_value")),
-			},
+			mustNewRequest(t, "foo?value=some_value"),
 			serverpb.Request{
 				Id:   1234,
 				Val:  "some_value",
@@ -142,9 +187,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// prevIndex specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?prevIndex=98765")),
-			},
+			mustNewRequest(t, "foo?prevIndex=98765"),
 			serverpb.Request{
 				Id:        1234,
 				PrevIndex: 98765,
@@ -153,9 +196,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// recursive specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?recursive=true")),
-			},
+			mustNewRequest(t, "foo?recursive=true"),
 			serverpb.Request{
 				Id:        1234,
 				Recursive: true,
@@ -164,9 +205,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// sorted specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?sorted=true")),
-			},
+			mustNewRequest(t, "foo?sorted=true"),
 			serverpb.Request{
 				Id:     1234,
 				Sorted: true,
@@ -175,9 +214,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// wait specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?wait=true")),
-			},
+			mustNewRequest(t, "foo?wait=true"),
 			serverpb.Request{
 				Id:   1234,
 				Wait: true,
@@ -186,9 +223,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// prevExists should be non-null if specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?prevExists=true")),
-			},
+			mustNewRequest(t, "foo?prevExists=true"),
 			serverpb.Request{
 				Id:         1234,
 				PrevExists: boolp(true),
@@ -197,9 +232,7 @@ func TestGoodParseRequest(t *testing.T) {
 		},
 		{
 			// prevExists should be non-null if specified
-			&http.Request{
-				URL: mustNewURL(t, path.Join(keysPrefix, "foo?prevExists=false")),
-			},
+			mustNewRequest(t, "foo?prevExists=false"),
 			serverpb.Request{
 				Id:         1234,
 				PrevExists: boolp(false),
@@ -237,22 +270,77 @@ func (w *eventingWatcher) EventChan() chan *store.Event {
 
 func (w *eventingWatcher) Remove() {}
 
-func TestEncodeResponse(t *testing.T) {
+func TestWriteInternalError(t *testing.T) {
+	// nil error should not panic
+	rw := httptest.NewRecorder()
+	writeInternalError(rw, nil)
+	h := rw.Header()
+	if len(h) > 0 {
+		t.Fatalf("unexpected non-empty headers: %#v", h)
+	}
+	b := rw.Body.String()
+	if len(b) > 0 {
+		t.Fatalf("unexpected non-empty body: %q", b)
+	}
+
 	tests := []struct {
-		resp server.Response
+		err  error
+		code int
+		idx  string
+	}{
+		{
+			Err.NewError(Err.EcodeKeyNotFound, "/foo/bar", 123),
+			http.StatusNotFound,
+			"123",
+		},
+		{
+			Err.NewError(Err.EcodeTestFailed, "/foo/bar", 456),
+			http.StatusPreconditionFailed,
+			"456",
+		},
+		{
+			err:  errors.New("something went wrong"),
+			code: http.StatusInternalServerError,
+		},
+	}
+
+	for i, tt := range tests {
+		rw := httptest.NewRecorder()
+		writeInternalError(rw, tt.err)
+		if code := rw.Code; code != tt.code {
+			t.Errorf("#%d: got %d, want %d", i, code, tt.code)
+		}
+		if idx := rw.Header().Get("X-Mars-Index"); idx != tt.idx {
+			t.Errorf("#%d: got %q, want %q", i, idx, tt.idx)
+		}
+	}
+}
+
+func TestWriteEvent(t *testing.T) {
+	// nil event should not panic
+	rw := httptest.NewRecorder()
+	writeEvent(rw, nil)
+	h := rw.Header()
+	if len(h) > 0 {
+		t.Fatalf("unexpected non-empty headers: %#v", h)
+	}
+	b := rw.Body.String()
+	if len(b) > 0 {
+		t.Fatalf("unexpected non-empty body: %q", b)
+	}
+
+	tests := []struct {
+		ev   *store.Event
 		idx  string
 		code int
 		err  error
 	}{
 		// standard case, standard 200 response
 		{
-			server.Response{
-				Event: &store.Event{
-					Action:   store.Get,
-					Node:     &store.NodeExtern{},
-					PrevNode: &store.NodeExtern{},
-				},
-				Watcher: nil,
+			&store.Event{
+				Action:   store.Get,
+				Node:     &store.NodeExtern{},
+				PrevNode: &store.NodeExtern{},
 			},
 			"0",
 			http.StatusOK,
@@ -260,21 +348,10 @@ func TestEncodeResponse(t *testing.T) {
 		},
 		// check new nodes return StatusCreated
 		{
-			server.Response{
-				Event: &store.Event{
-					Action:   store.Create,
-					Node:     &store.NodeExtern{},
-					PrevNode: &store.NodeExtern{},
-				},
-				Watcher: nil,
-			},
-			"0",
-			http.StatusCreated,
-			nil,
-		},
-		{
-			server.Response{
-				Watcher: &eventingWatcher{store.Create},
+			&store.Event{
+				Action:   store.Create,
+				Node:     &store.NodeExtern{},
+				PrevNode: &store.NodeExtern{},
 			},
 			"0",
 			http.StatusCreated,
@@ -284,20 +361,13 @@ func TestEncodeResponse(t *testing.T) {
 
 	for i, tt := range tests {
 		rw := httptest.NewRecorder()
-		err := encodeResponse(context.Background(), rw, tt.resp)
-		if err != tt.err {
-			t.Errorf("case %d: unexpected err: got %v, want %v", i, err, tt.err)
-			continue
-		}
-
+		writeEvent(rw, tt.ev)
 		if gct := rw.Header().Get("Content-Type"); gct != "application/json" {
 			t.Errorf("case %d: bad Content-Type: got %q, want application/json", i, gct)
 		}
-
 		if gei := rw.Header().Get("X-Mars-Index"); gei != tt.idx {
-			t.Errorf("case %d: bad X-Etcd-Index header: got %s, want %s", i, gei, tt.idx)
+			t.Errorf("case %d: bad X-Mars-Index header: got %s, want %s", i, gei, tt.idx)
 		}
-
 		if rw.Code != tt.code {
 			t.Errorf("case %d: bad response code: got %d, want %v", i, rw.Code, tt.code)
 		}
@@ -423,7 +493,10 @@ func TestV2MachinesEndpoint(t *testing.T) {
 	defer s.Close()
 
 	for _, tt := range tests {
-		req, _ := http.NewRequest(tt.method, s.URL+machinesPrefix, nil)
+		req, err := http.NewRequest(tt.method, s.URL+machinesPrefix, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -441,7 +514,10 @@ func TestServeMachines(t *testing.T) {
 	h := Handler{Peers: peers}
 
 	writer := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "", nil)
+	req, err := http.NewRequest("GET", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.serveMachines(writer, req)
 	w := "http://localhost:8080, http://localhost:8081, http://localhost:8082"
 	if g := writer.Body.String(); g != w {

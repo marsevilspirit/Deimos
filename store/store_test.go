@@ -206,7 +206,7 @@ func TestStoreCreateFailsIfExists(t *testing.T) {
 	e, _err := s.Create("/foo", true, "", false, Permanent)
 	err := _err.(*Err.Error)
 	assert.Equal(t, err.ErrorCode, Err.EcodeNodeExist, "")
-	assert.Equal(t, err.Message, "Key Already exists", "")
+	assert.Equal(t, err.Message, "Key already exists", "")
 	assert.Equal(t, err.Cause, "/foo", "")
 	assert.Equal(t, err.Index, uint64(1), "")
 	assert.Nil(t, e, 0, "")

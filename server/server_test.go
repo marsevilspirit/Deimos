@@ -13,9 +13,14 @@ import (
 	"github.com/marsevilspirit/marstore/store"
 )
 
-// func TestClusterOf1(t *testing.T) { testServer(t, 1) }
+func TestClusterOf1(t *testing.T) { testServer(t, 1) }
 
 func TestClusterOf3(t *testing.T) { testServer(t, 3) }
+
+// firstId is the id of the first raft machine in the array.
+// It implies the way to set id for raft machines:
+// The id of n-th machine is firstId+n, and machine with machineId is at machineId-firstId place in the array.
+const firstId int64 = 0x1000
 
 func testServer(t *testing.T, ns int64) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -26,17 +31,18 @@ func testServer(t *testing.T, ns int64) {
 	send := func(msgs []raftpb.Message) {
 		for _, m := range msgs {
 			// t.Logf("m: %#v\n", m)
-			ss[m.To-1].Node.Step(ctx, m)
+			ss[m.To-firstId].Node.Step(ctx, m)
 		}
 	}
 
 	peers := make([]int64, ns)
 	for i := int64(0); i < ns; i++ {
-		peers[i] = i + 1
+		peers[i] = firstId + i
 	}
 
 	for i := int64(0); i < ns; i++ {
-		n := raft.StartNode(i+1, peers, 10, 1)
+		id := firstId + i
+		n := raft.StartNode(id, peers, 10, 1)
 
 		tk := time.NewTicker(10 * time.Millisecond)
 		defer tk.Stop()
@@ -56,6 +62,11 @@ func testServer(t *testing.T, ns int64) {
 
 		ss[i] = srv
 	}
+
+	// TODO: find fast way to trigger leader election
+	// TODO: interduce the way to know that the leader has beeb elected
+	// then remove this sleep.
+	time.Sleep(110 * time.Millisecond)
 
 	for i := 1; i <= 10; i++ {
 		r := pb.Request{
