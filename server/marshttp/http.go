@@ -193,8 +193,7 @@ func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.R
 	case resp.Event != nil:
 		ev = resp.Event
 	case resp.Watcher != nil:
-		ev, err = waitForEvent(ctx, w, resp.Watcher)
-		if err != nil {
+		if ev, err = waitForEvent(ctx, w, resp.Watcher); err != nil {
 			http.Error(w, err.Error(), http.StatusGatewayTimeout)
 			return
 		}
@@ -332,35 +331,6 @@ func parseUint64(s string) (uint64, error) {
 	}
 
 	return strconv.ParseUint(s, 10, 64)
-}
-
-// encodeResponse serializes the given etcdserver Response and writes the
-// resulting JSON to the given ResponseWriter, utilizing the provided context
-func encodeResponse(ctx context.Context, w http.ResponseWriter, resp server.Response) (err error) {
-	var ev *store.Event
-	switch {
-	case resp.Event != nil:
-		ev = resp.Event
-	case resp.Watcher != nil:
-		ev, err = waitForEvent(ctx, w, resp.Watcher)
-		if err != nil {
-			return err
-		}
-	default:
-		panic("should not be reachable")
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Add("X-Mars-Index", fmt.Sprint(ev.Index()))
-
-	if ev.IsCreated() {
-		w.WriteHeader(http.StatusCreated)
-	}
-
-	if err := json.NewEncoder(w).Encode(ev); err != nil {
-		panic(err) // should never be reached
-	}
-	return nil
 }
 
 // writeInternalError logs and writes the given Error to the ResponseWriter.
