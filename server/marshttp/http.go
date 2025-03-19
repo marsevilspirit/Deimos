@@ -78,12 +78,25 @@ func (ps Peers) String() string {
 	return v.Encode()
 }
 
-func (ps Peers) Ids() []int64 {
+func (ps Peers) IDs() []int64 {
 	var ids []int64
 	for id := range ps {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// EndPoints returns a list of all peer addresses. Each address is
+// prefixed with "http://". The returned list is sorted (asc).
+func (ps Peers) Endpoints() []string {
+	endpoints := make([]string, 0)
+	for _, addrs := range ps {
+		for _, addr := range addrs {
+			endpoints = append(endpoints, addScheme(addr))
+		}
+	}
+	sort.Strings(endpoints)
+	return endpoints
 }
 
 var errClosed = errors.New("marshttp: client closed connection")
@@ -177,15 +190,15 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	rr, err := parseRequest(r, genId())
+	rr, err := parseRequest(r, genID())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, err)
 		return
 	}
 
 	resp, err := h.Server.Do(ctx, rr)
 	if err != nil {
-		writeInternalError(w, err)
+		writeError(w, err)
 	}
 
 	var ev *store.Event
@@ -198,7 +211,7 @@ func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.R
 			return
 		}
 	default:
-		writeInternalError(w, errors.New("received response with no Event/Watcher"))
+		writeError(w, errors.New("received response with no Event/Watcher"))
 		return
 	}
 
@@ -212,15 +225,8 @@ func (h Handler) serveMachines(w http.ResponseWriter, r *http.Request) {
 		allow(w, "GET", "HEAD")
 		return
 	}
-
-	urls := make([]string, 0)
-	for _, addrs := range h.Peers {
-		for _, addr := range addrs {
-			urls = append(urls, addScheme(addr))
-		}
-	}
-	sort.Strings(urls)
-	w.Write([]byte(strings.Join(urls, ", ")))
+	endpoints := h.Peers.Endpoints()
+	w.Write([]byte(strings.Join(endpoints, ", ")))
 }
 
 func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.Request) {
@@ -238,8 +244,8 @@ func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 }
 
-// genId generates a random id that is: n < 0 < n.
-func genId() int64 {
+// genID generates a random id that is: n < 0 < n.
+func genID() int64 {
 	for {
 		b := make([]byte, 8)
 		if _, err := io.ReadFull(crand.Reader, b); err != nil {
@@ -256,11 +262,17 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 	var err error
 
 	if err = r.ParseForm(); err != nil {
-		return emptyReq, err
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidForm,
+			err.Error(),
+		)
 	}
 
 	if !strings.HasPrefix(r.URL.Path, keysPrefix) {
-		return emptyReq, fmt.Errorf("unexpected key prefix!")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidForm,
+			"incorrect key prefix",
+		)
 	}
 
 	path := r.URL.Path[len(keysPrefix):]
@@ -269,24 +281,42 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 
 	var pIdx, wIdx, ttl uint64
 	if pIdx, err = parseUint64(q.Get("prevIndex")); err != nil {
-		return emptyReq, errors.New("invalid value for prevIndex")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeIndexNaN,
+			"invalid value for prevIndex",
+		)
 	}
 	if wIdx, err = parseUint64(q.Get("waitIndex")); err != nil {
-		return emptyReq, errors.New("invalid value for waitIndex")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeIndexNaN,
+			"invalid value for waitIndex",
+		)
 	}
 	if ttl, err = parseUint64(q.Get("ttl")); err != nil {
-		return emptyReq, errors.New("invalid value for ttl")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeTTLNaN,
+			"invalid value for ttl",
+		)
 	}
 
 	var rec, sort, wait bool
 	if rec, err = parseBool(q.Get("recursive")); err != nil {
-		return emptyReq, errors.New("invalid value for recursive")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			"invalid value for recursive",
+		)
 	}
 	if sort, err = parseBool(q.Get("sorted")); err != nil {
-		return emptyReq, errors.New("invalid value for sorted")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			"invalid value for sorted",
+		)
 	}
 	if wait, err = parseBool(q.Get("wait")); err != nil {
-		return emptyReq, errors.New("invalid value for wait")
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			"invalid value for wait",
+		)
 	}
 
 	rr := serverpb.Request{
@@ -333,9 +363,9 @@ func parseUint64(s string) (uint64, error) {
 	return strconv.ParseUint(s, 10, 64)
 }
 
-// writeInternalError logs and writes the given Error to the ResponseWriter.
+// writeError logs and writes the given Error to the ResponseWriter.
 // If Error is an internal error, it is rendered to the ResponseWriter.
-func writeInternalError(w http.ResponseWriter, err error) {
+func writeError(w http.ResponseWriter, err error) {
 	if err == nil {
 		return
 	}

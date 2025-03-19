@@ -117,7 +117,8 @@ func TestParseUint64(t *testing.T) {
 
 func TestBadParseRequest(t *testing.T) {
 	tests := []struct {
-		in *http.Request
+		in    *http.Request
+		wcode int
 	}{
 		{
 			// parseForm failure
@@ -125,36 +126,86 @@ func TestBadParseRequest(t *testing.T) {
 				Body:   nil,
 				Method: "PUT",
 			},
+			Err.EcodeInvalidForm,
 		},
 		{
 			// bad key prefix
 			&http.Request{
 				URL: mustNewURL(t, "/badprefix/"),
 			},
+			Err.EcodeInvalidForm,
 		},
 		// bad values for prevIndex, waitIndex, ttl
-		{mustNewRequest(t, "?prevIndex=foo")},
-		{mustNewRequest(t, "?prevIndex=1.5")},
-		{mustNewRequest(t, "?prevIndex=-1")},
-		{mustNewRequest(t, "?waitIndex=garbage")},
-		{mustNewRequest(t, "?waitIndex=??")},
-		{mustNewRequest(t, "?ttl=-1")},
+		{
+			mustNewRequest(t, "?prevIndex=foo"),
+			Err.EcodeIndexNaN,
+		},
+		{
+			mustNewRequest(t, "?prevIndex=1.5"),
+			Err.EcodeIndexNaN,
+		},
+		{
+			mustNewRequest(t, "?prevIndex=-1"),
+			Err.EcodeIndexNaN,
+		},
+		{
+			mustNewRequest(t, "?waitIndex=garbage"),
+			Err.EcodeIndexNaN,
+		},
+		{
+			mustNewRequest(t, "?waitIndex=??"),
+			Err.EcodeIndexNaN,
+		},
+		{
+			mustNewRequest(t, "?ttl=-1"),
+			Err.EcodeTTLNaN,
+		},
 		// bad values for recursive, sorted, wait
-		{mustNewRequest(t, "?recursive=hahaha")},
-		{mustNewRequest(t, "?recursive=1234")},
-		{mustNewRequest(t, "?recursive=?")},
-		{mustNewRequest(t, "?sorted=hahaha")},
-		{mustNewRequest(t, "?sorted=!!")},
-		{mustNewRequest(t, "?wait=notreally")},
-		{mustNewRequest(t, "?wait=what!")},
+		{
+			mustNewRequest(t, "?recursive=hahaha"),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewRequest(t, "?recursive=1234"),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewRequest(t, "?recursive=?"),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewRequest(t, "?sorted=hahaha"),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewRequest(t, "?sorted=!!"),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewRequest(t, "?wait=notreally"),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewRequest(t, "?wait=what!"),
+			Err.EcodeInvalidField,
+		},
 	}
 	for i, tt := range tests {
 		got, err := parseRequest(tt.in, 1234)
 		if err == nil {
-			t.Errorf("case %d: unexpected nil error!", i)
+			t.Errorf("#%d: unexpected nil error!", i)
+			continue
+		}
+		ee, ok := err.(*Err.Error)
+		if !ok {
+			t.Errorf("#%d: err is not not mars.Error!", i)
+			continue
+		}
+		if ee.ErrorCode != tt.wcode {
+			t.Errorf("#%d: code=%d, want %d", i, ee.ErrorCode, tt.wcode)
 		}
 		if !reflect.DeepEqual(got, serverpb.Request{}) {
-			t.Errorf("case %d: unexpected non-empty Request: %#v", i, got)
+			t.Errorf("#%d: unexpected non-empty Request: %#v", i, got)
 		}
 	}
 }
@@ -266,10 +317,10 @@ func (w *eventingWatcher) EventChan() chan *store.Event {
 
 func (w *eventingWatcher) Remove() {}
 
-func TestWriteInternalError(t *testing.T) {
+func TestWriteError(t *testing.T) {
 	// nil error should not panic
 	rw := httptest.NewRecorder()
-	writeInternalError(rw, nil)
+	writeError(rw, nil)
 	h := rw.Header()
 	if len(h) > 0 {
 		t.Fatalf("unexpected non-empty headers: %#v", h)
@@ -302,7 +353,7 @@ func TestWriteInternalError(t *testing.T) {
 
 	for i, tt := range tests {
 		rw := httptest.NewRecorder()
-		writeInternalError(rw, tt.err)
+		writeError(rw, tt.err)
 		if code := rw.Code; code != tt.wcode {
 			t.Errorf("#%d: got %d, want %d", i, code, tt.wcode)
 		}
@@ -521,5 +572,54 @@ func TestServeMachines(t *testing.T) {
 	}
 	if writer.Code != http.StatusOK {
 		t.Errorf("header = %d, want %d", writer.Code, http.StatusOK)
+	}
+}
+
+func TestPeersEndpoints(t *testing.T) {
+	tests := []struct {
+		peers     Peers
+		endpoints []string
+	}{
+		// single peer with a single address
+		{
+			peers: Peers(map[int64][]string{
+				1: {"192.0.2.1"},
+			}),
+			endpoints: []string{"http://192.0.2.1"},
+		},
+		// single peer with a single address with a port
+		{
+			peers: Peers(map[int64][]string{
+				1: {"192.0.2.1:8001"},
+			}),
+			endpoints: []string{"http://192.0.2.1:8001"},
+		},
+		// several peers explicitly unsorted
+		{
+			peers: Peers(map[int64][]string{
+				2: {"192.0.2.3", "192.0.2.4"},
+				3: {"192.0.2.5", "192.0.2.6"},
+				1: {"192.0.2.1", "192.0.2.2"},
+			}),
+			endpoints: []string{"http://192.0.2.1", "http://192.0.2.2", "http://192.0.2.3", "http://192.0.2.4", "http://192.0.2.5", "http://192.0.2.6"},
+		},
+		// no peers
+		{
+			peers:     Peers(map[int64][]string{}),
+			endpoints: []string{},
+		},
+		// peer with no endpoints
+		{
+			peers: Peers(map[int64][]string{
+				3: {},
+			}),
+			endpoints: []string{},
+		},
+	}
+	for i, tt := range tests {
+		endpoints := tt.peers.Endpoints()
+		if !reflect.DeepEqual(tt.endpoints, endpoints) {
+			t.Errorf("#%d: peers.Endpoints() incorrect: want=%#v got=%#v", i, tt.endpoints, endpoints)
+		}
 	}
 }
