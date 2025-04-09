@@ -3,7 +3,7 @@ package raft
 import (
 	"fmt"
 
-	pb "github.com/marsevilspirit/marstore/raft/raftpb"
+	pb "github.com/marsevilspirit/deimos/raft/raftpb"
 )
 
 const (

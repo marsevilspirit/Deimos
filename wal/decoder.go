@@ -6,9 +6,9 @@ import (
 	"hash"
 	"io"
 
-	"github.com/marsevilspirit/marstore/crc"
-	"github.com/marsevilspirit/marstore/raft/raftpb"
-	"github.com/marsevilspirit/marstore/wal/walpb"
+	"github.com/marsevilspirit/deimos/crc"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
+	"github.com/marsevilspirit/deimos/wal/walpb"
 )
 
 type decoder struct {

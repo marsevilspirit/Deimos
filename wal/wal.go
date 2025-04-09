@@ -10,9 +10,9 @@ import (
 	"path"
 	"sort"
 
-	"github.com/marsevilspirit/marstore/raft"
-	"github.com/marsevilspirit/marstore/raft/raftpb"
-	"github.com/marsevilspirit/marstore/wal/walpb"
+	"github.com/marsevilspirit/deimos/raft"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
+	"github.com/marsevilspirit/deimos/wal/walpb"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/marsevilspirit/marstore/raft/raftpb"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
 )
 
 var testSnap = &raftpb.Snapshot{

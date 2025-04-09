@@ -8,7 +8,7 @@ import (
 	"sort"
 	"testing"
 
-	pb "github.com/marsevilspirit/marstore/raft/raftpb"
+	pb "github.com/marsevilspirit/deimos/raft/raftpb"
 )
 
 // nextEnts returns the appliable entries and updates the applied index

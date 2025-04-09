@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	Err "github.com/marsevilspirit/marstore/error"
+	Err "github.com/marsevilspirit/deimos/error"
 )
 
 // explanations of Compare function result

@@ -1,7 +1,7 @@
 package raft
 
 import (
-	pb "github.com/marsevilspirit/marstore/raft/raftpb"
+	pb "github.com/marsevilspirit/deimos/raft/raftpb"
 )
 
 func applyToStore(ents []pb.Entry)    {}

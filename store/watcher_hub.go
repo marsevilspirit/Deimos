@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	Err "github.com/marsevilspirit/marstore/error"
+	Err "github.com/marsevilspirit/deimos/error"
 )
 
 // A watcherHub contains all subscribed watchers.

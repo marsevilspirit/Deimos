@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	Err "github.com/marsevilspirit/marstore/error"
+	Err "github.com/marsevilspirit/deimos/error"
 	"github.com/stretchr/testify/assert"
 )
 

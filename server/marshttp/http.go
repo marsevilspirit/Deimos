@@ -19,12 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marsevilspirit/marstore/elog"
-	Err "github.com/marsevilspirit/marstore/error"
-	"github.com/marsevilspirit/marstore/raft/raftpb"
-	"github.com/marsevilspirit/marstore/server"
-	"github.com/marsevilspirit/marstore/server/serverpb"
-	"github.com/marsevilspirit/marstore/store"
+	"github.com/marsevilspirit/deimos/elog"
+	Err "github.com/marsevilspirit/deimos/error"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
+	"github.com/marsevilspirit/deimos/server"
+	"github.com/marsevilspirit/deimos/server/serverpb"
+	"github.com/marsevilspirit/deimos/store"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	Err "github.com/marsevilspirit/marstore/error"
+	Err "github.com/marsevilspirit/deimos/error"
 )
 
 type EventHistory struct {

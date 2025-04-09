@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marsevilspirit/marstore/raft"
-	"github.com/marsevilspirit/marstore/raft/raftpb"
-	pb "github.com/marsevilspirit/marstore/server/serverpb"
-	"github.com/marsevilspirit/marstore/store"
+	"github.com/marsevilspirit/deimos/raft"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
+	pb "github.com/marsevilspirit/deimos/server/serverpb"
+	"github.com/marsevilspirit/deimos/store"
 )
 
 func TestClusterOf1(t *testing.T) { testServer(t, 1) }

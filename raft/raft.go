@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	pb "github.com/marsevilspirit/marstore/raft/raftpb"
+	pb "github.com/marsevilspirit/deimos/raft/raftpb"
 )
 
 const None int64 = 0
@@ -103,7 +103,6 @@ type raft struct {
 
 	state StateType
 
-	// 收到的投票记录
 	votes map[int64]bool
 
 	msgs []pb.Message
@@ -280,7 +279,7 @@ func (r *raft) tickElection() {
 		return
 	}
 	r.elapsed++
-	// TODO (xiangli): elctionTimeout should be randomized.
+	// TODO: elctionTimeout should be randomized.
 	if r.elapsed > r.electionTimeout {
 		r.elapsed = 0
 		r.Step(pb.Message{From: r.id, Type: msgHup})

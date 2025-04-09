@@ -6,8 +6,8 @@ import (
 	"hash"
 	"io"
 
-	"github.com/marsevilspirit/marstore/crc"
-	"github.com/marsevilspirit/marstore/wal/walpb"
+	"github.com/marsevilspirit/deimos/crc"
+	"github.com/marsevilspirit/deimos/wal/walpb"
 )
 
 type encoder struct {

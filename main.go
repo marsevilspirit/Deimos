@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/marsevilspirit/marstore/raft"
-	"github.com/marsevilspirit/marstore/server"
-	"github.com/marsevilspirit/marstore/server/marshttp"
-	"github.com/marsevilspirit/marstore/store"
-	"github.com/marsevilspirit/marstore/wal"
+	"github.com/marsevilspirit/deimos/raft"
+	"github.com/marsevilspirit/deimos/server"
+	"github.com/marsevilspirit/deimos/server/marshttp"
+	"github.com/marsevilspirit/deimos/store"
+	"github.com/marsevilspirit/deimos/wal"
 )
 
 const (

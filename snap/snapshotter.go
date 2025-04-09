@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/marsevilspirit/marstore/raft/raftpb"
-	"github.com/marsevilspirit/marstore/snap/snappb"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
+	"github.com/marsevilspirit/deimos/snap/snappb"
 )
 
 const (

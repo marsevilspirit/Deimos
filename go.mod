@@ -1,4 +1,4 @@
-module github.com/marsevilspirit/marstore
+module github.com/marsevilspirit/deimos
 
 go 1.24.0
 

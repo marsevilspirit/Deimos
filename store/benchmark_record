@@ -1,6 +1,6 @@
 goos: linux
 goarch: amd64
-pkg: github.com/marsevilspirit/marstore/store
+pkg: github.com/marsevilspirit/deimos/store
 cpu: 13th Gen Intel(R) Core(TM) i9-13980HX
 BenchmarkStoreSet128Bytes
 

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	Err "github.com/marsevilspirit/marstore/error"
+	Err "github.com/marsevilspirit/deimos/error"
 )
 
 // The default version to set when the store is first initialized.

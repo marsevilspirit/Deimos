@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/marsevilspirit/marstore/wal/walpb"
+	"github.com/marsevilspirit/deimos/wal/walpb"
 )
 
 func TestReadRecord(t *testing.T) {
