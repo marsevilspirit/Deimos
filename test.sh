@@ -5,4 +5,5 @@
  	./server/deimos_http \
  	./raft \
 	./wait \
- 	./store
+ 	./store \
+	./proxy

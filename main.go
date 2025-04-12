@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/marsevilspirit/deimos/proxy"
 	"github.com/marsevilspirit/deimos/raft"
 	"github.com/marsevilspirit/deimos/server"
 	"github.com/marsevilspirit/deimos/server/deimos_http"
@@ -24,11 +25,13 @@ const (
 )
 
 var (
-	fid     = flag.String("id", "0x1", "The ID of this server")
-	timeout = flag.Duration("timeout", 10*time.Second, "Request Timeout")
-	laddr   = flag.String("l", ":9927", "HTTP service address (e.g., ':9927')")
-	dir     = flag.String("data-dir", "", "Directry to store wal files and snapshot files")
-	peers   = &deimos_http.Peers{}
+	fid       = flag.String("id", "0x1", "The ID of this server")
+	timeout   = flag.Duration("timeout", 10*time.Second, "Request Timeout")
+	laddr     = flag.String("l", ":9927", "HTTP service address (e.g., ':9927')")
+	dir       = flag.String("data-dir", "", "Directry to store wal files and snapshot files")
+	proxyMode = flag.Bool("proxy-mode", false, "Forward HTTP requests to peers, do not participate in raft.")
+
+	peers = &deimos_http.Peers{}
 )
 
 func init() {
@@ -39,7 +42,12 @@ func init() {
 func main() {
 	flag.Parse()
 
-	h := startDeimos()
+	var h http.Handler
+	if *proxyMode {
+		h = startProxy()
+	} else {
+		h = startDeimos()
+	}
 
 	http.Handle("/", h)
 	log.Fatal(http.ListenAndServe(*laddr, nil))
@@ -59,7 +67,7 @@ func startDeimos() http.Handler {
 		*dir = fmt.Sprintf("%v_deimos_data", *fid)
 		log.Printf("main: no data-dir is given, uing default data-dir ./%s", *dir)
 	}
-	if err := os.MkdirAll(*dir, 0700); err != nil {
+	if err := os.MkdirAll(*dir, privateDirMode); err != nil {
 		log.Fatalf("main: cannot create data directory: %v", err)
 	}
 
@@ -116,4 +124,13 @@ func startRaft(id int64, perrIDs []int64, waldir string) (raft.Node, *wal.WAL) {
 	// WARN: snapshot replaces nil
 	n := raft.RestartNode(id, perrIDs, 10, 1, nil, st, ents)
 	return n, w
+}
+
+func startProxy() http.Handler {
+	h, err := proxy.NewHandler((*peers).Endpoints())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return h
 }
