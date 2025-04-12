@@ -13,7 +13,7 @@ import (
 
 	"github.com/marsevilspirit/deimos/raft"
 	"github.com/marsevilspirit/deimos/server"
-	"github.com/marsevilspirit/deimos/server/marshttp"
+	"github.com/marsevilspirit/deimos/server/deimos_http"
 	"github.com/marsevilspirit/deimos/store"
 	"github.com/marsevilspirit/deimos/wal"
 )
@@ -28,7 +28,7 @@ var (
 	timeout = flag.Duration("timeout", 10*time.Second, "Request Timeout")
 	laddr   = flag.String("l", ":9927", "HTTP service address (e.g., ':9927')")
 	dir     = flag.String("data-dir", "", "Directry to store wal files and snapshot files")
-	peers   = &marshttp.Peers{}
+	peers   = &deimos_http.Peers{}
 )
 
 func init() {
@@ -39,13 +39,13 @@ func init() {
 func main() {
 	flag.Parse()
 
-	h := startMars()
+	h := startDeimos()
 
 	http.Handle("/", h)
 	log.Fatal(http.ListenAndServe(*laddr, nil))
 }
 
-func startMars() http.Handler {
+func startDeimos() http.Handler {
 	id, err := strconv.ParseInt(*fid, 0, 64)
 	if err != nil {
 		log.Fatal(err)
@@ -56,7 +56,7 @@ func startMars() http.Handler {
 	}
 
 	if *dir == "" {
-		*dir = fmt.Sprintf("%v_mars_data", *fid)
+		*dir = fmt.Sprintf("%v_deimos_data", *fid)
 		log.Printf("main: no data-dir is given, uing default data-dir ./%s", *dir)
 	}
 	if err := os.MkdirAll(*dir, 0700); err != nil {
@@ -75,13 +75,13 @@ func startMars() http.Handler {
 		Store:  store.New(),
 		Node:   n,
 		Save:   w.Save,
-		Send:   marshttp.Sender(*peers),
+		Send:   deimos_http.Sender(*peers),
 		Ticker: tk.C,
 	}
 
 	server.Start(s)
 
-	h := marshttp.Handler{
+	h := deimos_http.Handler{
 		Timeout: *timeout,
 		Server:  s,
 		Peers:   *peers,

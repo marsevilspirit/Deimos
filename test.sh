@@ -2,7 +2,7 @@
  go test ./wal \
  	./snap \
 	./server \
- 	./server/marshttp \
+ 	./server/deimos_http \
  	./raft \
 	./wait \
  	./store

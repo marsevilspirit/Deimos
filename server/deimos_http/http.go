@@ -1,4 +1,4 @@
-package marshttp
+package deimos_http
 
 import (
 	"bytes"
@@ -382,7 +382,7 @@ func writeEvent(w http.ResponseWriter, ev *store.Event) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Add("X-Mars-Index", fmt.Sprint(ev.Index()))
+	w.Header().Add("X-Deimos-Index", fmt.Sprint(ev.Index()))
 
 	if ev.IsCreated() {
 		w.WriteHeader(http.StatusCreated)

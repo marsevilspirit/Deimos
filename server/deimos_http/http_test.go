@@ -1,4 +1,4 @@
-package marshttp
+package deimos_http
 
 import (
 	"context"
@@ -198,7 +198,7 @@ func TestBadParseRequest(t *testing.T) {
 		}
 		ee, ok := err.(*Err.Error)
 		if !ok {
-			t.Errorf("#%d: err is not not mars.Error!", i)
+			t.Errorf("#%d: err is not not deimos.Error!", i)
 			continue
 		}
 		if ee.ErrorCode != tt.wcode {
@@ -357,8 +357,8 @@ func TestWriteError(t *testing.T) {
 		if code := rw.Code; code != tt.wcode {
 			t.Errorf("#%d: got %d, want %d", i, code, tt.wcode)
 		}
-		if idx := rw.Header().Get("X-Mars-Index"); idx != tt.wi {
-			t.Errorf("#%d: X-Mars-Index=%q, want %q", i, idx, tt.wi)
+		if idx := rw.Header().Get("X-Deimos-Index"); idx != tt.wi {
+			t.Errorf("#%d: X-Deimos-Index=%q, want %q", i, idx, tt.wi)
 		}
 	}
 }
@@ -412,8 +412,8 @@ func TestWriteEvent(t *testing.T) {
 		if gct := rw.Header().Get("Content-Type"); gct != "application/json" {
 			t.Errorf("case %d: bad Content-Type: got %q, want application/json", i, gct)
 		}
-		if gei := rw.Header().Get("X-Mars-Index"); gei != tt.idx {
-			t.Errorf("case %d: bad X-Mars-Index header: got %s, want %s", i, gei, tt.idx)
+		if gei := rw.Header().Get("X-Deimos-Index"); gei != tt.idx {
+			t.Errorf("case %d: bad X-Deimos-Index header: got %s, want %s", i, gei, tt.idx)
 		}
 		if rw.Code != tt.code {
 			t.Errorf("case %d: bad response code: got %d, want %v", i, rw.Code, tt.code)

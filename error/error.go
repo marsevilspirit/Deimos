@@ -118,7 +118,7 @@ func (e Error) toJsonString() string {
 }
 
 func (e Error) Write(w http.ResponseWriter) {
-	w.Header().Add("X-Mars-Index", fmt.Sprint(e.Index))
+	w.Header().Add("X-Deimos-Index", fmt.Sprint(e.Index))
 	// 3xx is raft internal error
 	status := http.StatusBadRequest
 	switch e.ErrorCode {

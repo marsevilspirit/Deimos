@@ -1,4 +1,4 @@
 *.txt
 *.log
-marstore
-*_mars_data/
+deimos
+*_deimos_data/

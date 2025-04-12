@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	ErrUnknownMethod = errors.New("Marstore server: unknown method")
-	ErrStopped       = errors.New("Marstore server: server stopped")
+	ErrUnknownMethod = errors.New("Deimos server: unknown method")
+	ErrStopped       = errors.New("Deimos server: server stopped")
 )
 
 type SendFunc func(m []raftpb.Message)

@@ -1,4 +1,4 @@
-package marshttp
+package deimos_http
 
 import "testing"
 
