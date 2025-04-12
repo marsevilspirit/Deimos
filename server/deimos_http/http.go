@@ -32,8 +32,6 @@ const (
 	machinesPrefix = "/v2/machines"
 )
 
-var emptyReq = serverpb.Request{}
-
 type Peers map[int64][]string
 
 func (ps Peers) Pick(id int64) string {
@@ -260,13 +258,17 @@ func genID() int64 {
 
 func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 	var err error
+	emptyReq := serverpb.Request{}
 
-	if err = r.ParseForm(); err != nil {
+	err = r.ParseForm()
+	if err != nil {
 		return emptyReq, Err.NewRequestError(
 			Err.EcodeInvalidForm,
 			err.Error(),
 		)
 	}
+
+	q := r.URL.Query()
 
 	if !strings.HasPrefix(r.URL.Path, keysPrefix) {
 		return emptyReq, Err.NewRequestError(
@@ -275,67 +277,89 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 		)
 	}
 
-	path := r.URL.Path[len(keysPrefix):]
-
-	q := r.URL.Query()
+	p := r.URL.Path[len(keysPrefix):]
 
 	var pIdx, wIdx, ttl uint64
-	if pIdx, err = parseUint64(q.Get("prevIndex")); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeIndexNaN,
-			"invalid value for prevIndex",
-		)
+	if pIdxS := q.Get("prevIndex"); pIdxS != "" {
+		if pIdx, err = parseUint64(pIdxS); err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeIndexNaN,
+				fmt.Sprintf("invalid value for prevIndex: %q", pIdxS),
+			)
+		}
 	}
-	if wIdx, err = parseUint64(q.Get("waitIndex")); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeIndexNaN,
-			"invalid value for waitIndex",
-		)
+	if wIdxS := q.Get("waitIndex"); wIdxS != "" {
+		if wIdx, err = parseUint64(wIdxS); err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeIndexNaN,
+				fmt.Sprintf("invalid value for waitIndex: %q", wIdxS),
+			)
+		}
 	}
-	if ttl, err = parseUint64(q.Get("ttl")); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeTTLNaN,
-			"invalid value for ttl",
-		)
+	if ttlS := q.Get("ttl"); ttlS != "" {
+		if ttl, err = parseUint64(ttlS); err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeTTLNaN,
+				fmt.Sprintf("invalid value for ttl: %q", ttlS),
+			)
+		}
 	}
 
 	var rec, sort, wait bool
-	if rec, err = parseBool(q.Get("recursive")); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeInvalidField,
-			"invalid value for recursive",
-		)
+	if recS := q.Get("recursive"); recS != "" {
+		if rec, err = strconv.ParseBool(recS); err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeInvalidField,
+				fmt.Sprintf("invalid value for recursive: %q", recS),
+			)
+		}
 	}
-	if sort, err = parseBool(q.Get("sorted")); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeInvalidField,
-			"invalid value for sorted",
-		)
+	if sortS := q.Get("sorted"); sortS != "" {
+		if sort, err = strconv.ParseBool(sortS); err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeInvalidField,
+				fmt.Sprintf("invalid value for sorted: %q", sortS),
+			)
+		}
 	}
-	if wait, err = parseBool(q.Get("wait")); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeInvalidField,
-			"invalid value for wait",
-		)
-	}
-
-	rr := serverpb.Request{
-		Id:        id,
-		Method:    r.Method,
-		Val:       r.FormValue("value"),
-		Path:      path,
-		PrevValue: q.Get("prevValue"),
-		PrevIndex: pIdx,
-		Recursive: rec,
-		Since:     wIdx,
-		Sorted:    sort,
-		Wait:      wait,
+	if waitS := q.Get("wait"); waitS != "" {
+		if wait, err = strconv.ParseBool(waitS); err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeInvalidField,
+				fmt.Sprintf("invalid value for wait: %q", waitS),
+			)
+		}
 	}
 
 	// prevExists is nullable, so leave it null if not specified
+	var pe *bool
 	if _, ok := q["prevExists"]; ok {
-		bv, _ := parseBool(q.Get("prevExists"))
-		rr.PrevExists = &bv
+		bv, err := strconv.ParseBool(q.Get("prevExists"))
+		if err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeInvalidField,
+				"invalid value for prevExists",
+			)
+		}
+		pe = &bv
+	}
+
+	rr := serverpb.Request{
+		Id:         id,
+		Method:     r.Method,
+		Path:       p,
+		Val:        r.FormValue("value"),
+		PrevValue:  q.Get("prevValue"),
+		PrevIndex:  pIdx,
+		PrevExists: pe,
+		Recursive:  rec,
+		Since:      wIdx,
+		Sorted:     sort,
+		Wait:       wait,
+	}
+
+	if pe != nil {
+		rr.PrevExists = pe
 	}
 
 	if ttl > 0 {
@@ -347,19 +371,7 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 	return rr, nil
 }
 
-func parseBool(s string) (bool, error) {
-	if s == "" {
-		return false, nil
-	}
-
-	return strconv.ParseBool(s)
-}
-
 func parseUint64(s string) (uint64, error) {
-	if s == "" {
-		return 0, nil
-	}
-
 	return strconv.ParseUint(s, 10, 64)
 }
 
@@ -377,9 +389,9 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 }
 
-func writeEvent(w http.ResponseWriter, ev *store.Event) {
+func writeEvent(w http.ResponseWriter, ev *store.Event) error {
 	if ev == nil {
-		return
+		return errors.New("cannot write empty Event!")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Add("X-Deimos-Index", fmt.Sprint(ev.Index()))
@@ -388,9 +400,7 @@ func writeEvent(w http.ResponseWriter, ev *store.Event) {
 		w.WriteHeader(http.StatusCreated)
 	}
 
-	if err := json.NewEncoder(w).Encode(ev); err != nil {
-		panic(err) // should never be reached
-	}
+	return json.NewEncoder(w).Encode(ev)
 }
 
 // waitForEvent waits for a given watcher to return its associated
