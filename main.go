@@ -58,6 +58,9 @@ func startDeimos() http.Handler {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if id == raft.None {
+		log.Fatalf("Deimos: cannot use None(%d) as Deimos server id", raft.None)
+	}
 
 	if peers.Pick(id) == "" {
 		log.Fatalf("%#x=<addr> must be specified in peers", id)

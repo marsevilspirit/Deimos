@@ -49,6 +49,7 @@ type WAL struct {
 }
 
 // Create creates a WAL ready for appending records.
+// The index of first record saved MUST be 0.
 func Create(dirpath string) (*WAL, error) {
 	log.Printf("path=%s wal.create", dirpath)
 	if Exist(dirpath) {
@@ -59,7 +60,7 @@ func Create(dirpath string) (*WAL, error) {
 		return nil, err
 	}
 
-	p := path.Join(dirpath, fmt.Sprintf("%016x-%016x.wal", 0, 1))
+	p := path.Join(dirpath, fmt.Sprintf("%016x-%016x.wal", 0, 0))
 	f, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, err

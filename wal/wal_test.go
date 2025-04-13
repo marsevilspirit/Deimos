@@ -16,7 +16,7 @@ var (
 	infoData   = []byte("\b\xef\xfd\x02")
 	infoRecord = append([]byte("\x0e\x00\x00\x00\x00\x00\x00\x00\b\x01\x10\x99\xb5\xe4\xd0\x03\x1a\x04"), infoData...)
 
-	firstWalName = "0000000000000000-0000000000000001.wal"
+	firstWalName = "0000000000000000-0000000000000000.wal"
 )
 
 func TestNew(t *testing.T) {
@@ -62,7 +62,7 @@ func TestOpenAtIndex(t *testing.T) {
 	}
 	f.Close()
 
-	w, err := OpenAtIndex(dir, 1)
+	w, err := OpenAtIndex(dir, 0)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -110,6 +110,10 @@ func TestCut(t *testing.T) {
 	}
 	defer w.Close()
 
+	// TODO(unihorn): remove this when cut can operate on an empty file
+	if err := w.SaveEntry(&raftpb.Entry{}); err != nil {
+		t.Fatal(err)
+	}
 	if err := w.Cut(0); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +150,7 @@ func TestRecover(t *testing.T) {
 	if err = w.SaveInfo(i); err != nil {
 		t.Fatal(err)
 	}
-	ents := []raftpb.Entry{{Index: 1, Term: 1, Data: []byte{1}}, {Index: 2, Term: 2, Data: []byte{2}}}
+	ents := []raftpb.Entry{{Index: 0, Term: 0}, {Index: 1, Term: 1, Data: []byte{1}}, {Index: 2, Term: 2, Data: []byte{2}}}
 	for _, e := range ents {
 		if err = w.SaveEntry(&e); err != nil {
 			t.Fatal(err)
@@ -160,7 +164,7 @@ func TestRecover(t *testing.T) {
 	}
 	w.Close()
 
-	if w, err = OpenAtIndex(p, 1); err != nil {
+	if w, err = OpenAtIndex(p, 0); err != nil {
 		t.Fatal(err)
 	}
 	id, state, entries, err := w.ReadAll()
@@ -263,6 +267,10 @@ func TestRecoverAfterCut(t *testing.T) {
 	if err = w.SaveInfo(info); err != nil {
 		t.Fatal(err)
 	}
+	// TODO(unihorn): remove this when cut can operate on an empty file
+	if err = w.SaveEntry(&raftpb.Entry{}); err != nil {
+		t.Fatal(err)
+	}
 	if err = w.Cut(0); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +314,7 @@ func TestRecoverAfterCut(t *testing.T) {
 		}
 		for j, e := range entries {
 			if e.Index != int64(j+i) {
-				t.Errorf("#%d: ents[%d].Index = %+v, want %+v", i, j, e.Index, j+i+1)
+				t.Errorf("#%d: ents[%d].Index = %+v, want %+v", i, j, e.Index, j+i)
 			}
 		}
 	}
