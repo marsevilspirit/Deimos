@@ -1,9 +1,10 @@
 #!/bin/sh
- go test ./wal \
- 	./snap \
+go test \
+	./wal \
+	./snap \
 	./server \
- 	./server/deimos_http \
- 	./raft \
+	./server/deimos_http \
+	./raft \
 	./wait \
- 	./store \
+	./store \
 	./proxy

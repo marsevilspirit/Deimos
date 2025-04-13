@@ -109,7 +109,7 @@ func startRaft(id int64, perrIDs []int64, waldir string) (raft.Node, *wal.WAL) {
 	}
 	// restart a node from previous wal
 	// TODO: check snapshot; not open from zero
-	w, err := wal.OpenFromIndex(waldir, 0)
+	w, err := wal.OpenAtIndex(waldir, 0)
 	if err != nil {
 		log.Fatal(err)
 	}

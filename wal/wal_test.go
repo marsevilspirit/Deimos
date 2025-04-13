@@ -49,7 +49,7 @@ func TestNewForInitedDir(t *testing.T) {
 	}
 }
 
-func TestOpenFromIndex(t *testing.T) {
+func TestOpenAtIndex(t *testing.T) {
 	dir, err := ioutil.TempDir(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestOpenFromIndex(t *testing.T) {
 	}
 	f.Close()
 
-	w, err := OpenFromIndex(dir, 0)
+	w, err := OpenAtIndex(dir, 0)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -78,7 +78,7 @@ func TestOpenFromIndex(t *testing.T) {
 	}
 	f.Close()
 
-	w, err = OpenFromIndex(dir, 5)
+	w, err = OpenAtIndex(dir, 5)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -92,7 +92,7 @@ func TestOpenFromIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(emptydir)
-	if _, err = OpenFromIndex(emptydir, 0); err != ErrNotFound {
+	if _, err = OpenAtIndex(emptydir, 0); err != ErrNotFound {
 		t.Errorf("err = %v, want %v", err, ErrNotFound)
 	}
 }
@@ -160,7 +160,7 @@ func TestRecover(t *testing.T) {
 	}
 	w.Close()
 
-	if w, err = OpenFromIndex(p, 0); err != nil {
+	if w, err = OpenAtIndex(p, 0); err != nil {
 		t.Fatal(err)
 	}
 	id, state, entries, err := w.ReadAll()
@@ -285,7 +285,7 @@ func TestRecoverAfterCut(t *testing.T) {
 	}
 
 	for i := 0; i < 10; i++ {
-		w, err := OpenFromIndex(p, int64(i))
+		w, err := OpenAtIndex(p, int64(i))
 		if i <= 3 {
 			if err != ErrNotFound {
 				t.Errorf("#%d: err = %v, want %v", i, err, ErrNotFound)

@@ -76,11 +76,12 @@ func Create(dirpath string) (*WAL, error) {
 	return w, nil
 }
 
-// OpenFromIndex opens the WAL files containing all the entries after
+// OpenAtIndex opens the WAL files containing all the entries after
 // the given index.
-// The returned WAL is ready to read. The WAL cannot be appended to before
+// The returned WAL is ready to read.
+// The WAL cannot be appended to before
 // reading out all of its previous records.
-func OpenFromIndex(dirpath string, index int64) (*WAL, error) {
+func OpenAtIndex(dirpath string, index int64) (*WAL, error) {
 	log.Printf("path=%s wal.load index=%d", dirpath, index)
 	names, err := readDir(dirpath)
 	if err != nil {
