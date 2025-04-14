@@ -36,7 +36,7 @@ var errClosed = errors.New("marshttp: client closed connection")
 // raft communication.
 type Handler struct {
 	Timeout time.Duration
-	Server  *server.Server
+	Server  server.Server
 	// TODO: dynamic configuration may make this outdated. take care of it.
 	// TODO: dynamic configuration may introduce race also.
 	Peers Peers
@@ -65,6 +65,10 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r.Method, "GET", "PUT", "POST", "DELETE") {
+		return
+	}
+
 	rr, err := parseRequest(r, genID())
 	if err != nil {
 		writeError(w, err)
@@ -96,8 +100,7 @@ func (h Handler) serveKeys(ctx context.Context, w http.ResponseWriter, r *http.R
 // serveMachines responds address list in the format '0.0.0.0, 1.1.1.1'.
 // TODO: rethink the format of machine list because it is not json format.
 func (h Handler) serveMachines(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" && r.Method != "HEAD" {
-		allow(w, "GET", "HEAD")
+	if !allowMethod(w, r.Method, "GET", "HEAD") {
 		return
 	}
 	endpoints := h.Peers.Endpoints()
@@ -105,6 +108,9 @@ func (h Handler) serveMachines(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !allowMethod(w, r.Method, "POST") {
+		return
+	}
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Println("marshttp: error reading raft message:", err)
@@ -114,9 +120,12 @@ func (h *Handler) serveRaft(ctx context.Context, w http.ResponseWriter, r *http.
 		log.Println("marshttp: error unmarshaling raft message:", err)
 	}
 	log.Printf("marshttp: raft recv message from %#x: %+v", m.From, m)
-	if err := h.Server.Node.Step(ctx, m); err != nil {
-		log.Println("marshttp: error stepping raft messages:", err)
+	if err := h.Server.Process(ctx, m); err != nil {
+		log.Println("etcdhttp: error processing raft message:", err)
+		writeError(w, err)
+		return
 	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // genID generates a random id that is: n < 0 < n.
@@ -309,7 +318,16 @@ func waitForEvent(ctx context.Context, w http.ResponseWriter, wa store.Watcher) 
 	}
 }
 
-func allow(w http.ResponseWriter, m ...string) {
-	w.Header().Set("Allow", strings.Join(m, ","))
+// allowMethod verifies that the given method is one of the allowed methods,
+// and if not, it writes an error to w.  A boolean is returned indicating
+// whether or not the method is allowed.
+func allowMethod(w http.ResponseWriter, m string, ms ...string) bool {
+	for _, meth := range ms {
+		if m == meth {
+			return true
+		}
+	}
+	w.Header().Set("Allow", strings.Join(ms, ","))
 	http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	return false
 }
