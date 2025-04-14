@@ -22,4 +22,5 @@ message Request {
 	required bool   recursive  = 12 [(gogoproto.nullable) = false];
 	required bool   sorted     = 13 [(gogoproto.nullable) = false];
 	required bool   quorum     = 14 [(gogoproto.nullable) = false];
+	required int64  time       = 15 [(gogoproto.nullable) = false];
 }

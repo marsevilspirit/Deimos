@@ -1,9 +1,11 @@
 package deimos_http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -35,15 +37,15 @@ func TestSet(t *testing.T) {
 	n.Campaign(ctx)
 
 	srv := &server.DeimosServer{
-		Node:  n,
-		Store: st,
-		Send:  server.SendFunc(nopSend),
-		Save:  func(st raftpb.HardState, ents []raftpb.Entry) {},
+		Node:    n,
+		Store:   st,
+		Send:    server.SendFunc(nopSend),
+		Storage: nopStorage{},
 	}
 	srv.Start()
 	defer srv.Stop()
 
-	h := NewHandler(srv, nil, time.Hour)
+	h := NewClientHandler(srv, nil, time.Hour)
 	s := httptest.NewServer(h)
 	defer s.Close()
 
@@ -74,7 +76,14 @@ func TestSet(t *testing.T) {
 }
 
 func stringp(s string) *string { return &s }
-func boolp(b bool) *bool       { return &b }
+
+type nopStorage struct{}
+
+func (np nopStorage) Save(st raftpb.HardState, ents []raftpb.Entry) {}
+func (np nopStorage) Cut() error                                    { return nil }
+func (np nopStorage) SaveSnap(st raftpb.Snapshot)                   {}
+
+func boolp(b bool) *bool { return &b }
 
 func mustNewURL(t *testing.T, s string) *url.URL {
 	u, err := url.Parse(s)
@@ -85,10 +94,11 @@ func mustNewURL(t *testing.T, s string) *url.URL {
 }
 
 // mustNewRequest takes a path, appends it to the standard keysPrefix, and constructs
-// an *http.Request referencing the resulting URL
+// a GET *http.Request referencing the resulting URL
 func mustNewRequest(t *testing.T, p string) *http.Request {
 	return &http.Request{
-		URL: mustNewURL(t, path.Join(keysPrefix, p)),
+		Method: "GET",
+		URL:    mustNewURL(t, path.Join(keysPrefix, p)),
 	}
 }
 
@@ -243,8 +253,9 @@ func TestGoodParseRequest(t *testing.T) {
 			// good prefix, all other values default
 			mustNewRequest(t, "foo"),
 			serverpb.Request{
-				Id:   1234,
-				Path: "/foo",
+				Id:     1234,
+				Method: "GET",
+				Path:   "/foo",
 			},
 		},
 		{
@@ -486,8 +497,9 @@ func TestWriteEvent(t *testing.T) {
 	}
 
 	tests := []struct {
-		ev   *store.Event
-		idx  string
+		ev  *store.Event
+		idx string
+		// TODO: check body as well as just status code
 		code int
 		err  error
 	}{
@@ -644,7 +656,7 @@ func TestV2MachinesEndpoint(t *testing.T) {
 		{"POST", http.StatusMethodNotAllowed},
 	}
 
-	h := NewHandler(nil, Peers{}, time.Hour)
+	h := NewClientHandler(nil, Peers{}, time.Hour)
 	s := httptest.NewServer(h)
 	defer s.Close()
 
@@ -796,5 +808,315 @@ func TestAllowMethod(t *testing.T) {
 				t.Errorf("#%d: Allow header=%q, want %q", i, gh, tt.wh)
 			}
 		}
+	}
+}
+
+// errServer implements the etcd.Server interface for testing.
+// It returns the given error from any Do/Process calls.
+type errServer struct {
+	err error
+}
+
+func (fs *errServer) Do(ctx context.Context, r serverpb.Request) (server.Response, error) {
+	return server.Response{}, fs.err
+}
+func (fs *errServer) Process(ctx context.Context, m raftpb.Message) error {
+	return fs.err
+}
+func (fs *errServer) Start() {}
+func (fs *errServer) Stop()  {}
+
+// errReader implements io.Reader to facilitate a broken request.
+type errReader struct{}
+
+func (er *errReader) Read(_ []byte) (int, error) { return 0, errors.New("some error") }
+
+func mustMarshalMsg(t *testing.T, m raftpb.Message) []byte {
+	json, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("error marshalling raft Message: %#v", err)
+	}
+	return json
+}
+
+func TestServeRaft(t *testing.T) {
+	testCases := []struct {
+		method    string
+		body      io.Reader
+		serverErr error
+
+		wcode int
+	}{
+		{
+			// bad method
+			"GET",
+			bytes.NewReader(
+				mustMarshalMsg(
+					t,
+					raftpb.Message{},
+				),
+			),
+			nil,
+			http.StatusMethodNotAllowed,
+		},
+		{
+			// bad method
+			"PUT",
+			bytes.NewReader(
+				mustMarshalMsg(
+					t,
+					raftpb.Message{},
+				),
+			),
+			nil,
+			http.StatusMethodNotAllowed,
+		},
+		{
+			// bad method
+			"DELETE",
+			bytes.NewReader(
+				mustMarshalMsg(
+					t,
+					raftpb.Message{},
+				),
+			),
+			nil,
+			http.StatusMethodNotAllowed,
+		},
+		{
+			// bad request body
+			"POST",
+			&errReader{},
+			nil,
+			http.StatusBadRequest,
+		},
+		{
+			// bad request protobuf
+			"POST",
+			strings.NewReader("malformed garbage"),
+			nil,
+			http.StatusBadRequest,
+		},
+		{
+			// good request, etcdserver.Server error
+			"POST",
+			bytes.NewReader(
+				mustMarshalMsg(
+					t,
+					raftpb.Message{},
+				),
+			),
+			errors.New("some error"),
+			http.StatusInternalServerError,
+		},
+		{
+			// good request
+			"POST",
+			bytes.NewReader(
+				mustMarshalMsg(
+					t,
+					raftpb.Message{},
+				),
+			),
+			nil,
+			http.StatusNoContent,
+		},
+	}
+	for i, tt := range testCases {
+		req, err := http.NewRequest(tt.method, "foo", tt.body)
+		if err != nil {
+			t.Fatalf("#%d: could not create request: %#v", i, err)
+		}
+		h := &serverHandler{
+			timeout: time.Hour,
+			server:  &errServer{tt.serverErr},
+			peers:   nil,
+		}
+		rw := httptest.NewRecorder()
+		h.serveRaft(rw, req)
+		if rw.Code != tt.wcode {
+			t.Errorf("#%d: got code=%d, want %d", i, rw.Code, tt.wcode)
+		}
+	}
+}
+
+// resServer implements the etcd.Server interface for testing.
+// It returns the given responsefrom any Do calls, and nil error
+type resServer struct {
+	res server.Response
+}
+
+func (rs *resServer) Do(_ context.Context, _ serverpb.Request) (server.Response, error) {
+	return rs.res, nil
+}
+func (rs *resServer) Process(_ context.Context, _ raftpb.Message) error { return nil }
+func (rs *resServer) Start()                                            {}
+func (rs *resServer) Stop()                                             {}
+
+func mustMarshalEvent(t *testing.T, ev *store.Event) string {
+	b := new(bytes.Buffer)
+	if err := json.NewEncoder(b).Encode(ev); err != nil {
+		t.Fatalf("error marshalling event %#v: %v", ev, err)
+	}
+	return b.String()
+}
+
+func TestBadServeKeys(t *testing.T) {
+	testBadCases := []struct {
+		req    *http.Request
+		server server.Server
+
+		wcode int
+	}{
+		{
+			// bad method
+			&http.Request{
+				Method: "CONNECT",
+			},
+			&resServer{},
+
+			http.StatusMethodNotAllowed,
+		},
+		{
+			// bad method
+			&http.Request{
+				Method: "TRACE",
+			},
+			&resServer{},
+
+			http.StatusMethodNotAllowed,
+		},
+		{
+			// parseRequest error
+			&http.Request{
+				Body:   nil,
+				Method: "PUT",
+			},
+			&resServer{},
+
+			http.StatusBadRequest,
+		},
+		{
+			// etcdserver.Server error
+			mustNewRequest(t, "foo"),
+			&errServer{
+				errors.New("blah"),
+			},
+
+			http.StatusInternalServerError,
+		},
+		{
+			// timeout waiting for event (watcher never returns)
+			mustNewRequest(t, "foo"),
+			&resServer{
+				server.Response{
+					Watcher: &dummyWatcher{},
+				},
+			},
+
+			http.StatusGatewayTimeout,
+		},
+		{
+			// non-event/watcher response from etcdserver.Server
+			mustNewRequest(t, "foo"),
+			&resServer{
+				server.Response{},
+			},
+
+			http.StatusInternalServerError,
+		},
+	}
+	for i, tt := range testBadCases {
+		h := &serverHandler{
+			timeout: 0, // context times out immediately
+			server:  tt.server,
+			peers:   nil,
+		}
+		rw := httptest.NewRecorder()
+		h.serveKeys(rw, tt.req)
+		if rw.Code != tt.wcode {
+			t.Errorf("#%d: got code=%d, want %d", i, rw.Code, tt.wcode)
+		}
+	}
+}
+
+func TestServeKeysEvent(t *testing.T) {
+	req := mustNewRequest(t, "foo")
+	server := &resServer{
+		server.Response{
+			Event: &store.Event{
+				Action: store.Get,
+				Node:   &store.NodeExtern{},
+			},
+		},
+	}
+	h := &serverHandler{
+		timeout: time.Hour,
+		server:  server,
+		peers:   nil,
+	}
+	rw := httptest.NewRecorder()
+
+	h.serveKeys(rw, req)
+
+	wcode := http.StatusOK
+	wbody := mustMarshalEvent(
+		t,
+		&store.Event{
+			Action: store.Get,
+			Node:   &store.NodeExtern{},
+		},
+	)
+
+	if rw.Code != wcode {
+		t.Errorf("got code=%d, want %d", rw.Code, wcode)
+	}
+	g := rw.Body.String()
+	if g != wbody {
+		t.Errorf("got body=%#v, want %#v", g, wbody)
+	}
+}
+
+func TestServeKeysWatch(t *testing.T) {
+	req := mustNewRequest(t, "/foo/bar")
+	ec := make(chan *store.Event)
+	dw := &dummyWatcher{
+		echan: ec,
+	}
+	server := &resServer{
+		server.Response{
+			Watcher: dw,
+		},
+	}
+	h := &serverHandler{
+		timeout: time.Hour,
+		server:  server,
+		peers:   nil,
+	}
+	go func() {
+		ec <- &store.Event{
+			Action: store.Get,
+			Node:   &store.NodeExtern{},
+		}
+	}()
+	rw := httptest.NewRecorder()
+
+	h.serveKeys(rw, req)
+
+	wcode := http.StatusOK
+	wbody := mustMarshalEvent(
+		t,
+		&store.Event{
+			Action: store.Get,
+			Node:   &store.NodeExtern{},
+		},
+	)
+
+	if rw.Code != wcode {
+		t.Errorf("got code=%d, want %d", rw.Code, wcode)
+	}
+	g := rw.Body.String()
+	if g != wbody {
+		t.Errorf("got body=%#v, want %#v", g, wbody)
 	}
 }

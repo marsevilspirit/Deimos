@@ -24,7 +24,7 @@ func TestSaveAndLoad(t *testing.T) {
 	os.Mkdir(dir, 0700)
 	defer os.RemoveAll(dir)
 	ss := New(dir)
-	err := ss.Save(testSnap)
+	err := ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestBadCRC(t *testing.T) {
 	os.Mkdir(dir, 0700)
 	defer os.RemoveAll(dir)
 	ss := New(dir)
-	err := ss.Save(testSnap)
+	err := ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestFailback(t *testing.T) {
 	}
 
 	ss := New(dir)
-	err = ss.Save(testSnap)
+	err = ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,14 +120,14 @@ func TestLoadNewestSnap(t *testing.T) {
 	os.Mkdir(dir, 0700)
 	defer os.RemoveAll(dir)
 	ss := New(dir)
-	err := ss.Save(testSnap)
+	err := ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	newSnap := *testSnap
 	newSnap.Index = 5
-	err = ss.Save(&newSnap)
+	err = ss.save(&newSnap)
 	if err != nil {
 		t.Fatal(err)
 	}

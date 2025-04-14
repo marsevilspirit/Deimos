@@ -2,12 +2,9 @@ package deimos_http
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -34,11 +31,12 @@ const (
 
 var errClosed = errors.New("marshttp: client closed connection")
 
-func NewHandler(server server.Server, peers Peers, timeout time.Duration) http.Handler {
+// NewClientHandler generates a muxed http.Handler with the given parameters to serve etcd client requests.
+func NewClientHandler(server server.Server, peers Peers, timeout time.Duration) http.Handler {
 	sh := &serverHandler{
-		timeout: timeout,
 		server:  server,
 		peers:   peers,
+		timeout: timeout,
 	}
 
 	if sh.timeout == 0 {
@@ -46,12 +44,22 @@ func NewHandler(server server.Server, peers Peers, timeout time.Duration) http.H
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc(raftPrefix, sh.serveRaft)
 	mux.HandleFunc(keysPrefix, sh.serveKeys)
 	mux.HandleFunc(keysPrefix+"/", sh.serveKeys)
 	// TODO: dynamic configuration may make this outdated. take care of it.
 	// TODO: dynamic configuration may introduce race also.
 	mux.HandleFunc(machinesPrefix, sh.serveMachines)
+	mux.HandleFunc("/", http.NotFound)
+	return mux
+}
+
+// NewPeerHandler generates an http.Handler to handle etcd peer (raft) requests.
+func NewPeerHandler(server server.Server) http.Handler {
+	sh := &serverHandler{
+		server: server,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc(raftPrefix, sh.serveRaft)
 	mux.HandleFunc("/", http.NotFound)
 	return mux
 }
@@ -71,7 +79,7 @@ func (h serverHandler) serveKeys(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
 	defer cancel()
 
-	rr, err := parseRequest(r, genID())
+	rr, err := parseRequest(r, server.GenID())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -117,10 +125,14 @@ func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Println("marshttp: error reading raft message:", err)
+		http.Error(w, "error reading raft message", http.StatusBadRequest)
+		return
 	}
 	var m raftpb.Message
 	if err := m.Unmarshal(b); err != nil {
 		log.Println("marshttp: error unmarshaling raft message:", err)
+		http.Error(w, "error reading raft message", http.StatusBadRequest)
+		return
 	}
 	log.Printf("marshttp: raft recv message from %#x: %+v", m.From, m)
 	if err := h.server.Process(context.TODO(), m); err != nil {
@@ -128,21 +140,7 @@ func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
-}
-
-// genID generates a random id that is: n < 0 < n.
-func genID() int64 {
-	for {
-		b := make([]byte, 8)
-		if _, err := io.ReadFull(crand.Reader, b); err != nil {
-			panic(err) // really bad stuff happened
-		}
-		n := int64(binary.BigEndian.Uint64(b))
-		if n != 0 {
-			return n
-		}
-	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // parseRequest convert a received http.Request to a server Request,
@@ -240,9 +238,9 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 		rr.PrevExists = pe
 	}
 
+	// TODO: use fake clock instead of time module
 	if ttl > 0 {
 		expr := time.Duration(ttl) * time.Second
-		// TODO: use fake clock instead of time module
 		rr.Expiration = time.Now().Add(expr).UnixNano()
 	}
 

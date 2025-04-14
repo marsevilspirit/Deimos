@@ -26,10 +26,11 @@ const (
 )
 
 var (
-	ErrIDMismatch  = errors.New("wal: unmatch id")
-	ErrNotFound    = errors.New("wal: file is not found")
-	ErrCRCMismatch = errors.New("walpb: crc mismatch")
-	crcTable       = crc32.MakeTable(crc32.Castagnoli)
+	ErrIDMismatch    = errors.New("wal: unmatch id")
+	ErrFileNotFound  = errors.New("wal: file not found")
+	ErrIndexNotFound = errors.New("wal: index not found in file")
+	ErrCRCMismatch   = errors.New("walpb: crc mismatch")
+	crcTable         = crc32.MakeTable(crc32.Castagnoli)
 )
 
 // WAL is a logical repersentation of the stable storage.
@@ -40,8 +41,8 @@ var (
 type WAL struct {
 	dir string // the living directory of the underlay files
 
-	readIndex int64    // index of entry to start reading
-	decoder   *decoder // decoder to decode records
+	ri      int64    // index of entry to start reading
+	decoder *decoder // decoder to decode records
 
 	f       *os.File // underlay file opened for appending, sync
 	seq     int64    // sequence of the wal file currently used for writes
@@ -80,7 +81,8 @@ func Create(dirpath string) (*WAL, error) {
 
 // OpenAtIndex opens the WAL files containing all the entries after
 // the given index.
-// The index MUST have been previously committed to the WAL.
+// The index SHOULD have been previously committed to the WAL, or the following
+// ReadAll will fail.
 // The returned WAL is ready to read.
 // The WAL cannot be appended to before
 // reading out all of its previous records.
@@ -92,14 +94,14 @@ func OpenAtIndex(dirpath string, index int64) (*WAL, error) {
 	}
 	names = checkWalNames(names)
 	if len(names) == 0 {
-		return nil, ErrNotFound
+		return nil, ErrFileNotFound
 	}
 
 	sort.Sort(sort.StringSlice(names))
 
 	nameIndex, ok := searchIndex(names, index)
 	if !ok || !isValidSeq(names[nameIndex:]) {
-		return nil, ErrNotFound
+		return nil, ErrFileNotFound
 	}
 
 	// open the wal files for reading
@@ -128,8 +130,9 @@ func OpenAtIndex(dirpath string, index int64) (*WAL, error) {
 
 	// create a WAL ready for reading
 	w := &WAL{
-		readIndex: index,
-		decoder:   newDecoder(rc),
+		dir:     dirpath,
+		ri:      index,
+		decoder: newDecoder(rc),
 
 		f:   f,
 		seq: seq,
@@ -138,6 +141,7 @@ func OpenAtIndex(dirpath string, index int64) (*WAL, error) {
 }
 
 // ReadAll reads out all records of the current WAL.
+// If it cannot read out the expected entry, it will return ErrNotFound.
 // After ReadAll, the WAL will be ready for appending new records.
 func (w *WAL) ReadAll() (id int64, state raftpb.HardState, ents []raftpb.Entry, err error) {
 	rec := &walpb.Record{}
@@ -147,8 +151,8 @@ func (w *WAL) ReadAll() (id int64, state raftpb.HardState, ents []raftpb.Entry, 
 		switch rec.Type {
 		case entryType:
 			e := mustUnmarshalEntry(rec.Data)
-			if e.Index >= w.readIndex {
-				ents = append(ents[:e.Index-w.readIndex], e)
+			if e.Index >= w.ri {
+				ents = append(ents[:e.Index-w.ri], e)
 			}
 			w.enti = e.Index
 		case stateType:
@@ -179,9 +183,14 @@ func (w *WAL) ReadAll() (id int64, state raftpb.HardState, ents []raftpb.Entry, 
 		return 0, state, nil, err
 	}
 
+	if w.enti < w.ri {
+		state.Reset()
+		return 0, state, nil, ErrIndexNotFound
+	}
+
 	// close decoder, disable reading
 	w.decoder.close()
-	w.readIndex = 0
+	w.ri = 0
 
 	// create encoder (chain crc with the decoder), enable appending
 	w.encoder = newEncoder(w.f, w.decoder.lastCRC())

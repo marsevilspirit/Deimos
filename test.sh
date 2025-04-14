@@ -1,5 +1,5 @@
 #!/bin/sh
-go test \
+go test  ./ \
 	./wal \
 	./snap \
 	./server \

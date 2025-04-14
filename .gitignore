@@ -2,3 +2,4 @@
 *.log
 deimos
 *_deimos_data/
+bin/
