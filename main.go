@@ -82,7 +82,7 @@ func startDeimos() http.Handler {
 
 	n.Campaign(ctx)
 
-	s := &server.Server{
+	s := &server.DeimosServer{
 		Store:  store.New(),
 		Node:   n,
 		Save:   w.Save,
@@ -90,15 +90,9 @@ func startDeimos() http.Handler {
 		Ticker: tk.C,
 	}
 
-	server.Start(s)
+	s.Start()
 
-	h := deimos_http.Handler{
-		Timeout: *timeout,
-		Server:  s,
-		Peers:   *peers,
-	}
-
-	return &h
+	return deimos_http.NewHandler(s, *peers, *timeout)
 }
 
 func startRaft(id int64, perrIDs []int64, waldir string) (raft.Node, *wal.WAL) {

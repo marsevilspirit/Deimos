@@ -43,11 +43,7 @@ func TestSet(t *testing.T) {
 	srv.Start()
 	defer srv.Stop()
 
-	h := &Handler{
-		Timeout: time.Hour,
-		Server:  srv,
-	}
-
+	h := NewHandler(srv, nil, time.Hour)
 	s := httptest.NewServer(h)
 	defer s.Close()
 
@@ -57,7 +53,7 @@ func TestSet(t *testing.T) {
 	}
 
 	if resp.StatusCode != 201 {
-		t.Errorf("StatusCode = %d, expected %d", 201, resp.StatusCode)
+		t.Errorf("StatusCode = %d, expected %d", resp.StatusCode, 201)
 	}
 
 	g := new(store.Event)
@@ -648,7 +644,7 @@ func TestV2MachinesEndpoint(t *testing.T) {
 		{"POST", http.StatusMethodNotAllowed},
 	}
 
-	h := Handler{Peers: Peers{}}
+	h := NewHandler(nil, Peers{}, time.Hour)
 	s := httptest.NewServer(h)
 	defer s.Close()
 
@@ -671,13 +667,13 @@ func TestV2MachinesEndpoint(t *testing.T) {
 func TestServeMachines(t *testing.T) {
 	peers := Peers{}
 	peers.Set("0xBEEF0=localhost:8080&0xBEEF1=localhost:8081&0xBEEF2=localhost:8082")
-	h := Handler{Peers: peers}
 
 	writer := httptest.NewRecorder()
 	req, err := http.NewRequest("GET", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	h := &serverHandler{peers: peers}
 	h.serveMachines(writer, req)
 	w := "http://localhost:8080, http://localhost:8081, http://localhost:8082"
 	if g := writer.Body.String(); g != w {
