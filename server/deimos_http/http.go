@@ -221,21 +221,21 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 	}
 
 	rr := serverpb.Request{
-		Id:         id,
-		Method:     r.Method,
-		Path:       p,
-		Val:        r.FormValue("value"),
-		PrevValue:  r.FormValue("prevValue"),
-		PrevIndex:  pIdx,
-		PrevExists: pe,
-		Recursive:  rec,
-		Since:      wIdx,
-		Sorted:     sort,
-		Wait:       wait,
+		Id:        id,
+		Method:    r.Method,
+		Path:      p,
+		Val:       r.FormValue("value"),
+		PrevValue: r.FormValue("prevValue"),
+		PrevIndex: pIdx,
+		PrevExist: pe,
+		Recursive: rec,
+		Since:     wIdx,
+		Sorted:    sort,
+		Wait:      wait,
 	}
 
 	if pe != nil {
-		rr.PrevExists = pe
+		rr.PrevExist = pe
 	}
 
 	// TODO: use fake clock instead of time module

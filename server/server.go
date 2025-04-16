@@ -260,7 +260,7 @@ func (s *DeimosServer) apply(r pb.Request) Response {
 	case "POST":
 		return f(s.Store.Create(r.Path, r.Dir, r.Val, true, expr))
 	case "PUT":
-		exists, existSet := getBool(r.PrevExists)
+		exists, existSet := getBool(r.PrevExist)
 		switch {
 		case existSet:
 			if exists {

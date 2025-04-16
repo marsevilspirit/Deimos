@@ -336,10 +336,10 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"prevExists": []string{"true"}},
 			),
 			serverpb.Request{
-				Id:         1234,
-				Method:     "PUT",
-				PrevExists: boolp(true),
-				Path:       "/foo",
+				Id:        1234,
+				Method:    "PUT",
+				PrevExist: boolp(true),
+				Path:      "/foo",
 			},
 		},
 		{
@@ -350,10 +350,10 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"prevExists": []string{"false"}},
 			),
 			serverpb.Request{
-				Id:         1234,
-				Method:     "PUT",
-				PrevExists: boolp(false),
-				Path:       "/foo",
+				Id:        1234,
+				Method:    "PUT",
+				PrevExist: boolp(false),
+				Path:      "/foo",
 			},
 		},
 		// mix various fields
@@ -368,12 +368,12 @@ func TestGoodParseRequest(t *testing.T) {
 				},
 			),
 			serverpb.Request{
-				Id:         1234,
-				Method:     "PUT",
-				PrevExists: boolp(true),
-				PrevValue:  "previous value",
-				Val:        "some value",
-				Path:       "/foo",
+				Id:        1234,
+				Method:    "PUT",
+				PrevExist: boolp(true),
+				PrevValue: "previous value",
+				Val:       "some value",
+				Path:      "/foo",
 			},
 		},
 		// query parameters should be used if given

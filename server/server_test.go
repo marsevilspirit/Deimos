@@ -14,6 +14,7 @@ import (
 	"github.com/marsevilspirit/deimos/raft/raftpb"
 	pb "github.com/marsevilspirit/deimos/server/serverpb"
 	"github.com/marsevilspirit/deimos/store"
+	"github.com/marsevilspirit/deimos/testutil"
 )
 
 // TestDoLocalAction tests requests which do not need to go through raft to be applied,
@@ -57,6 +58,42 @@ func TestDoLocalAction(t *testing.T) {
 	}
 }
 
+// TestDoBadLocalAction tests server requests which do not need to go through consensus,
+// and return errors when they fetch from local data.
+func TestDoBadLocalAction(t *testing.T) {
+	storeErr := fmt.Errorf("bah")
+	tests := []struct {
+		req pb.Request
+
+		waction []string
+	}{
+		{
+			pb.Request{Method: "GET", Id: 1, Wait: true},
+			[]string{"Watch"},
+		},
+		{
+			pb.Request{Method: "GET", Id: 1},
+			[]string{"Get"},
+		},
+	}
+	for i, tt := range tests {
+		st := &errStoreRecorder{err: storeErr}
+		srv := &DeimosServer{Store: st}
+		resp, err := srv.Do(context.Background(), tt.req)
+
+		if err != storeErr {
+			t.Fatalf("#%d: err = %+v, want %+v", i, err, storeErr)
+		}
+		if !reflect.DeepEqual(resp, Response{}) {
+			t.Errorf("#%d: resp = %+v, want %+v", i, resp, Response{})
+		}
+		action := st.Action()
+		if !reflect.DeepEqual(action, tt.waction) {
+			t.Errorf("#%d: action = %+v, want %+v", i, action, tt.waction)
+		}
+	}
+}
+
 func TestApply(t *testing.T) {
 	tests := []struct {
 		req pb.Request
@@ -69,19 +106,19 @@ func TestApply(t *testing.T) {
 			Response{Event: &store.Event{}}, []string{"Create"},
 		},
 		{
-			pb.Request{Method: "PUT", Id: 1, PrevExists: boolp(true), PrevIndex: 1},
+			pb.Request{Method: "PUT", Id: 1, PrevExist: boolp(true), PrevIndex: 1},
 			Response{Event: &store.Event{}}, []string{"Update"},
 		},
 		{
-			pb.Request{Method: "PUT", Id: 1, PrevExists: boolp(false), PrevIndex: 1},
+			pb.Request{Method: "PUT", Id: 1, PrevExist: boolp(false), PrevIndex: 1},
 			Response{Event: &store.Event{}}, []string{"Create"},
 		},
 		{
-			pb.Request{Method: "PUT", Id: 1, PrevExists: boolp(true)},
+			pb.Request{Method: "PUT", Id: 1, PrevExist: boolp(true)},
 			Response{Event: &store.Event{}}, []string{"Update"},
 		},
 		{
-			pb.Request{Method: "PUT", Id: 1, PrevExists: boolp(false)},
+			pb.Request{Method: "PUT", Id: 1, PrevExist: boolp(false)},
 			Response{Event: &store.Event{}}, []string{"Create"},
 		},
 		{
@@ -138,13 +175,7 @@ func TestApply(t *testing.T) {
 }
 
 func TestClusterOf1(t *testing.T) { testServer(t, 1) }
-
 func TestClusterOf3(t *testing.T) { testServer(t, 3) }
-
-// firstId is the id of the first raft machine in the array.
-// It implies the way to set id for raft machines:
-// The id of n-th machine is firstId+n, and machine with machineId is at machineId-firstId place in the array.
-const firstId int64 = 0x1000
 
 func testServer(t *testing.T, ns int64) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,17 +186,17 @@ func testServer(t *testing.T, ns int64) {
 	send := func(msgs []raftpb.Message) {
 		for _, m := range msgs {
 			// t.Logf("m: %#v\n", m)
-			ss[m.To-firstId].Node.Step(ctx, m)
+			ss[m.To-1].Node.Step(ctx, m)
 		}
 	}
 
 	peers := make([]int64, ns)
 	for i := int64(0); i < ns; i++ {
-		peers[i] = firstId + i
+		peers[i] = 1 + i
 	}
 
 	for i := int64(0); i < ns; i++ {
-		id := firstId + i
+		id := 1 + i
 		n := raft.StartNode(id, peers, 10, 1)
 
 		tk := time.NewTicker(10 * time.Millisecond)
@@ -449,6 +480,127 @@ func TestSyncTriggerDeleteExpriedKeys(t *testing.T) {
 	}
 }
 
+// snapshot should snapshot the store and cut the persistent
+// TODO: node.Compact is called... we need to make the node an interface
+func TestSnapshot(t *testing.T) {
+	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
+	defer n.Stop()
+	st := &storeRecorder{}
+	p := &storageRecorder{}
+	s := &DeimosServer{
+		Store:   st,
+		Storage: p,
+		Node:    n,
+	}
+
+	s.snapshot()
+	action := st.Action()
+	if len(action) != 1 {
+		t.Fatalf("len(action) = %d, want 1", len(action))
+	}
+	if action[0] != "Save" {
+		t.Errorf("action = %s, want Save", action[0])
+	}
+
+	action = p.Action()
+	if len(action) != 1 {
+		t.Fatalf("len(action) = %d, want 1", len(action))
+	}
+	if action[0] != "Cut" {
+		t.Errorf("action = %s, want Cut", action[0])
+	}
+}
+
+// Applied > SnapCount should trigger a SaveSnap event
+func TestTriggerSnap(t *testing.T) {
+	ctx := context.Background()
+	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
+	n.Campaign(ctx)
+	st := &storeRecorder{}
+	p := &storageRecorder{}
+	s := &DeimosServer{
+		Store:     st,
+		Send:      func(_ []raftpb.Message) {},
+		Storage:   p,
+		Node:      n,
+		SnapCount: 10,
+	}
+
+	s.Start()
+	for i := 0; int64(i) < s.SnapCount; i++ {
+		s.Do(ctx, pb.Request{Method: "PUT", Id: 1})
+	}
+	time.Sleep(time.Millisecond)
+	s.Stop()
+
+	action := p.Action()
+	// each operation is recorded as a Save
+	// Nop + SnapCount * Puts + Cut + SaveSnap = Save + SnapCount * Save + Cut + SaveSnap
+	if len(action) != 3+int(s.SnapCount) {
+		t.Fatalf("len(action) = %d, want %d", len(action), 3+int(s.SnapCount))
+	}
+	if action[12] != "SaveSnap" {
+		t.Errorf("action = %s, want SaveSnap", action[12])
+	}
+}
+
+// TestRecvSnapshot tests when it receives a snapshot from raft leader,
+// it should trigger storage.SaveSnap and also store.Recover.
+func TestRecvSnapshot(t *testing.T) {
+	n := newReadyNode()
+	st := &storeRecorder{}
+	p := &storageRecorder{}
+	s := &DeimosServer{
+		Store:   st,
+		Send:    func(_ []raftpb.Message) {},
+		Storage: p,
+		Node:    n,
+	}
+
+	s.Start()
+	n.readyc <- raft.Ready{Snapshot: raftpb.Snapshot{Index: 1}}
+	// make goroutines move forward to receive snapshot
+	testutil.ForceGosched()
+	s.Stop()
+
+	waction := []string{"Recovery"}
+	if g := st.Action(); !reflect.DeepEqual(g, waction) {
+		t.Errorf("store action = %v, want %v", g, waction)
+	}
+	waction = []string{"Save", "SaveSnap"}
+	if g := p.Action(); !reflect.DeepEqual(g, waction) {
+		t.Errorf("storage action = %v, want %v", g, waction)
+	}
+}
+
+// TestRecvSlowSnapshot tests that slow snapshot will not be applied
+// to store.
+func TestRecvSlowSnapshot(t *testing.T) {
+	n := newReadyNode()
+	st := &storeRecorder{}
+	s := &DeimosServer{
+		Store:   st,
+		Send:    func(_ []raftpb.Message) {},
+		Storage: &storageRecorder{},
+		Node:    n,
+	}
+
+	s.Start()
+	n.readyc <- raft.Ready{Snapshot: raftpb.Snapshot{Index: 1}}
+	// make goroutines move forward to receive snapshot
+	testutil.ForceGosched()
+	action := st.Action()
+
+	n.readyc <- raft.Ready{Snapshot: raftpb.Snapshot{Index: 1}}
+	// make goroutines move forward to receive snapshot
+	testutil.ForceGosched()
+	s.Stop()
+
+	if g := st.Action(); !reflect.DeepEqual(g, action) {
+		t.Errorf("store action = %v, want %v", g, action)
+	}
+}
+
 // TODO: test wait trigger correctness in multi-server case
 
 func TestGetBool(t *testing.T) {
@@ -544,6 +696,21 @@ type stubWatcher struct{}
 func (w *stubWatcher) EventChan() chan *store.Event { return nil }
 func (w *stubWatcher) Remove()                      {}
 
+// errStoreRecorder returns an store error on Get, Watch request
+type errStoreRecorder struct {
+	storeRecorder
+	err error
+}
+
+func (s *errStoreRecorder) Get(_ string, _, _ bool) (*store.Event, error) {
+	s.record("Get")
+	return nil, s.err
+}
+func (s *errStoreRecorder) Watch(_ string, _, _ bool, _ uint64) (store.Watcher, error) {
+	s.record("Watch")
+	return nil, s.err
+}
+
 type waitRecorder struct {
 	action []string
 }
@@ -579,6 +746,26 @@ func (p *storageRecorder) SaveSnap(st raftpb.Snapshot) {
 	}
 	p.record("SaveSnap")
 }
+
+type readyNode struct {
+	readyc chan raft.Ready
+}
+
+func newReadyNode() *readyNode {
+	readyc := make(chan raft.Ready, 1)
+	return &readyNode{readyc: readyc}
+}
+func (n *readyNode) Tick()                                                             {}
+func (n *readyNode) Campaign(ctx context.Context) error                                { return nil }
+func (n *readyNode) Propose(ctx context.Context, data []byte) error                    { return nil }
+func (n *readyNode) ProposeConfChange(ctx context.Context, cc raftpb.ConfChange) error { return nil }
+func (n *readyNode) Step(ctx context.Context, msg raftpb.Message) error                { return nil }
+func (n *readyNode) Ready() <-chan raft.Ready                                          { return n.readyc }
+func (n *readyNode) ApplyConfChange(cc raftpb.ConfChange)                              {}
+func (n *readyNode) Stop()                                                             {}
+func (n *readyNode) Compact(d []byte)                                                  {}
+func (n *readyNode) AddNode(id int64)                                                  {}
+func (n *readyNode) RemoveNode(id int64)                                               {}
 
 func TestGenID(t *testing.T) {
 	// Sanity check that the GenID function has been seeded appropriately

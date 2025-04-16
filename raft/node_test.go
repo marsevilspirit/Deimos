@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/marsevilspirit/deimos/raft/raftpb"
+	"github.com/marsevilspirit/deimos/testutil"
 )
 
 // TestNodeStep ensures that node.Step sends msgProp to propc chan
@@ -105,7 +106,7 @@ func TestBlockProposal(t *testing.T) {
 		errc <- n.Propose(context.TODO(), []byte("somedata"))
 	}()
 
-	forceGosched()
+	testutil.ForceGosched()
 	select {
 	case err := <-errc:
 		t.Errorf("err = %v, want blocking", err)
@@ -113,7 +114,7 @@ func TestBlockProposal(t *testing.T) {
 	}
 
 	n.Campaign(context.TODO())
-	forceGosched()
+	testutil.ForceGosched()
 	select {
 	case err := <-errc:
 		if err != nil {
@@ -222,7 +223,7 @@ func TestCompact(t *testing.T) {
 		Nodes: []int64{1},
 	}
 
-	forceGosched()
+	testutil.ForceGosched()
 	select {
 	case <-n.Ready():
 	default:
@@ -230,7 +231,7 @@ func TestCompact(t *testing.T) {
 	}
 
 	n.Compact(w.Data)
-	forceGosched()
+	testutil.ForceGosched()
 	select {
 	case rd := <-n.Ready():
 		if !reflect.DeepEqual(rd.Snapshot, w) {
@@ -239,7 +240,7 @@ func TestCompact(t *testing.T) {
 	default:
 		t.Fatalf("unexpected proposal failure: unable to create a snapshot")
 	}
-	forceGosched()
+	testutil.ForceGosched()
 
 	// TODO: this test the run updates the snapi correctly...
 	// should be tested separately with other kinds of updates.
