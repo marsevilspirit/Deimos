@@ -247,6 +247,14 @@ func (s *DeimosServer) sync(timeout time.Duration) {
 	}()
 }
 
+func getExpirationTime(r *pb.Request) time.Time {
+	var t time.Time
+	if r.Expiration != 0 {
+		t = time.Unix(0, r.Expiration)
+	}
+	return t
+}
+
 // apply interprets r as a call to store.X and returns an
 // Response interpreted from the store.Event
 func (s *DeimosServer) apply(r pb.Request) Response {
@@ -254,7 +262,7 @@ func (s *DeimosServer) apply(r pb.Request) Response {
 		return Response{Event: ev, err: err}
 	}
 
-	expr := time.Unix(0, r.Expiration)
+	expr := getExpirationTime(&r)
 
 	switch r.Method {
 	case "POST":
@@ -278,7 +286,7 @@ func (s *DeimosServer) apply(r pb.Request) Response {
 		case r.PrevIndex > 0 || r.PrevValue != "":
 			return f(s.Store.CompareAndDelete(r.Path, r.PrevValue, r.PrevIndex))
 		default:
-			return f(s.Store.Delete(r.Path, r.Recursive, r.Dir))
+			return f(s.Store.Delete(r.Path, r.Dir, r.Recursive))
 		}
 	case "QGET":
 		return f(s.Store.Get(r.Path, r.Recursive, r.Sorted))
