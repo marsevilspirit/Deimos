@@ -7,4 +7,5 @@ go test  ./ \
 	./raft \
 	./wait \
 	./store \
-	./proxy
+	./proxy \
+	./client

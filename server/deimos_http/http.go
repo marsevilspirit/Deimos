@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	keysPrefix     = "/v2/keys"
-	machinesPrefix = "/v2/machines"
+	keysPrefix     = "/keys"
+	machinesPrefix = "/machines"
 	raftPrefix     = "/raft"
 
 	DefaultTimeout = 500 * time.Millisecond
