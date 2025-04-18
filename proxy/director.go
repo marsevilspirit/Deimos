@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"net/url"
 	"sync"
@@ -15,27 +14,16 @@ const (
 	endpointFailureWait = 5 * time.Second
 )
 
-func newDirector(urls []string) (*director, error) {
-	if len(urls) == 0 {
-		return nil, errors.New("one or more endpoints required")
+// example addrs: "3=3.3.3.3&4=4.4.4.4&1=1.1.1.1&1=1.1.1.2&2=2.2.2.2"
+func newDirector(scheme string, addrs []string) (*director, error) {
+	if len(addrs) == 0 {
+		return nil, errors.New("one or more upstream addresses required")
 	}
 
-	endpoints := make([]*endpoint, len(urls))
-	for i, v := range urls {
-		u, err := url.Parse(v)
-		if err != nil {
-			return nil, fmt.Errorf("invalid endpoint %q: %v", v, err)
-		}
-
-		if u.Scheme == "" {
-			return nil, fmt.Errorf("invalid endpoint %q: scheme required", v)
-		}
-
-		if u.Host == "" {
-			return nil, fmt.Errorf("invalid endpoint %q: host empty", v)
-		}
-
-		endpoints[i] = newEndpoint(*u)
+	endpoints := make([]*endpoint, len(addrs))
+	for i, addr := range addrs {
+		u := url.URL{Scheme: scheme, Host: addr}
+		endpoints[i] = newEndpoint(u)
 	}
 
 	d := director{ep: endpoints}

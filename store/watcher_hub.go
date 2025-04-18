@@ -38,9 +38,10 @@ func newWatchHub(capacity int) *watcherHub {
 // If recursive is true, the first change after index under key will be sent to the event channel of the watch.
 // If recursive is false, the first change after index at key will be sent to the event channel of the watch.
 // If index is zero, watch will start from the current index + 1.
-func (wh *watcherHub) watch(key string, recursive bool, stream bool, index uint64) (Watcher, *Err.Error) {
+func (wh *watcherHub) watch(key string, recursive bool, stream bool, index, storeIndex uint64) (Watcher, *Err.Error) {
 	event, err := wh.EventHistory.scan(key, recursive, index)
 	if err != nil {
+		err.Index = storeIndex
 		return nil, err
 	}
 
@@ -52,7 +53,9 @@ func (wh *watcherHub) watch(key string, recursive bool, stream bool, index uint6
 		hub:        wh,
 	}
 
+	// If the event exists in the known history, append the DeimosIndex and return immediately
 	if event != nil {
+		event.DeimosIndex = storeIndex
 		w.eventChan <- event
 		return w, nil
 	}

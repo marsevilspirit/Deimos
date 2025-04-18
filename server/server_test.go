@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -80,7 +79,7 @@ func TestDoLocalAction(t *testing.T) {
 		}
 		action := st.Action()
 		if !reflect.DeepEqual(action, tt.waction) {
-			t.Errorf("#%d: action = %+v, want %+v", i, st.action, tt.waction)
+			t.Errorf("#%d: action = %+v, want %+v", i, action, tt.waction)
 		}
 	}
 }
@@ -212,23 +211,21 @@ func testServer(t *testing.T, ns int64) {
 
 	send := func(msgs []raftpb.Message) {
 		for _, m := range msgs {
-			// t.Logf("m: %#v\n", m)
+			t.Logf("m = %+v\n", m)
 			ss[m.To-1].Node.Step(ctx, m)
 		}
 	}
 
 	peers := make([]int64, ns)
 	for i := int64(0); i < ns; i++ {
-		peers[i] = 1 + i
+		peers[i] = i + 1
 	}
 
 	for i := int64(0); i < ns; i++ {
-		id := 1 + i
+		id := i + 1
 		n := raft.StartNode(id, peers, 10, 1)
-
 		tk := time.NewTicker(10 * time.Millisecond)
 		defer tk.Stop()
-
 		srv := &DeimosServer{
 			Node:    n,
 			Store:   store.New(),
@@ -237,11 +234,9 @@ func testServer(t *testing.T, ns int64) {
 			Ticker:  tk.C,
 		}
 		srv.Start()
-
-		// TODO: randomize election timeout
+		// TODO(xiangli): randomize election timeout
 		// then remove this sleep.
 		time.Sleep(1 * time.Millisecond)
-
 		ss[i] = srv
 	}
 
@@ -267,13 +262,14 @@ func testServer(t *testing.T, ns int64) {
 		}
 
 		if !reflect.DeepEqual(g, w) {
-			t.Errorf("#%v g = %#v,\n               #%v w = %#v", i, g, i, w)
+			t.Error("value:", *g.Value)
+			t.Errorf("g = %+v, w %+v", g, w)
 		}
 	}
 
 	time.Sleep(10 * time.Millisecond)
 
-	var last any
+	var last interface{}
 	for i, sv := range ss {
 		sv.Stop()
 		g, _ := sv.Store.Get("/", true, true)
@@ -286,10 +282,10 @@ func testServer(t *testing.T, ns int64) {
 
 func TestDoProposal(t *testing.T) {
 	tests := []pb.Request{
-		{Method: "POST", Id: 1},
-		{Method: "PUT", Id: 1},
-		{Method: "DELETE", Id: 1},
-		{Method: "GET", Id: 1, Quorum: true},
+		pb.Request{Method: "POST", Id: 1},
+		pb.Request{Method: "PUT", Id: 1},
+		pb.Request{Method: "DELETE", Id: 1},
+		pb.Request{Method: "GET", Id: 1, Quorum: true},
 	}
 
 	for i, tt := range tests {
@@ -312,7 +308,7 @@ func TestDoProposal(t *testing.T) {
 
 		action := st.Action()
 		if len(action) != 1 {
-			t.Errorf("#%d: len(action) = %d, want 1", i, len(st.action))
+			t.Errorf("#%d: len(action) = %d, want 1", i, len(action))
 		}
 		if err != nil {
 			t.Fatalf("#%d: err = %v, want nil", i, err)
@@ -398,16 +394,8 @@ func TestDoProposalStopped(t *testing.T) {
 
 // TestSync tests sync 1. is nonblocking 2. sends out SYNC request.
 func TestSync(t *testing.T) {
-	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
-	n.Campaign(context.TODO())
-	select {
-	case <-n.Ready():
-	case <-time.After(time.Millisecond):
-		t.Fatalf("expect to receive ready within 1ms, but fail")
-	}
-
+	n := &nodeProposeDataRecorder{}
 	srv := &DeimosServer{
-		// TODO: use fake node for better testability
 		Node: n,
 	}
 	start := time.Now()
@@ -418,46 +406,29 @@ func TestSync(t *testing.T) {
 		t.Errorf("CallSyncTime = %v, want < %v", d, time.Millisecond)
 	}
 
-	// give time for goroutine in sync to run
-	// TODO: use fake clock
-	var ready raft.Ready
-	select {
-	case ready = <-n.Ready():
-	case <-time.After(time.Millisecond):
-		t.Fatalf("expect to receive ready within 1ms, but fail")
+	testutil.ForceGosched()
+	data := n.data()
+	if len(data) != 1 {
+		t.Fatalf("len(proposeData) = %d, want 1", len(data))
 	}
-
-	if len(ready.CommittedEntries) != 1 {
-		t.Fatalf("len(CommittedEntries) = %d, want 1", len(ready.CommittedEntries))
+	var r pb.Request
+	if err := r.Unmarshal(data[0]); err != nil {
+		t.Fatalf("unmarshal request error: %v", err)
 	}
-	e := ready.CommittedEntries[0]
-	var req pb.Request
-	if err := req.Unmarshal(e.Data); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-	if req.Method != "SYNC" {
-		t.Errorf("method = %s, want SYNC", req.Method)
+	if r.Method != "SYNC" {
+		t.Errorf("method = %s, want SYNC", r.Method)
 	}
 }
 
-// TestSyncFail tests the case that sync 1. is non-blocking 2. fails to
-// propose SYNC request because there is no leader
-func TestSyncFail(t *testing.T) {
-	// The node is run without Tick and Campaign, so it has no leader forever.
-	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
-	select {
-	case <-n.Ready():
-	case <-time.After(time.Millisecond):
-		t.Fatalf("expect to receive ready within 1ms, but fail")
-	}
-
+// TestSyncTimeout tests the case that sync 1. is non-blocking 2. cancel request
+// after timeout
+func TestSyncTimeout(t *testing.T) {
+	n := &nodeProposalBlockerRecorder{}
 	srv := &DeimosServer{
-		// TODO: use fake node for better testability
 		Node: n,
 	}
-	routineN := runtime.NumGoroutine()
 	start := time.Now()
-	srv.sync(time.Millisecond)
+	srv.sync(0)
 
 	// check that sync is non-blocking
 	if d := time.Since(start); d > time.Millisecond {
@@ -466,36 +437,31 @@ func TestSyncFail(t *testing.T) {
 
 	// give time for goroutine in sync to cancel
 	// TODO: use fake clock
-	time.Sleep(2 * time.Millisecond)
-	if g := runtime.NumGoroutine(); g != routineN {
-		t.Errorf("NumGoroutine = %d, want %d", g, routineN)
-	}
-	select {
-	case g := <-n.Ready():
-		t.Errorf("ready = %+v, want no", g)
-	default:
+	testutil.ForceGosched()
+	w := []string{"Propose blocked"}
+	if g := n.Action(); !reflect.DeepEqual(g, w) {
+		t.Errorf("action = %v, want %v", g, w)
 	}
 }
+
+// TODO: TestNoSyncWhenNoLeader
 
 func TestSyncTriggerDeleteExpriedKeys(t *testing.T) {
 	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
 	n.Campaign(context.TODO())
 	st := &storeRecorder{}
-	syncInterval := 5 * time.Millisecond
-	syncTicker := time.NewTicker(syncInterval)
-	defer syncTicker.Stop()
 	srv := &DeimosServer{
 		// TODO: use fake node for better testability
 		Node:       n,
 		Store:      st,
 		Send:       func(_ []raftpb.Message) {},
 		Storage:    &storageRecorder{},
-		SyncTicker: syncTicker.C,
+		SyncTicker: time.After(0),
 	}
 	srv.Start()
 	// give time for sync request to be proposed and performed
 	// TODO: use fake clock
-	time.Sleep(syncInterval + time.Millisecond)
+	testutil.ForceGosched()
 	srv.Stop()
 
 	action := st.Action()
@@ -628,6 +594,46 @@ func TestRecvSlowSnapshot(t *testing.T) {
 	}
 }
 
+// TestAddNode tests AddNode could propose and perform node addition.
+func TestAddNode(t *testing.T) {
+	n := newNodeConfigChangeCommitterRecorder()
+	s := &DeimosServer{
+		Node:    n,
+		Store:   &storeRecorder{},
+		Send:    func(_ []raftpb.Message) {},
+		Storage: &storageRecorder{},
+	}
+	s.Start()
+	s.AddNode(context.TODO(), 1, []byte("foo"))
+	action := n.Action()
+	s.Stop()
+
+	waction := []string{"ProposeConfigChange:ConfigChangeAddNode", "ApplyConfigChange:ConfigChangeAddNode"}
+	if !reflect.DeepEqual(action, waction) {
+		t.Errorf("action = %v, want %v", action, waction)
+	}
+}
+
+// TestRemoveNode tests RemoveNode could propose and perform node removal.
+func TestRemoveNode(t *testing.T) {
+	n := newNodeConfigChangeCommitterRecorder()
+	s := &DeimosServer{
+		Node:    n,
+		Store:   &storeRecorder{},
+		Send:    func(_ []raftpb.Message) {},
+		Storage: &storageRecorder{},
+	}
+	s.Start()
+	s.RemoveNode(context.TODO(), 1)
+	action := n.Action()
+	s.Stop()
+
+	waction := []string{"ProposeConfigChange:ConfigChangeRemoveNode", "ApplyConfigChange:ConfigChangeRemoveNode"}
+	if !reflect.DeepEqual(action, waction) {
+		t.Errorf("action = %v, want %v", action, waction)
+	}
+}
+
 // TODO: test wait trigger correctness in multi-server case
 
 func TestGetBool(t *testing.T) {
@@ -648,6 +654,19 @@ func TestGetBool(t *testing.T) {
 		if set != tt.wset {
 			t.Errorf("#%d: set = %v, want %v", i, set, tt.wset)
 		}
+	}
+}
+
+func TestGenID(t *testing.T) {
+	// Sanity check that the GenID function has been seeded appropriately
+	// (math/rand is seeded with 1 by default)
+	r := rand.NewSource(int64(1))
+	var n int64
+	for n == 0 {
+		n = r.Int63()
+	}
+	if n == GenID() {
+		t.Fatalf("GenID's rand seeded with 1!")
 	}
 }
 
@@ -673,37 +692,37 @@ type storeRecorder struct {
 	recorder
 }
 
-func (s *recorder) Version() int  { return 0 }
-func (s *recorder) Index() uint64 { return 0 }
-func (s *recorder) Get(_ string, _, _ bool) (*store.Event, error) {
+func (s *storeRecorder) Version() int  { return 0 }
+func (s *storeRecorder) Index() uint64 { return 0 }
+func (s *storeRecorder) Get(_ string, _, _ bool) (*store.Event, error) {
 	s.record("Get")
 	return &store.Event{}, nil
 }
-func (s *recorder) Set(_ string, _ bool, _ string, _ time.Time) (*store.Event, error) {
+func (s *storeRecorder) Set(_ string, _ bool, _ string, _ time.Time) (*store.Event, error) {
 	s.record("Set")
 	return &store.Event{}, nil
 }
-func (s *recorder) Update(_, _ string, _ time.Time) (*store.Event, error) {
+func (s *storeRecorder) Update(_, _ string, _ time.Time) (*store.Event, error) {
 	s.record("Update")
 	return &store.Event{}, nil
 }
-func (s *recorder) Create(_ string, _ bool, _ string, _ bool, _ time.Time) (*store.Event, error) {
+func (s *storeRecorder) Create(_ string, _ bool, _ string, _ bool, _ time.Time) (*store.Event, error) {
 	s.record("Create")
 	return &store.Event{}, nil
 }
-func (s *recorder) CompareAndSwap(_, _ string, _ uint64, _ string, _ time.Time) (*store.Event, error) {
+func (s *storeRecorder) CompareAndSwap(_, _ string, _ uint64, _ string, _ time.Time) (*store.Event, error) {
 	s.record("CompareAndSwap")
 	return &store.Event{}, nil
 }
-func (s *recorder) Delete(_ string, _, _ bool) (*store.Event, error) {
+func (s *storeRecorder) Delete(_ string, _, _ bool) (*store.Event, error) {
 	s.record("Delete")
 	return &store.Event{}, nil
 }
-func (s *recorder) CompareAndDelete(_, _ string, _ uint64) (*store.Event, error) {
+func (s *storeRecorder) CompareAndDelete(_, _ string, _ uint64) (*store.Event, error) {
 	s.record("CompareAndDelete")
 	return &store.Event{}, nil
 }
-func (s *recorder) Watch(_ string, _, _ bool, _ uint64) (store.Watcher, error) {
+func (s *storeRecorder) Watch(_ string, _, _ bool, _ uint64) (store.Watcher, error) {
 	s.record("Watch")
 	return &stubWatcher{}, nil
 }
@@ -711,10 +730,13 @@ func (s *storeRecorder) Save() ([]byte, error) {
 	s.record("Save")
 	return nil, nil
 }
-func (s *recorder) Recovery(b []byte) error   { return nil }
-func (s *recorder) TotalTransactions() uint64 { return 0 }
-func (s *recorder) JsonStats() []byte         { return nil }
-func (s *recorder) DeleteExpiredKeys(cutoff time.Time) {
+func (s *storeRecorder) Recovery(b []byte) error {
+	s.record("Recovery")
+	return nil
+}
+func (s *storeRecorder) TotalTransactions() uint64 { return 0 }
+func (s *storeRecorder) JsonStats() []byte         { return nil }
+func (s *storeRecorder) DeleteExpiredKeys(cutoff time.Time) {
 	s.record("DeleteExpiredKeys")
 }
 
@@ -742,19 +764,17 @@ type waitRecorder struct {
 	action []string
 }
 
-func (w *waitRecorder) Register(id int64) <-chan any {
+func (w *waitRecorder) Register(id int64) <-chan interface{} {
 	w.action = append(w.action, fmt.Sprint("Register", id))
 	return nil
 }
-func (w *waitRecorder) Trigger(id int64, x any) {
+func (w *waitRecorder) Trigger(id int64, x interface{}) {
 	w.action = append(w.action, fmt.Sprint("Trigger", id))
 }
 
 func boolp(b bool) *bool { return &b }
 
-func stringp(s string) *string {
-	return &s
-}
+func stringp(s string) *string { return &s }
 
 type storageRecorder struct {
 	recorder
@@ -782,27 +802,104 @@ func newReadyNode() *readyNode {
 	readyc := make(chan raft.Ready, 1)
 	return &readyNode{readyc: readyc}
 }
-func (n *readyNode) Tick()                                                             {}
-func (n *readyNode) Campaign(ctx context.Context) error                                { return nil }
-func (n *readyNode) Propose(ctx context.Context, data []byte) error                    { return nil }
-func (n *readyNode) ProposeConfChange(ctx context.Context, cc raftpb.ConfChange) error { return nil }
-func (n *readyNode) Step(ctx context.Context, msg raftpb.Message) error                { return nil }
-func (n *readyNode) Ready() <-chan raft.Ready                                          { return n.readyc }
-func (n *readyNode) ApplyConfChange(cc raftpb.ConfChange)                              {}
-func (n *readyNode) Stop()                                                             {}
-func (n *readyNode) Compact(d []byte)                                                  {}
-func (n *readyNode) AddNode(id int64)                                                  {}
-func (n *readyNode) RemoveNode(id int64)                                               {}
+func (n *readyNode) Tick()                                          {}
+func (n *readyNode) Campaign(ctx context.Context) error             { return nil }
+func (n *readyNode) Propose(ctx context.Context, data []byte) error { return nil }
+func (n *readyNode) ProposeConfigChange(ctx context.Context, conf raftpb.ConfChange) error {
+	return nil
+}
+func (n *readyNode) Step(ctx context.Context, msg raftpb.Message) error { return nil }
+func (n *readyNode) Ready() <-chan raft.Ready                           { return n.readyc }
+func (n *readyNode) ApplyConfigChange(conf raftpb.ConfChange)           {}
+func (n *readyNode) Stop()                                              {}
+func (n *readyNode) Compact(d []byte)                                   {}
 
-func TestGenID(t *testing.T) {
-	// Sanity check that the GenID function has been seeded appropriately
-	// (math/rand is seeded with 1 by default)
-	r := rand.NewSource(int64(1))
-	var n int64
-	for n == 0 {
-		n = r.Int63()
+type nodeRecorder struct {
+	recorder
+}
+
+func (n *nodeRecorder) Tick() {
+	n.record("Tick")
+}
+func (n *nodeRecorder) Campaign(ctx context.Context) error {
+	n.record("Campaign")
+	return nil
+}
+func (n *nodeRecorder) Propose(ctx context.Context, data []byte) error {
+	n.record("Propose")
+	return nil
+}
+func (n *nodeRecorder) ProposeConfigChange(ctx context.Context, conf raftpb.ConfChange) error {
+	n.record("ProposeConfigChange")
+	return nil
+}
+func (n *nodeRecorder) Step(ctx context.Context, msg raftpb.Message) error {
+	n.record("Step")
+	return nil
+}
+func (n *nodeRecorder) Ready() <-chan raft.Ready { return nil }
+func (n *nodeRecorder) ApplyConfigChange(conf raftpb.ConfChange) {
+	n.record("ApplyConfigChange")
+}
+func (n *nodeRecorder) Stop() {
+	n.record("Stop")
+}
+func (n *nodeRecorder) Compact(d []byte) {
+	n.record("Compact")
+}
+
+type nodeProposeDataRecorder struct {
+	nodeRecorder
+	sync.Mutex
+	d [][]byte
+}
+
+func (n *nodeProposeDataRecorder) data() [][]byte {
+	n.Lock()
+	d := n.d
+	n.Unlock()
+	return d
+}
+func (n *nodeProposeDataRecorder) Propose(ctx context.Context, data []byte) error {
+	n.nodeRecorder.Propose(ctx, data)
+	n.Lock()
+	n.d = append(n.d, data)
+	n.Unlock()
+	return nil
+}
+
+type nodeProposalBlockerRecorder struct {
+	nodeRecorder
+}
+
+func (n *nodeProposalBlockerRecorder) Propose(ctx context.Context, data []byte) error {
+	<-ctx.Done()
+	n.record("Propose blocked")
+	return nil
+}
+
+type nodeConfigChangeCommitterRecorder struct {
+	nodeRecorder
+	readyc chan raft.Ready
+}
+
+func newNodeConfigChangeCommitterRecorder() *nodeConfigChangeCommitterRecorder {
+	readyc := make(chan raft.Ready, 1)
+	readyc <- raft.Ready{SoftState: &raft.SoftState{RaftState: raft.StateLeader}}
+	return &nodeConfigChangeCommitterRecorder{readyc: readyc}
+}
+func (n *nodeConfigChangeCommitterRecorder) ProposeConfigChange(ctx context.Context, conf raftpb.ConfChange) error {
+	data, err := conf.Marshal()
+	if err != nil {
+		return err
 	}
-	if n == GenID() {
-		t.Fatalf("GenID's rand seeded with 1!")
-	}
+	n.readyc <- raft.Ready{CommittedEntries: []raftpb.Entry{{Type: raftpb.EntryConfChange, Data: data}}}
+	n.record("ProposeConfigChange:" + conf.Type.String())
+	return nil
+}
+func (n *nodeConfigChangeCommitterRecorder) Ready() <-chan raft.Ready {
+	return n.readyc
+}
+func (n *nodeConfigChangeCommitterRecorder) ApplyConfigChange(conf raftpb.ConfChange) {
+	n.record("ApplyConfigChange:" + conf.Type.String())
 }

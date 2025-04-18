@@ -111,7 +111,7 @@ type raft struct {
 	lead int64
 
 	// New configuration is ignored
-	// if there exists configuration unapplied
+	// if there exists configuration unapplied Configuration.
 	pendingConf bool
 
 	// number of ticks since the last msg

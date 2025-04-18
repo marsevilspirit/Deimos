@@ -126,7 +126,7 @@ func (c *httpClient) do(ctx context.Context, act httpAction) (*http.Response, []
 	return resp, body, err
 }
 
-func (c *httpClient) Watch(key string, idx uint64) *httpWatcher {
+func (c *httpClient) Watch(key string, idx uint64) Watcher {
 	return &httpWatcher{
 		httpClient: *c,
 		nextWait: waitAction{
@@ -137,7 +137,7 @@ func (c *httpClient) Watch(key string, idx uint64) *httpWatcher {
 	}
 }
 
-func (c *httpClient) RecursiveWatch(key string, idx uint64) *httpWatcher {
+func (c *httpClient) RecursiveWatch(key string, idx uint64) Watcher {
 	return &httpWatcher{
 		httpClient: *c,
 		nextWait: waitAction{

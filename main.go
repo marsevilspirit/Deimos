@@ -19,6 +19,7 @@ import (
 	"github.com/marsevilspirit/deimos/server/deimos_http"
 	"github.com/marsevilspirit/deimos/snap"
 	"github.com/marsevilspirit/deimos/store"
+	"github.com/marsevilspirit/deimos/transport"
 	"github.com/marsevilspirit/deimos/wal"
 )
 
@@ -40,6 +41,7 @@ var (
 
 	peers     = &deimos_http.Peers{}
 	addrs     = &Addrs{}
+	cors      = &CORSInfo{}
 	proxyFlag = new(ProxyFlag)
 
 	proxyFlagValues = []string{
@@ -47,15 +49,28 @@ var (
 		proxyFlagValueReadonly,
 		proxyFlagValueOn,
 	}
+
+	clientTLSInfo = transport.TLSInfo{}
+	peerTLSInfo   = transport.TLSInfo{}
 )
 
 func init() {
 	flag.Var(peers, "peers", "your peers")
 	flag.Var(addrs, "bind-addr", "List of HTTP service addresses (e.g., '127.0.0.1:4001,10.0.0.1:8080')")
+	flag.Var(cors, "cors", "Comma-separated white list of origins for CORS (cross-origin resource sharing).")
 	flag.Var(proxyFlag, "proxy", fmt.Sprintf("Valid values include %s", strings.Join(proxyFlagValues, ", ")))
 	peers.Set("0x1=localhost:8080")
 	addrs.Set("127.0.0.1:4001")
 	proxyFlag.Set(proxyFlagValueOff)
+
+	// tls
+	flag.StringVar(&clientTLSInfo.CAFile, "ca-file", "", "Path to the client server TLS CA file.")
+	flag.StringVar(&clientTLSInfo.CertFile, "cert-file", "", "Path to the client server TLS cert file.")
+	flag.StringVar(&clientTLSInfo.KeyFile, "key-file", "", "Path to the client server TLS key file.")
+
+	flag.StringVar(&peerTLSInfo.CAFile, "peer-ca-file", "", "Path to the peer server TLS CA file.")
+	flag.StringVar(&peerTLSInfo.CertFile, "peer-cert-file", "", "Path to the peer server TLS cert file.")
+	flag.StringVar(&peerTLSInfo.KeyFile, "peer-key-file", "", "Path to the peer server TLS key file.")
 }
 
 func main() {
@@ -143,6 +158,11 @@ func startDeimos() {
 		n = raft.RestartNode(id, peers.IDs(), 10, 1, snapshot, st, ents)
 	}
 
+	pt, err := transport.NewTransport(peerTLSInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	s := &server.DeimosServer{
 		Store: st,
 		Node:  n,
@@ -150,7 +170,7 @@ func startDeimos() {
 			*wal.WAL
 			*snap.Snapshotter
 		}{w, snapshotter},
-		Send:       deimos_http.Sender(*peers),
+		Send:       deimos_http.Sender(pt, *peers),
 		Ticker:     time.Tick(100 * time.Millisecond),
 		SyncTicker: time.Tick(500 * time.Millisecond),
 		SnapCount:  *snapCount,
@@ -158,30 +178,55 @@ func startDeimos() {
 
 	s.Start()
 
-	ch := deimos_http.NewClientHandler(s, *peers, *timeout)
-	ph := deimos_http.NewPeerHandler(s)
+	ch := &CORSHandler{
+		Handler: deimos_http.NewClientHandler(s, *peers, *timeout),
+		Info:    cors,
+	}
+	ph := &CORSHandler{
+		Handler: deimos_http.NewPeerHandler(s),
+		Info:    cors,
+	}
+
+	l, err := transport.NewListener(*paddr, peerTLSInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Start the peer server in a goroutine
 	go func() {
 		log.Print("Listening for peers on ", *paddr)
-		log.Fatal(http.ListenAndServe(*paddr, ph))
+		log.Fatal(http.Serve(l, ph))
 	}()
 
 	// Start a client server goroutine for each listen address
 	for _, addr := range *addrs {
 		addr := addr
+		l, err := transport.NewListener(addr, clientTLSInfo)
+		if err != nil {
+			log.Fatal(err)
+		}
 		go func() {
 			log.Print("Listening for client requests on ", addr)
-			log.Fatal(http.ListenAndServe(addr, ch))
+			log.Fatal(http.Serve(l, ch))
 		}()
 	}
 }
 
 // startProxy launches an HTTP proxy for client communication which proxies to other etcd nodes.
 func startProxy() {
-	ph, err := proxy.NewHandler((*peers).Endpoints())
+	pt, err := transport.NewTransport(clientTLSInfo)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	ph, err := proxy.NewHandler(pt, (*peers).Addrs())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ph = &CORSHandler{
+		Handler: ph,
+		Info:    cors,
 	}
 
 	if string(*proxyFlag) == proxyFlagValueReadonly {
@@ -191,9 +236,14 @@ func startProxy() {
 	// Start a proxy server goroutine for each listen address
 	for _, addr := range *addrs {
 		addr := addr
+		l, err := transport.NewListener(addr, clientTLSInfo)
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		go func() {
 			log.Print("Listening for client requests on ", addr)
-			log.Fatal(http.ListenAndServe(addr, ph))
+			log.Fatal(http.Serve(l, ph))
 		}()
 	}
 }

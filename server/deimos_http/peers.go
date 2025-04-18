@@ -25,15 +25,14 @@ func addScheme(addr string) string {
 	return fmt.Sprintf("http://%s", addr)
 }
 
-// Pick chooses a random address from a given Peer's addresses,
-// and returns it as an addressible URI.
-// If the given peer does not exist, an empty string is returned.
+// Pick returns a random address from a given Peer's addresses. If the
+// given peer does not exist, an empty string is returned.
 func (ps Peers) Pick(id int64) string {
 	addrs := ps[id]
 	if len(addrs) == 0 {
 		return ""
 	}
-	return addScheme(addrs[rand.Intn(len(addrs))])
+	return addrs[rand.Intn(len(addrs))]
 }
 
 // Each time set will reset peers.
@@ -76,6 +75,7 @@ func (ps Peers) IDs() []int64 {
 
 // EndPoints returns a list of all peer addresses. Each address is
 // prefixed with "http://". The returned list is sorted (asc).
+// NOTE: with Scheme.
 func (ps Peers) Endpoints() []string {
 	endpoints := make([]string, 0)
 	for _, addrs := range ps {
@@ -87,21 +87,42 @@ func (ps Peers) Endpoints() []string {
 	return endpoints
 }
 
-func Sender(p Peers) func(msgs []raftpb.Message) {
+// Addrs returns a list of all peer addresses. The returned list is
+// sorted in ascending lexicographical order.
+// NOTE: without Scheme.
+func (ps Peers) Addrs() []string {
+	addrs := make([]string, 0)
+	for _, paddrs := range ps {
+		for _, paddr := range paddrs {
+			addrs = append(addrs, paddr)
+		}
+	}
+	sort.Strings(addrs)
+	return addrs
+}
+
+func Sender(t *http.Transport, p Peers) func(msgs []raftpb.Message) {
+	c := &http.Client{Transport: t}
+
+	scheme := "http"
+	if t.TLSClientConfig != nil {
+		scheme = "https"
+	}
+
 	return func(msgs []raftpb.Message) {
 		for _, m := range msgs {
 			// TODO: reuse go routines
 			// limit the number of outgoing connections for the same receiver
-			go send(p, m)
+			go send(c, scheme, p, m)
 		}
 	}
 }
 
-func send(p Peers, m raftpb.Message) {
+func send(c *http.Client, scheme string, p Peers, m raftpb.Message) {
 	// TODO: reasonable retry logic
 	for i := 0; i < 3; i++ {
-		url := p.Pick(m.To)
-		if url == "" {
+		addr := p.Pick(m.To)
+		if addr == "" {
 			// TODO: unknown peer id.. what do we do? I
 			// don't think his should ever happen, need to
 			// look into this further.
@@ -109,7 +130,7 @@ func send(p Peers, m raftpb.Message) {
 			break
 		}
 
-		url += raftPrefix
+		url := fmt.Sprintf("%s://%s%s", scheme, addr, raftPrefix)
 
 		// TODO: don't block. we should be able to have 1000s
 		// of messages out at a time.
@@ -118,7 +139,7 @@ func send(p Peers, m raftpb.Message) {
 			log.Println("marshttp: dropping message:", err)
 			break // drop bad message
 		}
-		if httpPost(url, data) {
+		if httpPost(c, url, data) {
 			break // success
 		}
 
@@ -126,8 +147,7 @@ func send(p Peers, m raftpb.Message) {
 	}
 }
 
-func httpPost(url string, data []byte) bool {
-	// TODO: set timeouts
+func httpPost(c *http.Client, url string, data []byte) bool {
 	resp, err := http.Post(url, "application/protobuf", bytes.NewBuffer(data))
 	if err != nil {
 		elog.TODO()

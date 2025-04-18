@@ -7,7 +7,7 @@ import (
 func TestWatcher(t *testing.T) {
 	s := newStore()
 	wh := s.WatcherHub
-	w, err := wh.watch("/foo", true, false, 1)
+	w, err := wh.watch("/foo", true, false, 1, 1)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -31,7 +31,7 @@ func TestWatcher(t *testing.T) {
 		t.Fatalf("recv != send")
 	}
 
-	w, _ = wh.watch("/foo", false, false, 2)
+	w, _ = wh.watch("/foo", false, false, 2, 1)
 	c = w.EventChan()
 
 	e = newEvent(Create, "/foo/bar", 2, 2)
@@ -56,7 +56,7 @@ func TestWatcher(t *testing.T) {
 	}
 
 	// ensure we are doing exact matching rather than prefix matching
-	w, _ = wh.watch("/fo", true, false, 1)
+	w, _ = wh.watch("/fo", true, false, 1, 1)
 	c = w.EventChan()
 
 	select {
