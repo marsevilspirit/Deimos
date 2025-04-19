@@ -149,7 +149,7 @@ func TestRecover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	i := &raftpb.Info{Id: int64(0xBAD0)}
+	i := &raftpb.Info{ID: int64(0xBAD0)}
 	if err = w.SaveInfo(i); err != nil {
 		t.Fatal(err)
 	}
@@ -175,8 +175,8 @@ func TestRecover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if id != i.Id {
-		t.Errorf("id = %d, want %d", id, i.Id)
+	if id != i.ID {
+		t.Errorf("id = %d, want %d", id, i.ID)
 	}
 	if !reflect.DeepEqual(entries, ents) {
 		t.Errorf("ents = %+v, want %+v", entries, ents)
@@ -266,7 +266,7 @@ func TestRecoverAfterCut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info := &raftpb.Info{Id: int64(0xBAD1)}
+	info := &raftpb.Info{ID: int64(0xBAD1)}
 	if err = w.SaveInfo(info); err != nil {
 		t.Fatal(err)
 	}
@@ -312,8 +312,8 @@ func TestRecoverAfterCut(t *testing.T) {
 			t.Errorf("#%d: err = %v, want nil", i, err)
 			continue
 		}
-		if id != info.Id {
-			t.Errorf("#%d: id = %d, want %d", i, id, info.Id)
+		if id != info.ID {
+			t.Errorf("#%d: id = %d, want %d", i, id, info.ID)
 		}
 		for j, e := range entries {
 			if e.Index != int64(j+i) {

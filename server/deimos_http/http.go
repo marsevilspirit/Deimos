@@ -35,11 +35,12 @@ const (
 var errClosed = errors.New("marshttp: client closed connection")
 
 // NewClientHandler generates a muxed http.Handler with the given parameters to serve deimos client requests.
-func NewClientHandler(server server.Server, peers Peers, timeout time.Duration) http.Handler {
+func NewClientHandler(server *server.DeimosServer, clusterStore server.ClusterStore, timeout time.Duration) http.Handler {
 	sh := &serverHandler{
-		server:  server,
-		peers:   peers,
-		timeout: timeout,
+		server:       server,
+		timer:        server,
+		timeout:      timeout,
+		clusterStore: clusterStore,
 	}
 
 	if sh.timeout == 0 {
@@ -69,9 +70,10 @@ func NewPeerHandler(server server.Server) http.Handler {
 
 // serverHandler provides http.Handlers for deimos client and raft communication.
 type serverHandler struct {
-	timeout time.Duration
-	server  server.Server
-	peers   Peers
+	timeout      time.Duration
+	server       server.Server
+	timer        server.RaftTimer
+	clusterStore server.ClusterStore
 }
 
 func (h serverHandler) serveKeys(w http.ResponseWriter, r *http.Request) {
@@ -95,14 +97,14 @@ func (h serverHandler) serveKeys(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case resp.Event != nil:
-		if err := writeEvent(w, resp.Event); err != nil {
+		if err := writeEvent(w, resp.Event, h.timer); err != nil {
 			// Should never be reached
 			log.Printf("error writing event: %v", err)
 		}
 	case resp.Watcher != nil:
 		ctx, cancel := context.WithTimeout(context.Background(), defaultWatchTimeout)
 		defer cancel()
-		handleWatch(ctx, w, resp.Watcher, rr.Stream)
+		handleWatch(ctx, w, resp.Watcher, rr.Stream, h.timer)
 	default:
 		writeError(w, errors.New("received response with no Event/Watcher"))
 	}
@@ -114,7 +116,7 @@ func (h serverHandler) serveMachines(w http.ResponseWriter, r *http.Request) {
 	if !allowMethod(w, r.Method, "GET", "HEAD") {
 		return
 	}
-	endpoints := h.peers.Endpoints()
+	endpoints := h.clusterStore.Get().Endpoints()
 	w.Write([]byte(strings.Join(endpoints, ", ")))
 }
 
@@ -168,7 +170,7 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 
 	p := r.URL.Path[len(keysPrefix):]
 
-	var pIdx, wIdx, ttl uint64
+	var pIdx, wIdx uint64
 	if pIdx, err = getUint64(r.Form, "prevIndex"); err != nil {
 		return emptyReq, Err.NewRequestError(
 			Err.EcodeIndexNaN,
@@ -181,14 +183,8 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 			`invalid value for "waitIndex"`,
 		)
 	}
-	if ttl, err = getUint64(r.Form, "ttl"); err != nil {
-		return emptyReq, Err.NewRequestError(
-			Err.EcodeTTLNaN,
-			`invalid value for "ttl"`,
-		)
-	}
 
-	var rec, sort, wait, stream bool
+	var rec, sort, wait, dir, stream bool
 	if rec, err = getBool(r.Form, "recursive"); err != nil {
 		return emptyReq, Err.NewRequestError(
 			Err.EcodeInvalidField,
@@ -207,7 +203,13 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 			`invalid value for "wait"`,
 		)
 	}
-
+	// TODO: define what parameters dir is/isn't compatible with?
+	if dir, err = getBool(r.Form, "dir"); err != nil {
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			`invalid value for "dir"`,
+		)
+	}
 	if stream, err = getBool(r.Form, "stream"); err != nil {
 		return emptyReq, Err.NewRequestError(
 			Err.EcodeInvalidField,
@@ -220,6 +222,28 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 			Err.EcodeInvalidField,
 			`"wait" can only be used with GET requests`,
 		)
+	}
+
+	pV := r.FormValue("prevValue")
+	if _, ok := r.Form["prevValue"]; ok && pV == "" {
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			`"prevValue" cannot be empty`,
+		)
+	}
+
+	// TTL is nullable, so leave it null if not specified
+	// or an empty string
+	var ttl *uint64
+	if len(r.FormValue("ttl")) > 0 {
+		i, err := getUint64(r.Form, "ttl")
+		if err != nil {
+			return emptyReq, Err.NewRequestError(
+				Err.EcodeTTLNaN,
+				`invalid value for "ttl"`,
+			)
+		}
+		ttl = &i
 	}
 
 	// prevExists is nullable, so leave it null if not specified
@@ -236,11 +260,12 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 	}
 
 	rr := serverpb.Request{
-		Id:        id,
+		ID:        id,
 		Method:    r.Method,
 		Path:      p,
 		Val:       r.FormValue("value"),
-		PrevValue: r.FormValue("prevValue"),
+		Dir:       dir,
+		PrevValue: pV,
 		PrevIndex: pIdx,
 		PrevExist: pe,
 		Recursive: rec,
@@ -254,9 +279,10 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 		rr.PrevExist = pe
 	}
 
+	// Null TTL is equivalent to unset Expiration
 	// TODO: use fake clock instead of time module
-	if ttl > 0 {
-		expr := time.Duration(ttl) * time.Second
+	if ttl != nil {
+		expr := time.Duration(*ttl) * time.Second
 		rr.Expiration = time.Now().Add(expr).UnixNano()
 	}
 
@@ -302,12 +328,14 @@ func writeError(w http.ResponseWriter, err error) {
 // writeEvent serializes a single Event and writes the resulting
 // JSON to the given ResponseWriter, along with the appropriate
 // headers
-func writeEvent(w http.ResponseWriter, ev *store.Event) error {
+func writeEvent(w http.ResponseWriter, ev *store.Event, rt server.RaftTimer) error {
 	if ev == nil {
 		return errors.New("cannot write empty Event!")
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Add("X-Deimos-Index", fmt.Sprint(ev.Index()))
+	w.Header().Set("X-Deimos-Index", fmt.Sprint(ev.DeimosIndex))
+	w.Header().Set("X-Raft-Index", fmt.Sprint(rt.Index()))
+	w.Header().Set("X-Raft-Term", fmt.Sprint(rt.Term()))
 
 	if ev.IsCreated() {
 		w.WriteHeader(http.StatusCreated)
@@ -316,7 +344,7 @@ func writeEvent(w http.ResponseWriter, ev *store.Event) error {
 	return json.NewEncoder(w).Encode(ev)
 }
 
-func handleWatch(ctx context.Context, w http.ResponseWriter, wa store.Watcher, stream bool) {
+func handleWatch(ctx context.Context, w http.ResponseWriter, wa store.Watcher, stream bool, rt server.RaftTimer) {
 	defer wa.Remove()
 	ech := wa.EventChan()
 	var nch <-chan bool
@@ -325,6 +353,8 @@ func handleWatch(ctx context.Context, w http.ResponseWriter, wa store.Watcher, s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Raft-Index", fmt.Sprint(rt.Index()))
+	w.Header().Set("X-Raft-Term", fmt.Sprint(rt.Term()))
 	w.WriteHeader(http.StatusOK)
 
 	// Ensure headers are flushed early, in case of long polling

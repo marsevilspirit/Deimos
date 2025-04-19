@@ -13,13 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/marsevilspirit/deimos/pkg"
+	"github.com/marsevilspirit/deimos/pkg/transport"
 	"github.com/marsevilspirit/deimos/proxy"
 	"github.com/marsevilspirit/deimos/raft"
 	"github.com/marsevilspirit/deimos/server"
 	"github.com/marsevilspirit/deimos/server/deimos_http"
 	"github.com/marsevilspirit/deimos/snap"
 	"github.com/marsevilspirit/deimos/store"
-	"github.com/marsevilspirit/deimos/transport"
 	"github.com/marsevilspirit/deimos/wal"
 )
 
@@ -30,18 +31,21 @@ const (
 	proxyFlagValueOff      = "off"
 	proxyFlagValueReadonly = "readonly"
 	proxyFlagValueOn       = "on"
+
+	version = "0.0.1-alpha"
 )
 
 var (
-	fid       = flag.String("id", "0x1", "The ID of this server")
-	timeout   = flag.Duration("timeout", 10*time.Second, "Request Timeout")
-	paddr     = flag.String("peer-bind-addr", ":6666", "Peer service address (e.g., ':6666')")
-	dir       = flag.String("data-dir", "", "Directry to store wal files and snapshot files")
-	snapCount = flag.Int64("snapshot-count", server.DefaultSnapCount, "Number of committed transactions to trigger a snapshot")
+	name         = flag.String("name", "default", "Unique human-readable name for this node")
+	timeout      = flag.Duration("timeout", 10*time.Second, "Request Timeout")
+	paddr        = flag.String("peer-bind-addr", ":7001", "Peer service address (e.g., ':7001')")
+	dir          = flag.String("data-dir", "", "Path to the data directory")
+	snapCount    = flag.Int64("snapshot-count", server.DefaultSnapCount, "Number of committed transactions to trigger a snapshot")
+	printVersion = flag.Bool("version", false, "Print the version and exit")
 
-	peers     = &deimos_http.Peers{}
+	cluster   = &server.Cluster{}
 	addrs     = &Addrs{}
-	cors      = &CORSInfo{}
+	cors      = &pkg.CORSInfo{}
 	proxyFlag = new(ProxyFlag)
 
 	proxyFlagValues = []string{
@@ -55,11 +59,11 @@ var (
 )
 
 func init() {
-	flag.Var(peers, "peers", "your peers")
+	flag.Var(cluster, "bootstrap-config", "Initial cluster configuration for bootstrapping")
 	flag.Var(addrs, "bind-addr", "List of HTTP service addresses (e.g., '127.0.0.1:4001,10.0.0.1:8080')")
 	flag.Var(cors, "cors", "Comma-separated white list of origins for CORS (cross-origin resource sharing).")
 	flag.Var(proxyFlag, "proxy", fmt.Sprintf("Valid values include %s", strings.Join(proxyFlagValues, ", ")))
-	peers.Set("0x1=localhost:8080")
+	cluster.Set("default=localhost:8080")
 	addrs.Set("127.0.0.1:4001")
 	proxyFlag.Set(proxyFlagValueOff)
 
@@ -76,7 +80,12 @@ func init() {
 func main() {
 	flag.Parse()
 
-	setFlagsFromEnv()
+	if *printVersion {
+		fmt.Println("deimos version", version)
+		os.Exit(0)
+	}
+
+	pkg.SetFlagsFromEnv(flag.CommandLine)
 
 	if string(*proxyFlag) == proxyFlagValueOff {
 		startDeimos()
@@ -90,16 +99,13 @@ func main() {
 
 // startDeimos launches the deimos server and HTTP handlers for client/server communication.
 func startDeimos() {
-	id, err := strconv.ParseInt(*fid, 0, 64)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if id == raft.None {
-		log.Fatalf("Deimos: cannot use None(%d) as Deimos server id", raft.None)
+	self := cluster.FindName(*name)
+	if self == nil {
+		log.Fatalf("deimos: no member with name=%q exists", *name)
 	}
 
-	if peers.Pick(id) == "" {
-		log.Fatalf("%#x=<addr> must be specified in peers", id)
+	if self.ID == raft.None {
+		log.Fatalf("etcd: cannot use None(%d) as member id", raft.None)
 	}
 
 	if *snapCount <= 0 {
@@ -107,7 +113,7 @@ func startDeimos() {
 	}
 
 	if *dir == "" {
-		*dir = fmt.Sprintf("%v_deimos_data", *fid)
+		*dir = fmt.Sprintf("%v_deimos_data", self.ID)
 		log.Printf("main: no data-dir is given, uing default data-dir ./%s", *dir)
 	}
 	if err := os.MkdirAll(*dir, privateDirMode); err != nil {
@@ -123,6 +129,7 @@ func startDeimos() {
 	waldir := path.Join(*dir, "wal")
 	var w *wal.WAL
 	var n raft.Node
+	var err error
 	st := store.New()
 
 	if !wal.Exist(waldir) {
@@ -130,7 +137,7 @@ func startDeimos() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		n = raft.StartNode(id, peers.IDs(), 10, 1)
+		n = raft.StartNode(self.ID, cluster.IDs(), 10, 1)
 	} else {
 		var index int64
 		snapshot, err := snapshotter.Load()
@@ -155,13 +162,15 @@ func startDeimos() {
 		if wid != 0 {
 			log.Fatalf("unexpected nodeid %d: nodeid should always be zero until we save nodeid into wal", wid)
 		}
-		n = raft.RestartNode(id, peers.IDs(), 10, 1, snapshot, st, ents)
+		n = raft.RestartNode(self.ID, cluster.IDs(), 10, 1, snapshot, st, ents)
 	}
 
 	pt, err := transport.NewTransport(peerTLSInfo)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	cls := server.NewClusterStore(st, *cluster)
 
 	s := &server.DeimosServer{
 		Store: st,
@@ -170,22 +179,20 @@ func startDeimos() {
 			*wal.WAL
 			*snap.Snapshotter
 		}{w, snapshotter},
-		Send:       deimos_http.Sender(pt, *peers),
-		Ticker:     time.Tick(100 * time.Millisecond),
-		SyncTicker: time.Tick(500 * time.Millisecond),
-		SnapCount:  *snapCount,
+		Send:         server.Sender(pt, cls),
+		Ticker:       time.Tick(100 * time.Millisecond),
+		SyncTicker:   time.Tick(500 * time.Millisecond),
+		SnapCount:    *snapCount,
+		ClusterStore: cls,
 	}
 
 	s.Start()
 
-	ch := &CORSHandler{
-		Handler: deimos_http.NewClientHandler(s, *peers, *timeout),
+	ch := &pkg.CORSHandler{
+		Handler: deimos_http.NewClientHandler(s, cls, *timeout),
 		Info:    cors,
 	}
-	ph := &CORSHandler{
-		Handler: deimos_http.NewPeerHandler(s),
-		Info:    cors,
-	}
+	ph := deimos_http.NewPeerHandler(s)
 
 	l, err := transport.NewListener(*paddr, peerTLSInfo)
 	if err != nil {
@@ -219,12 +226,12 @@ func startProxy() {
 		log.Fatal(err)
 	}
 
-	ph, err := proxy.NewHandler(pt, (*peers).Addrs())
+	ph, err := proxy.NewHandler(pt, (*cluster).Endpoints())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ph = &CORSHandler{
+	ph = &pkg.CORSHandler{
 		Handler: ph,
 		Info:    cors,
 	}
@@ -309,26 +316,4 @@ func (pf *ProxyFlag) Set(s string) error {
 
 func (pf *ProxyFlag) String() string {
 	return string(*pf)
-}
-
-// setFlagsFromEnv parses all registered flags in the global flagset,
-// and if they are not already set it attempts to set their values from
-// environment variables. Environment variables take the name of the flag but
-// are UPPERCASE, have the prefix "DEIMOS_", and any dashes are replaced by
-// underscores - for example: some-flag => DEIMOS_SOME_FLAG
-func setFlagsFromEnv() {
-	alreadySet := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) {
-		alreadySet[f.Name] = true
-	})
-	flag.VisitAll(func(f *flag.Flag) {
-		if !alreadySet[f.Name] {
-			key := "DEIMOS_" + strings.ToUpper(strings.Replace(f.Name, "-", "_", -1))
-			val := os.Getenv(key)
-			if val != "" {
-				flag.Set(f.Name, val)
-			}
-		}
-
-	})
 }

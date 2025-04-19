@@ -6,7 +6,7 @@ import (
 	"hash"
 	"io"
 
-	"github.com/marsevilspirit/deimos/crc"
+	"github.com/marsevilspirit/deimos/pkg/crc"
 	"github.com/marsevilspirit/deimos/wal/walpb"
 )
 

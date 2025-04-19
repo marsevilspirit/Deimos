@@ -1,11 +1,13 @@
 #!/bin/sh
 go test  ./ \
-	./wal \
-	./snap \
+	./client \
+	./pkg \
+	./pkg/transport \
+	./proxy \
+	./raft \
 	./server \
 	./server/deimos_http \
-	./raft \
-	./wait \
+	./snap \
 	./store \
-	./proxy \
-	./client
+	./wait \
+	./wal

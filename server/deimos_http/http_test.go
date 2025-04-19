@@ -23,8 +23,7 @@ import (
 	"github.com/marsevilspirit/deimos/store"
 )
 
-func nopSave(st raftpb.HardState, ents []raftpb.Entry) {}
-func nopSend(m []raftpb.Message)                       {}
+func nopSend(m []raftpb.Message) {}
 
 func TestSet(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -162,7 +161,7 @@ func TestBadParseRequest(t *testing.T) {
 			mustNewForm(t, "foo", url.Values{"ttl": []string{"-1"}}),
 			Err.EcodeTTLNaN,
 		},
-		// bad values for recursive, sorted, wait, prevExists, stream
+		// bad values for recursive, sorted, wait, prevExists, dir, stream
 		{
 			mustNewForm(t, "foo", url.Values{"recursive": []string{"hahaha"}}),
 			Err.EcodeInvalidField,
@@ -200,11 +199,24 @@ func TestBadParseRequest(t *testing.T) {
 			Err.EcodeInvalidField,
 		},
 		{
+			mustNewForm(t, "foo", url.Values{"dir": []string{"no"}}),
+			Err.EcodeInvalidField,
+		},
+		{
+			mustNewForm(t, "foo", url.Values{"dir": []string{"file"}}),
+			Err.EcodeInvalidField,
+		},
+		{
 			mustNewForm(t, "foo", url.Values{"stream": []string{"zzz"}}),
 			Err.EcodeInvalidField,
 		},
 		{
 			mustNewForm(t, "foo", url.Values{"stream": []string{"something"}}),
+			Err.EcodeInvalidField,
+		},
+		// prevValue cannot be empty
+		{
+			mustNewForm(t, "foo", url.Values{"prevValue": []string{""}}),
 			Err.EcodeInvalidField,
 		},
 		// wait is only valid with GET requests
@@ -269,7 +281,7 @@ func TestGoodParseRequest(t *testing.T) {
 			// good prefix, all other values default
 			mustNewRequest(t, "foo"),
 			serverpb.Request{
-				Id:     1234,
+				ID:     1234,
 				Method: "GET",
 				Path:   "/foo",
 			},
@@ -282,7 +294,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"value": []string{"some_value"}},
 			),
 			serverpb.Request{
-				Id:     1234,
+				ID:     1234,
 				Method: "PUT",
 				Val:    "some_value",
 				Path:   "/foo",
@@ -296,7 +308,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"prevIndex": []string{"98765"}},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				PrevIndex: 98765,
 				Path:      "/foo",
@@ -310,7 +322,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"recursive": []string{"true"}},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				Recursive: true,
 				Path:      "/foo",
@@ -324,7 +336,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"sorted": []string{"true"}},
 			),
 			serverpb.Request{
-				Id:     1234,
+				ID:     1234,
 				Method: "PUT",
 				Sorted: true,
 				Path:   "/foo",
@@ -334,9 +346,39 @@ func TestGoodParseRequest(t *testing.T) {
 			// wait specified
 			mustNewRequest(t, "foo?wait=true"),
 			serverpb.Request{
-				Id:     1234,
+				ID:     1234,
 				Method: "GET",
 				Wait:   true,
+				Path:   "/foo",
+			},
+		},
+		{
+			// empty TTL specified
+			mustNewRequest(t, "foo?ttl="),
+			serverpb.Request{
+				ID:         1234,
+				Method:     "GET",
+				Path:       "/foo",
+				Expiration: 0,
+			},
+		},
+		{
+			// dir specified
+			mustNewRequest(t, "foo?dir=true"),
+			serverpb.Request{
+				ID:     1234,
+				Method: "GET",
+				Dir:    true,
+				Path:   "/foo",
+			},
+		},
+		{
+			// dir specified negatively
+			mustNewRequest(t, "foo?dir=false"),
+			serverpb.Request{
+				ID:     1234,
+				Method: "GET",
+				Dir:    false,
 				Path:   "/foo",
 			},
 		},
@@ -348,7 +390,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"prevExists": []string{"true"}},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				PrevExist: boolp(true),
 				Path:      "/foo",
@@ -362,7 +404,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{"prevExists": []string{"false"}},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				PrevExist: boolp(false),
 				Path:      "/foo",
@@ -380,7 +422,7 @@ func TestGoodParseRequest(t *testing.T) {
 				},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				PrevExist: boolp(true),
 				PrevValue: "previous value",
@@ -396,7 +438,7 @@ func TestGoodParseRequest(t *testing.T) {
 				url.Values{},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				PrevValue: "woof",
 				Path:      "/foo",
@@ -412,7 +454,7 @@ func TestGoodParseRequest(t *testing.T) {
 				},
 			),
 			serverpb.Request{
-				Id:        1234,
+				ID:        1234,
 				Method:    "PUT",
 				PrevValue: "miaow",
 				Path:      "/foo",
@@ -428,6 +470,27 @@ func TestGoodParseRequest(t *testing.T) {
 		if !reflect.DeepEqual(got, tt.w) {
 			t.Errorf("#%d: request=%#v, want %#v", i, got, tt.w)
 		}
+	}
+
+	// Test TTL separately until we don't rely on the time module...
+	now := time.Now().UnixNano()
+	req := mustNewForm(t, "foo", url.Values{"ttl": []string{"100"}})
+	got, err := parseRequest(req, 1234)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got.Expiration <= now {
+		t.Fatalf("expiration = %v, wanted > %v", got.Expiration, now)
+	}
+
+	// ensure TTL=0 results in an expiration time
+	req = mustNewForm(t, "foo", url.Values{"ttl": []string{"0"}})
+	got, err = parseRequest(req, 1234)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if got.Expiration <= now {
+		t.Fatalf("expiration = %v, wanted > %v", got.Expiration, now)
 	}
 }
 
@@ -495,10 +558,15 @@ func TestWriteError(t *testing.T) {
 	}
 }
 
+type dummyRaftTimer struct{}
+
+func (drt dummyRaftTimer) Index() int64 { return int64(100) }
+func (drt dummyRaftTimer) Term() int64  { return int64(5) }
+
 func TestWriteEvent(t *testing.T) {
 	// nil event should not panic
 	rw := httptest.NewRecorder()
-	writeEvent(rw, nil)
+	writeEvent(rw, nil, dummyRaftTimer{})
 	h := rw.Header()
 	if len(h) > 0 {
 		t.Fatalf("unexpected non-empty headers: %#v", h)
@@ -541,9 +609,15 @@ func TestWriteEvent(t *testing.T) {
 
 	for i, tt := range tests {
 		rw := httptest.NewRecorder()
-		writeEvent(rw, tt.ev)
+		writeEvent(rw, tt.ev, dummyRaftTimer{})
 		if gct := rw.Header().Get("Content-Type"); gct != "application/json" {
 			t.Errorf("case %d: bad Content-Type: got %q, want application/json", i, gct)
+		}
+		if gri := rw.Header().Get("X-Raft-Index"); gri != "100" {
+			t.Errorf("case %d: bad X-Raft-Index header: got %s, want %s", i, gri, "100")
+		}
+		if grt := rw.Header().Get("X-Raft-Term"); grt != "5" {
+			t.Errorf("case %d: bad X-Raft-Term header: got %s, want %s", i, grt, "5")
 		}
 		if gei := rw.Header().Get("X-Deimos-Index"); gei != tt.idx {
 			t.Errorf("case %d: bad X-Deimos-Index header: got %s, want %s", i, gei, tt.idx)
@@ -574,7 +648,7 @@ func TestV2MachinesEndpoint(t *testing.T) {
 		{"POST", http.StatusMethodNotAllowed},
 	}
 
-	h := NewClientHandler(nil, Peers{}, time.Hour)
+	h := NewClientHandler(nil, &fakeCluster{}, time.Hour)
 	s := httptest.NewServer(h)
 	defer s.Close()
 
@@ -595,15 +669,20 @@ func TestV2MachinesEndpoint(t *testing.T) {
 }
 
 func TestServeMachines(t *testing.T) {
-	peers := Peers{}
-	peers.Set("0xBEEF0=localhost:8080&0xBEEF1=localhost:8081&0xBEEF2=localhost:8082")
+	cluster := &fakeCluster{
+		members: []server.Member{
+			{ID: 0xBEEF0, PeerURLs: []string{"localhost:8080"}},
+			{ID: 0xBEEF1, PeerURLs: []string{"localhost:8081"}},
+			{ID: 0xBEEF2, PeerURLs: []string{"localhost:8082"}},
+		},
+	}
 
 	writer := httptest.NewRecorder()
 	req, err := http.NewRequest("GET", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &serverHandler{peers: peers}
+	h := &serverHandler{clusterStore: cluster}
 	h.serveMachines(writer, req)
 	w := "http://localhost:8080, http://localhost:8081, http://localhost:8082"
 	if g := writer.Body.String(); g != w {
@@ -614,51 +693,59 @@ func TestServeMachines(t *testing.T) {
 	}
 }
 
-func TestPeersEndpoints(t *testing.T) {
+func TestClusterGetEndpoints(t *testing.T) {
 	tests := []struct {
-		peers     Peers
-		endpoints []string
+		clusterStore server.ClusterStore
+		endpoints    []string
 	}{
 		// single peer with a single address
 		{
-			peers: Peers(map[int64][]string{
-				1: {"192.0.2.1"},
-			}),
+			clusterStore: &fakeCluster{
+				members: []server.Member{
+					{ID: 1, PeerURLs: []string{"192.0.2.1"}},
+				},
+			},
 			endpoints: []string{"http://192.0.2.1"},
 		},
 		// single peer with a single address with a port
 		{
-			peers: Peers(map[int64][]string{
-				1: {"192.0.2.1:8001"},
-			}),
+			clusterStore: &fakeCluster{
+				members: []server.Member{
+					{ID: 1, PeerURLs: []string{"192.0.2.1:8001"}},
+				},
+			},
 			endpoints: []string{"http://192.0.2.1:8001"},
 		},
-		// several peers explicitly unsorted
+		// several members explicitly unsorted
 		{
-			peers: Peers(map[int64][]string{
-				2: {"192.0.2.3", "192.0.2.4"},
-				3: {"192.0.2.5", "192.0.2.6"},
-				1: {"192.0.2.1", "192.0.2.2"},
-			}),
+			clusterStore: &fakeCluster{
+				members: []server.Member{
+					{ID: 2, PeerURLs: []string{"192.0.2.3", "192.0.2.4"}},
+					{ID: 3, PeerURLs: []string{"192.0.2.5", "192.0.2.6"}},
+					{ID: 1, PeerURLs: []string{"192.0.2.1", "192.0.2.2"}},
+				},
+			},
 			endpoints: []string{"http://192.0.2.1", "http://192.0.2.2", "http://192.0.2.3", "http://192.0.2.4", "http://192.0.2.5", "http://192.0.2.6"},
 		},
-		// no peers
+		// no members
 		{
-			peers:     Peers(map[int64][]string{}),
-			endpoints: []string{},
+			clusterStore: &fakeCluster{members: []server.Member{}},
+			endpoints:    []string{},
 		},
 		// peer with no endpoints
 		{
-			peers: Peers(map[int64][]string{
-				3: {},
-			}),
+			clusterStore: &fakeCluster{
+				members: []server.Member{
+					{ID: 3, PeerURLs: []string{}},
+				},
+			},
 			endpoints: []string{},
 		},
 	}
 	for i, tt := range tests {
-		endpoints := tt.peers.Endpoints()
+		endpoints := tt.clusterStore.Get().Endpoints()
 		if !reflect.DeepEqual(tt.endpoints, endpoints) {
-			t.Errorf("#%d: peers.Endpoints() incorrect: want=%#v got=%#v", i, tt.endpoints, endpoints)
+			t.Errorf("#%d: members.Endpoints() incorrect: want=%#v got=%#v", i, tt.endpoints, endpoints)
 		}
 	}
 }
@@ -848,7 +935,6 @@ func TestServeRaft(t *testing.T) {
 		h := &serverHandler{
 			timeout: time.Hour,
 			server:  &errServer{tt.serverErr},
-			peers:   nil,
 		}
 		rw := httptest.NewRecorder()
 		h.serveRaft(rw, req)
@@ -937,7 +1023,6 @@ func TestBadServeKeys(t *testing.T) {
 		h := &serverHandler{
 			timeout: 0, // context times out immediately
 			server:  tt.server,
-			peers:   nil,
 		}
 		rw := httptest.NewRecorder()
 		h.serveKeys(rw, tt.req)
@@ -960,7 +1045,7 @@ func TestServeKeysEvent(t *testing.T) {
 	h := &serverHandler{
 		timeout: time.Hour,
 		server:  server,
-		peers:   nil,
+		timer:   &dummyRaftTimer{},
 	}
 	rw := httptest.NewRecorder()
 
@@ -998,7 +1083,7 @@ func TestServeKeysWatch(t *testing.T) {
 	h := &serverHandler{
 		timeout: time.Hour,
 		server:  server,
-		peers:   nil,
+		timer:   &dummyRaftTimer{},
 	}
 	go func() {
 		ec <- &store.Event{
@@ -1038,10 +1123,12 @@ func TestHandleWatch(t *testing.T) {
 		Node:   &store.NodeExtern{},
 	}
 
-	handleWatch(context.Background(), rw, wa, false)
+	handleWatch(context.Background(), rw, wa, false, &dummyRaftTimer{})
 
 	wcode := http.StatusOK
 	wct := "application/json"
+	wri := "100"
+	wrt := "5"
 	wbody := mustMarshalEvent(
 		t,
 		&store.Event{
@@ -1057,6 +1144,12 @@ func TestHandleWatch(t *testing.T) {
 	if ct := h.Get("Content-Type"); ct != wct {
 		t.Errorf("Content-Type=%q, want %q", ct, wct)
 	}
+	if ri := h.Get("X-Raft-Index"); ri != wri {
+		t.Errorf("X-Raft-Index=%q, want %q", ri, wri)
+	}
+	if rt := h.Get("X-Raft-Term"); rt != wrt {
+		t.Errorf("X-Raft-Term=%q, want %q", rt, wrt)
+	}
 	g := rw.Body.String()
 	if g != wbody {
 		t.Errorf("got body=%#v, want %#v", g, wbody)
@@ -1070,7 +1163,7 @@ func TestHandleWatchNoEvent(t *testing.T) {
 	}
 	close(wa.echan)
 
-	handleWatch(context.Background(), rw, wa, false)
+	handleWatch(context.Background(), rw, wa, false, dummyRaftTimer{})
 
 	wcode := http.StatusOK
 	wct := "application/json"
@@ -1106,7 +1199,7 @@ func TestHandleWatchCloseNotified(t *testing.T) {
 	rw.cn <- true
 	wa := &dummyWatcher{}
 
-	handleWatch(context.Background(), rw, wa, false)
+	handleWatch(context.Background(), rw, wa, false, dummyRaftTimer{})
 
 	wcode := http.StatusOK
 	wct := "application/json"
@@ -1132,7 +1225,7 @@ func TestHandleWatchTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	handleWatch(ctx, rw, wa, false)
+	handleWatch(ctx, rw, wa, false, dummyRaftTimer{})
 
 	wcode := http.StatusOK
 	wct := "application/json"
@@ -1175,7 +1268,7 @@ func TestHandleWatchStreaming(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		handleWatch(ctx, rw, wa, true)
+		handleWatch(ctx, rw, wa, true, dummyRaftTimer{})
 		close(done)
 	}()
 
@@ -1265,3 +1358,15 @@ func TestHandleWatchStreaming(t *testing.T) {
 		t.Fatalf("timed out waiting for done")
 	}
 }
+
+type fakeCluster struct {
+	members []server.Member
+}
+
+func (c *fakeCluster) Get() server.Cluster {
+	cl := &server.Cluster{}
+	cl.AddSlice(c.members)
+	return *cl
+}
+
+func (c *fakeCluster) Delete(id int64) { return }

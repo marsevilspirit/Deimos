@@ -257,7 +257,7 @@ func (s *store) Delete(nodePath string, dir, recursive bool) (*Event, error) {
 
 	nextIndex := s.CurrentIndex + 1
 	e := newEvent(Delete, nodePath, nextIndex, n.CreatedIndex)
-	e.DeimosIndex = s.CurrentIndex
+	e.DeimosIndex = nextIndex
 	e.PrevNode = n.Repr(false, false)
 	eNode := e.Node
 
@@ -394,7 +394,7 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 	}
 
 	e := newEvent(Update, nodePath, nextIndex, n.CreatedIndex)
-	e.DeimosIndex = s.CurrentIndex
+	e.DeimosIndex = nextIndex
 	e.PrevNode = n.Repr(false, false)
 	eNode := e.Node
 

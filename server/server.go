@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/marsevilspirit/deimos/raft"
@@ -66,6 +67,11 @@ type Server interface {
 	Process(ctx context.Context, m raftpb.Message) error
 }
 
+type RaftTimer interface {
+	Index() int64
+	Term() int64
+}
+
 type DeimosServer struct {
 	w    wait.Wait
 	done chan struct{}
@@ -75,7 +81,7 @@ type DeimosServer struct {
 
 	msgsc chan raftpb.Message
 
-	// Send specifies the send function for sending msgs to peers. Send
+	// Send specifies the send function for sending msgs to members. Send
 	// MUST NOT block. It is okay to drop messages, since clients should
 	// timeout and reissue their messages.  If Send is nil, server will
 	// panic.
@@ -87,6 +93,11 @@ type DeimosServer struct {
 	SyncTicker <-chan time.Time
 
 	SnapCount int64 // number of entries to trigger a snapshot
+
+	// Cache of the latest raft index and raft term the server has seen
+	raftIndex    int64
+	raftTerm     int64
+	ClusterStore ClusterStore
 }
 
 // Start prepares and starts server in a new goroutine. It is no longer safe to
@@ -98,6 +109,8 @@ func (s *DeimosServer) Start() {
 	}
 	s.w = wait.New()
 	s.done = make(chan struct{})
+	// TODO: if this is an empty log, writes all peer infos
+	// into the first entry
 	go s.run()
 }
 
@@ -121,6 +134,7 @@ func (s *DeimosServer) run() {
 			// TODO: do this in the background,
 			// but take care to apply entries in a single goroutine,
 			// and not race them.
+			// TODO: apply configuration change into ClusterStore.
 			for _, e := range rd.CommittedEntries {
 				switch e.Type {
 				case raftpb.EntryNormal:
@@ -128,7 +142,7 @@ func (s *DeimosServer) run() {
 					if err := r.Unmarshal(e.Data); err != nil {
 						panic("TODO: this is bad, what do we do about it?")
 					}
-					s.w.Trigger(r.Id, s.apply(r))
+					s.w.Trigger(r.ID, s.apply(r))
 				case raftpb.EntryConfChange:
 					var cc raftpb.ConfChange
 					if err := cc.Unmarshal(e.Data); err != nil {
@@ -139,6 +153,8 @@ func (s *DeimosServer) run() {
 				default:
 					panic("unexpected entry type")
 				}
+				atomic.StoreInt64(&s.raftIndex, e.Index)
+				atomic.StoreInt64(&s.raftTerm, e.Term)
 				appliedi = e.Index
 			}
 
@@ -187,7 +203,7 @@ func (s *DeimosServer) Stop() {
 // respective operation. Do will block until an action is performed or there is
 // an error.
 func (s *DeimosServer) Do(ctx context.Context, r pb.Request) (Response, error) {
-	if r.Id == 0 {
+	if r.ID == 0 {
 		panic("r.Id cannot be 0")
 	}
 
@@ -201,14 +217,14 @@ func (s *DeimosServer) Do(ctx context.Context, r pb.Request) (Response, error) {
 		if err != nil {
 			return Response{}, err
 		}
-		ch := s.w.Register(r.Id)
+		ch := s.w.Register(r.ID)
 		s.Node.Propose(ctx, data)
 		select {
 		case x := <-ch:
 			resp := x.(Response)
 			return resp, resp.err
 		case <-ctx.Done():
-			s.w.Trigger(r.Id, nil) // GC wait
+			s.w.Trigger(r.ID, nil) // GC wait
 			return Response{}, ctx.Err()
 		case <-s.done:
 			return Response{}, ErrStopped
@@ -252,6 +268,15 @@ func (s *DeimosServer) RemoveNode(ctx context.Context, id int64) error {
 	return s.configure(ctx, cc)
 }
 
+// Implement the RaftTimer interface
+func (s *DeimosServer) Index() int64 {
+	return atomic.LoadInt64(&s.raftIndex)
+}
+
+func (s *DeimosServer) Term() int64 {
+	return atomic.LoadInt64(&s.raftTerm)
+}
+
 // configure sends configuration change through consensus then performs it.
 // It will block until the change is performed or there is an error.
 func (s *DeimosServer) configure(ctx context.Context, cc raftpb.ConfChange) error {
@@ -277,7 +302,7 @@ func (s *DeimosServer) sync(timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	req := pb.Request{
 		Method: "SYNC",
-		Id:     GenID(),
+		ID:     GenID(),
 		Time:   time.Now().UnixNano(),
 	}
 	data, err := req.Marshal()
@@ -301,8 +326,8 @@ func getExpirationTime(r *pb.Request) time.Time {
 	return t
 }
 
-// apply interprets r as a call to store.X and returns an
-// Response interpreted from the store.Event
+// apply interprets r as a call to store.X and returns a
+// Response interpreted from store.Event
 func (s *DeimosServer) apply(r pb.Request) Response {
 	f := func(ev *store.Event, err error) Response {
 		return Response{Event: ev, err: err}
@@ -319,9 +344,8 @@ func (s *DeimosServer) apply(r pb.Request) Response {
 		case existSet:
 			if exists {
 				return f(s.Store.Update(r.Path, r.Val, expr))
-			} else {
-				return f(s.Store.Create(r.Path, r.Dir, r.Val, false, expr))
 			}
+			return f(s.Store.Create(r.Path, r.Dir, r.Val, false, expr))
 		case r.PrevIndex > 0 || r.PrevValue != "":
 			return f(s.Store.CompareAndSwap(r.Path, r.PrevValue, r.PrevIndex, r.Val, expr))
 		default:
