@@ -99,7 +99,7 @@ func Sender(t *http.Transport, cls ClusterStore) func(msgs []raftpb.Message) {
 }
 
 func send(c *http.Client, scheme string, cls ClusterStore, m raftpb.Message) {
-	// TODO (xiangli): reasonable retry logic
+	// TODO: reasonable retry logic
 	for i := 0; i < 3; i++ {
 		addr := cls.Get().Pick(m.To)
 		if addr == "" {

@@ -136,6 +136,10 @@ func (s *DeimosServer) run() {
 			// and not race them.
 			// TODO: apply configuration change into ClusterStore.
 			for _, e := range rd.CommittedEntries {
+				if e.Data == nil {
+					log.Printf("Server: TODO e.Data is nil")
+					continue
+				}
 				switch e.Type {
 				case raftpb.EntryNormal:
 					var r pb.Request

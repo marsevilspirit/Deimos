@@ -1,19 +1,17 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/marsevilspirit/deimos/pkg"
+	flagtypes "github.com/marsevilspirit/deimos/pkg/flags"
 	"github.com/marsevilspirit/deimos/pkg/transport"
 	"github.com/marsevilspirit/deimos/proxy"
 	"github.com/marsevilspirit/deimos/raft"
@@ -28,10 +26,6 @@ const (
 	// the owner can make/remove files inside the directory
 	privateDirMode = 0700
 
-	proxyFlagValueOff      = "off"
-	proxyFlagValueReadonly = "readonly"
-	proxyFlagValueOn       = "on"
-
 	version = "0.0.1-alpha"
 )
 
@@ -44,15 +38,9 @@ var (
 	printVersion = flag.Bool("version", false, "Print the version and exit")
 
 	cluster   = &server.Cluster{}
-	addrs     = &Addrs{}
+	addrs     = &flagtypes.Addrs{}
 	cors      = &pkg.CORSInfo{}
-	proxyFlag = new(ProxyFlag)
-
-	proxyFlagValues = []string{
-		proxyFlagValueOff,
-		proxyFlagValueReadonly,
-		proxyFlagValueOn,
-	}
+	proxyFlag = new(flagtypes.Proxy)
 
 	clientTLSInfo = transport.TLSInfo{}
 	peerTLSInfo   = transport.TLSInfo{}
@@ -62,10 +50,10 @@ func init() {
 	flag.Var(cluster, "bootstrap-config", "Initial cluster configuration for bootstrapping")
 	flag.Var(addrs, "bind-addr", "List of HTTP service addresses (e.g., '127.0.0.1:4001,10.0.0.1:8080')")
 	flag.Var(cors, "cors", "Comma-separated white list of origins for CORS (cross-origin resource sharing).")
-	flag.Var(proxyFlag, "proxy", fmt.Sprintf("Valid values include %s", strings.Join(proxyFlagValues, ", ")))
+	flag.Var(proxyFlag, "proxy", fmt.Sprintf("Valid values include %s", strings.Join(flagtypes.ProxyValues, ", ")))
 	cluster.Set("default=localhost:8080")
 	addrs.Set("127.0.0.1:4001")
-	proxyFlag.Set(proxyFlagValueOff)
+	proxyFlag.Set(flagtypes.ProxyValueOff)
 
 	// tls
 	flag.StringVar(&clientTLSInfo.CAFile, "ca-file", "", "Path to the client server TLS CA file.")
@@ -87,7 +75,7 @@ func main() {
 
 	pkg.SetFlagsFromEnv(flag.CommandLine)
 
-	if string(*proxyFlag) == proxyFlagValueOff {
+	if string(*proxyFlag) == flagtypes.ProxyValueOff {
 		startDeimos()
 	} else {
 		startProxy()
@@ -105,7 +93,7 @@ func startDeimos() {
 	}
 
 	if self.ID == raft.None {
-		log.Fatalf("etcd: cannot use None(%d) as member id", raft.None)
+		log.Fatalf("deimos: cannot use None(%d) as member id", raft.None)
 	}
 
 	if *snapCount <= 0 {
@@ -226,7 +214,7 @@ func startProxy() {
 		log.Fatal(err)
 	}
 
-	ph, err := proxy.NewHandler(pt, (*cluster).Endpoints())
+	ph, err := proxy.NewHandler(pt, (*cluster).PeerURLs())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -236,7 +224,7 @@ func startProxy() {
 		Info:    cors,
 	}
 
-	if string(*proxyFlag) == proxyFlagValueReadonly {
+	if string(*proxyFlag) == flagtypes.ProxyValueReadonly {
 		ph = proxy.NewReadonlyHandler(ph)
 	}
 
@@ -253,67 +241,4 @@ func startProxy() {
 			log.Fatal(http.Serve(l, ph))
 		}()
 	}
-}
-
-// Addrs implements the flag.Value interface to allow users to define multiple
-// listen addresses on the command-line
-type Addrs []string
-
-// Set parses a command line set of listen addresses, formatted like:
-// 127.0.0.1:7001,10.1.1.2:80
-func (as *Addrs) Set(s string) error {
-	parsed := make([]string, 0)
-	for _, in := range strings.Split(s, ",") {
-		a := strings.TrimSpace(in)
-		if err := validateAddr(a); err != nil {
-			return err
-		}
-		parsed = append(parsed, a)
-	}
-	if len(parsed) == 0 {
-		return errors.New("no valid addresses given!")
-	}
-	*as = parsed
-	return nil
-}
-
-func (as *Addrs) String() string {
-	return strings.Join(*as, ",")
-}
-
-// validateAddr ensures that the provided string is a valid address. Valid
-// addresses are of the form IP:port.
-// Returns an error if the address is invalid, else nil.
-func validateAddr(s string) error {
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return errors.New("bad format in address specification")
-	}
-	if net.ParseIP(parts[0]) == nil {
-		return errors.New("bad IP in address specification")
-	}
-	if _, err := strconv.Atoi(parts[1]); err != nil {
-		return errors.New("bad port in address specification")
-	}
-	return nil
-}
-
-// ProxyFlag implements the flag.Value interface.
-type ProxyFlag string
-
-// Set verifies the argument to be a valid member of proxyFlagValues
-// before setting the underlying flag value.
-func (pf *ProxyFlag) Set(s string) error {
-	for _, v := range proxyFlagValues {
-		if s == v {
-			*pf = ProxyFlag(s)
-			return nil
-		}
-	}
-
-	return errors.New("invalid value")
-}
-
-func (pf *ProxyFlag) String() string {
-	return string(*pf)
 }

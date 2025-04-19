@@ -1,7 +1,8 @@
 #!/bin/sh
-go test  ./ \
+go test \
 	./client \
 	./pkg \
+	./pkg/flags \
 	./pkg/transport \
 	./proxy \
 	./raft \
