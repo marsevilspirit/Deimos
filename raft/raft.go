@@ -163,7 +163,6 @@ func (r *raft) String() string {
 	return s
 }
 
-// 记录投票结果并计算票数
 func (r *raft) poll(id int64, v bool) (granted int) {
 	if _, ok := r.votes[id]; !ok {
 		r.votes[id] = v
@@ -358,8 +357,6 @@ func (r *raft) campaign() {
 }
 
 func (r *raft) Step(m pb.Message) error {
-	// fmt.Printf("%d to %d : %#v\n", m.From, m.To, m)
-
 	// TODO: this likely allocs - prevent that.
 	defer func() { r.Commit = r.raftLog.committed }()
 
