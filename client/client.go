@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	ErrUnavailable = errors.New("client: no available etcd endpoints")
+	ErrUnavailable = errors.New("client: no available deimos endpoints")
 	ErrNoLeader    = errors.New("client: no leader")
 	ErrKeyNoExist  = errors.New("client: key does not exist")
 	ErrKeyExists   = errors.New("client: key already exists")

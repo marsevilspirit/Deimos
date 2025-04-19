@@ -62,7 +62,7 @@ func newStats() *Stats {
 	return s
 }
 
-// Status() return the statistics info of etcd storage its recent start
+// Status() return the statistics info of deimos storage its recent start
 func (s *Stats) toJson() []byte {
 	b, _ := json.Marshal(s)
 	return b

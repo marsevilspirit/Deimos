@@ -15,7 +15,7 @@ var errors = map[int]string{
 	EcodeNotDir:           "Not a directory",
 	EcodeNodeExist:        "Key already exists", // create
 	EcodeRootROnly:        "Root is read only",
-	EcodeKeyIsPreserved:   "The prefix of given key is a keyword in mars",
+	EcodeKeyIsPreserved:   "The prefix of given key is a keyword in deimos",
 	EcodeDirNotEmpty:      "Directory not empty",
 	EcodeExistingPeerAddr: "Peer address has existed",
 
@@ -36,8 +36,8 @@ var errors = map[int]string{
 	EcodeRaftInternal: "Raft Internal Error",
 	EcodeLeaderElect:  "During Leader Election",
 
-	// mars related errors
-	EcodeWatcherCleared:     "watcher is cleared due to mars recovery",
+	// deimos related errors
+	EcodeWatcherCleared:     "watcher is cleared due to deimos recovery",
 	EcodeEventIndexCleared:  "The event in requested index is outdated and cleared",
 	EcodeStandbyInternal:    "Standby Internal Error",
 	EcodeInvalidActiveSize:  "Invalid active size",

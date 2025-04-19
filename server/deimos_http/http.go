@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marsevilspirit/deimos/elog"
 	Err "github.com/marsevilspirit/deimos/error"
 	"github.com/marsevilspirit/deimos/raft/raftpb"
 	"github.com/marsevilspirit/deimos/server"
@@ -26,12 +25,16 @@ const (
 	machinesPrefix = "/machines"
 	raftPrefix     = "/raft"
 
-	DefaultTimeout = 500 * time.Millisecond
+	// time to wait for response from DeimosServer requests
+	DefaultServerTimeout = 500 * time.Millisecond
+
+	// time to wait for a Watch request
+	defaultWatchTimeout = 5 * time.Minute
 )
 
 var errClosed = errors.New("marshttp: client closed connection")
 
-// NewClientHandler generates a muxed http.Handler with the given parameters to serve etcd client requests.
+// NewClientHandler generates a muxed http.Handler with the given parameters to serve deimos client requests.
 func NewClientHandler(server server.Server, peers Peers, timeout time.Duration) http.Handler {
 	sh := &serverHandler{
 		server:  server,
@@ -40,7 +43,7 @@ func NewClientHandler(server server.Server, peers Peers, timeout time.Duration) 
 	}
 
 	if sh.timeout == 0 {
-		sh.timeout = DefaultTimeout
+		sh.timeout = DefaultServerTimeout
 	}
 
 	mux := http.NewServeMux()
@@ -53,7 +56,7 @@ func NewClientHandler(server server.Server, peers Peers, timeout time.Duration) 
 	return mux
 }
 
-// NewPeerHandler generates an http.Handler to handle etcd peer (raft) requests.
+// NewPeerHandler generates an http.Handler to handle deimos peer (raft) requests.
 func NewPeerHandler(server server.Server) http.Handler {
 	sh := &serverHandler{
 		server: server,
@@ -64,7 +67,7 @@ func NewPeerHandler(server server.Server) http.Handler {
 	return mux
 }
 
-// serverHandler provides http.Handlers for etcd client and raft communication.
+// serverHandler provides http.Handlers for deimos client and raft communication.
 type serverHandler struct {
 	timeout time.Duration
 	server  server.Server
@@ -90,21 +93,19 @@ func (h serverHandler) serveKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 	}
 
-	var ev *store.Event
 	switch {
 	case resp.Event != nil:
-		ev = resp.Event
-	case resp.Watcher != nil:
-		if ev, err = waitForEvent(ctx, w, resp.Watcher); err != nil {
-			http.Error(w, err.Error(), http.StatusGatewayTimeout)
-			return
+		if err := writeEvent(w, resp.Event); err != nil {
+			// Should never be reached
+			log.Printf("error writing event: %v", err)
 		}
+	case resp.Watcher != nil:
+		ctx, cancel := context.WithTimeout(context.Background(), defaultWatchTimeout)
+		defer cancel()
+		handleWatch(ctx, w, resp.Watcher, rr.Stream)
 	default:
 		writeError(w, errors.New("received response with no Event/Watcher"))
-		return
 	}
-
-	writeEvent(w, ev)
 }
 
 // serveMachines responds address list in the format '0.0.0.0, 1.1.1.1'.
@@ -124,19 +125,19 @@ func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
 
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		log.Println("marshttp: error reading raft message:", err)
+		log.Println("deimos_http: error reading raft message:", err)
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
 		return
 	}
 	var m raftpb.Message
 	if err := m.Unmarshal(b); err != nil {
-		log.Println("marshttp: error unmarshaling raft message:", err)
+		log.Println("deimos_http: error unmarshaling raft message:", err)
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
 		return
 	}
 	log.Printf("marshttp: raft recv message from %#x: %+v", m.From, m)
 	if err := h.server.Process(context.TODO(), m); err != nil {
-		log.Println("etcdhttp: error processing raft message:", err)
+		log.Println("deimos_http: error processing raft message:", err)
 		writeError(w, err)
 		return
 	}
@@ -187,7 +188,7 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 		)
 	}
 
-	var rec, sort, wait bool
+	var rec, sort, wait, stream bool
 	if rec, err = getBool(r.Form, "recursive"); err != nil {
 		return emptyReq, Err.NewRequestError(
 			Err.EcodeInvalidField,
@@ -204,6 +205,20 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 		return emptyReq, Err.NewRequestError(
 			Err.EcodeInvalidField,
 			`invalid value for "wait"`,
+		)
+	}
+
+	if stream, err = getBool(r.Form, "stream"); err != nil {
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			`invalid value for "stream"`,
+		)
+	}
+
+	if wait && r.Method != "GET" {
+		return emptyReq, Err.NewRequestError(
+			Err.EcodeInvalidField,
+			`"wait" can only be used with GET requests`,
 		)
 	}
 
@@ -231,6 +246,7 @@ func parseRequest(r *http.Request, id int64) (serverpb.Request, error) {
 		Recursive: rec,
 		Since:     wIdx,
 		Sorted:    sort,
+		Stream:    stream,
 		Wait:      wait,
 	}
 
@@ -283,6 +299,9 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 }
 
+// writeEvent serializes a single Event and writes the resulting
+// JSON to the given ResponseWriter, along with the appropriate
+// headers
 func writeEvent(w http.ResponseWriter, ev *store.Event) error {
 	if ev == nil {
 		return errors.New("cannot write empty Event!")
@@ -297,25 +316,46 @@ func writeEvent(w http.ResponseWriter, ev *store.Event) error {
 	return json.NewEncoder(w).Encode(ev)
 }
 
-// waitForEvent waits for a given watcher to return its associated
-// event. It returns a non-nil error if the given Context times out
-// or the given ResponseWriter triggers a CloseNotify.
-func waitForEvent(ctx context.Context, w http.ResponseWriter, wa store.Watcher) (*store.Event, error) {
-	// TODO: support streaming?
+func handleWatch(ctx context.Context, w http.ResponseWriter, wa store.Watcher, stream bool) {
 	defer wa.Remove()
+	ech := wa.EventChan()
 	var nch <-chan bool
 	if x, ok := w.(http.CloseNotifier); ok {
 		nch = x.CloseNotify()
 	}
 
-	select {
-	case ev := <-wa.EventChan():
-		return ev, nil
-	case <-nch:
-		elog.TODO()
-		return nil, errClosed
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	// Ensure headers are flushed early, in case of long polling
+	w.(http.Flusher).Flush()
+
+	for {
+		select {
+		case <-nch:
+			// Client closed connection. Nothing to do.
+			return
+		case <-ctx.Done():
+			// Timed out. net/http will close the connection for use,
+			// so nothing to do.
+			return
+		case ev, ok := <-ech:
+			if !ok {
+				// If the channel is closed this may be an indication of
+				// that notifications are much more than we are able to
+				// send to the client in time. Then we simply end streaming.
+				return
+			}
+			if err := json.NewEncoder(w).Encode(ev); err != nil {
+				// Should never be reached
+				log.Printf("error writing event: %v", err)
+				return
+			}
+			if !stream {
+				return
+			}
+			w.(http.Flusher).Flush()
+		}
 	}
 }
 

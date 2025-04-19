@@ -88,7 +88,7 @@ func main() {
 	<-make(chan struct{})
 }
 
-// startDeimos launches the etcd server and HTTP handlers for client/server communication.
+// startDeimos launches the deimos server and HTTP handlers for client/server communication.
 func startDeimos() {
 	id, err := strconv.ParseInt(*fid, 0, 64)
 	if err != nil {
@@ -103,7 +103,7 @@ func startDeimos() {
 	}
 
 	if *snapCount <= 0 {
-		log.Fatalf("etcd: snapshot-count must be greater than 0: snapshot-count=%d", *snapCount)
+		log.Fatalf("deimos: snapshot-count must be greater than 0: snapshot-count=%d", *snapCount)
 	}
 
 	if *dir == "" {
@@ -116,7 +116,7 @@ func startDeimos() {
 
 	snapdir := path.Join(*dir, "snap")
 	if err := os.MkdirAll(snapdir, privateDirMode); err != nil {
-		log.Fatalf("etcd: cannot create snapshot directory: %v", err)
+		log.Fatalf("deimos: cannot create snapshot directory: %v", err)
 	}
 	snapshotter := snap.New(snapdir)
 
@@ -138,7 +138,7 @@ func startDeimos() {
 			log.Fatal(err)
 		}
 		if snapshot != nil {
-			log.Printf("etcd: restart from snapshot at index %d", snapshot.Index)
+			log.Printf("deimos: restart from snapshot at index %d", snapshot.Index)
 			st.Recovery(snapshot.Data)
 			index = snapshot.Index
 		}
@@ -212,7 +212,7 @@ func startDeimos() {
 	}
 }
 
-// startProxy launches an HTTP proxy for client communication which proxies to other etcd nodes.
+// startProxy launches an HTTP proxy for client communication which proxies to other deimos nodes.
 func startProxy() {
 	pt, err := transport.NewTransport(clientTLSInfo)
 	if err != nil {

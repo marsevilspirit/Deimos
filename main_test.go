@@ -76,7 +76,7 @@ func TestBadValidateAddr(t *testing.T) {
 		"127.0.0.1:",
 		// unix sockets not supported
 		"unix://",
-		"unix://tmp/etcd.sock",
+		"unix://tmp/deimos.sock",
 		// bad strings
 		"somewhere",
 		"234#$",

@@ -446,30 +446,54 @@ func TestSyncTimeout(t *testing.T) {
 
 // TODO: TestNoSyncWhenNoLeader
 
-func TestSyncTriggerDeleteExpriedKeys(t *testing.T) {
-	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
-	n.Campaign(context.TODO())
-	st := &storeRecorder{}
+// blockingNodeProposer implements the node interface to allow users to
+// block until Propose has been called and then verify the Proposed data
+type blockingNodeProposer struct {
+	ch chan []byte
+	readyNode
+}
+
+func (n *blockingNodeProposer) Propose(_ context.Context, data []byte) error {
+	n.ch <- data
+	return nil
+}
+
+// TestSyncTrigger tests that the server proposes a SYNC request when its sync timer ticks
+func TestSyncTrigger(t *testing.T) {
+	n := &blockingNodeProposer{
+		ch:        make(chan []byte),
+		readyNode: *newReadyNode(),
+	}
+	st := make(chan time.Time, 1)
 	srv := &DeimosServer{
-		// TODO: use fake node for better testability
 		Node:       n,
-		Store:      st,
+		Store:      &storeRecorder{},
 		Send:       func(_ []raftpb.Message) {},
 		Storage:    &storageRecorder{},
-		SyncTicker: time.After(0),
+		SyncTicker: st,
 	}
 	srv.Start()
-	// give time for sync request to be proposed and performed
-	// TODO: use fake clock
-	testutil.ForceGosched()
-	srv.Stop()
-
-	action := st.Action()
-	if len(action) != 1 {
-		t.Fatalf("len(action) = %d, want 1", len(action))
+	// trigger the server to become a leader and accept sync requests
+	n.readyc <- raft.Ready{
+		SoftState: &raft.SoftState{
+			RaftState: raft.StateLeader,
+		},
 	}
-	if action[0] != "DeleteExpiredKeys" {
-		t.Errorf("action = %s, want DeleteExpiredKeys", action[0])
+	// trigger a sync request
+	st <- time.Time{}
+	var data []byte
+	select {
+	case <-time.After(time.Second):
+		t.Fatalf("did not receive proposed request as expected!")
+	case data = <-n.ch:
+	}
+	srv.Stop()
+	var req pb.Request
+	if err := req.Unmarshal(data); err != nil {
+		t.Fatalf("error unmarshalling data: %v", err)
+	}
+	if req.Method != "SYNC" {
+		t.Fatalf("unexpected proposed request: %#v", req.Method)
 	}
 }
 
@@ -594,7 +618,7 @@ func TestRecvSlowSnapshot(t *testing.T) {
 	}
 }
 
-// TestAddNode tests AddNode could propose and perform node addition.
+// TestAddNode tests AddNode can propose and perform node addition.
 func TestAddNode(t *testing.T) {
 	n := newNodeConfigChangeCommitterRecorder()
 	s := &DeimosServer{
@@ -614,7 +638,7 @@ func TestAddNode(t *testing.T) {
 	}
 }
 
-// TestRemoveNode tests RemoveNode could propose and perform node removal.
+// TestRemoveNode tests RemoveNode can propose and perform node removal.
 func TestRemoveNode(t *testing.T) {
 	n := newNodeConfigChangeCommitterRecorder()
 	s := &DeimosServer{
