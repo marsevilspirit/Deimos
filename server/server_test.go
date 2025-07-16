@@ -399,7 +399,7 @@ func testServer(t *testing.T, ns int64) {
 			Storage: &storageRecorder{},
 			Ticker:  tk.C,
 		}
-		srv.Start()
+		srv.start()
 		// TODO(xiangli): randomize election timeout
 		// then remove this sleep.
 		time.Sleep(1 * time.Millisecond)
@@ -468,7 +468,7 @@ func TestDoProposal(t *testing.T) {
 			Storage: &storageRecorder{},
 			Ticker:  tk,
 		}
-		srv.Start()
+		srv.start()
 		resp, err := srv.Do(ctx, tt)
 		srv.Stop()
 
@@ -538,7 +538,7 @@ func TestDoProposalStopped(t *testing.T) {
 		Storage: &storageRecorder{},
 		Ticker:  tk,
 	}
-	srv.Start()
+	srv.start()
 
 	done := make(chan struct{})
 	var err error
@@ -638,7 +638,7 @@ func TestSyncTrigger(t *testing.T) {
 		Storage:    &storageRecorder{},
 		SyncTicker: st,
 	}
-	srv.Start()
+	srv.start()
 	// trigger the server to become a leader and accept sync requests
 	n.readyc <- raft.Ready{
 		SoftState: &raft.SoftState{
@@ -709,7 +709,7 @@ func TestTriggerSnap(t *testing.T) {
 		SnapCount: 10,
 	}
 
-	s.Start()
+	s.start()
 	for i := 0; int64(i) < s.SnapCount; i++ {
 		s.Do(ctx, pb.Request{Method: "PUT", ID: 1})
 	}
@@ -740,7 +740,7 @@ func TestRecvSnapshot(t *testing.T) {
 		Node:    n,
 	}
 
-	s.Start()
+	s.start()
 	n.readyc <- raft.Ready{Snapshot: raftpb.Snapshot{Index: 1}}
 	// make goroutines move forward to receive snapshot
 	pkg.ForceGosched()
@@ -768,7 +768,7 @@ func TestRecvSlowSnapshot(t *testing.T) {
 		Node:    n,
 	}
 
-	s.Start()
+	s.start()
 	n.readyc <- raft.Ready{Snapshot: raftpb.Snapshot{Index: 1}}
 	// make goroutines move forward to receive snapshot
 	pkg.ForceGosched()
@@ -793,7 +793,7 @@ func TestAddNode(t *testing.T) {
 		Send:    func(_ []raftpb.Message) {},
 		Storage: &storageRecorder{},
 	}
-	s.Start()
+	s.start()
 	s.AddNode(context.TODO(), 1, []byte("foo"))
 	gaction := n.Action()
 	s.Stop()
@@ -813,7 +813,7 @@ func TestRemoveNode(t *testing.T) {
 		Send:    func(_ []raftpb.Message) {},
 		Storage: &storageRecorder{},
 	}
-	s.Start()
+	s.start()
 	s.RemoveNode(context.TODO(), 1)
 	gaction := n.Action()
 	s.Stop()

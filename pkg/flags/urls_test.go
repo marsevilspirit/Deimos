@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestValidateURLsBad(t *testing.T) {
+func TestValidateURLsValueBad(t *testing.T) {
 	tests := []string{
 		// bad IP specification
 		":4001",
@@ -21,23 +21,25 @@ func TestValidateURLsBad(t *testing.T) {
 		"234#$",
 		"file://foo/bar",
 		"http://hello/asdf",
+		"http://10.1.1.1",
 	}
 	for i, in := range tests {
-		u := URLs{}
+		u := URLsValue{}
 		if err := u.Set(in); err == nil {
 			t.Errorf(`#%d: unexpected nil error for in=%q`, i, in)
 		}
 	}
 }
 
-func TestValidateURLsGood(t *testing.T) {
+func TestValidateURLsValueGood(t *testing.T) {
 	tests := []string{
 		"https://1.2.3.4:8080",
 		"http://10.1.1.1:80",
-		"http://10.1.1.1",
+		"http://localhost:80",
+		"http://:80",
 	}
 	for i, in := range tests {
-		u := URLs{}
+		u := URLsValue{}
 		if err := u.Set(in); err != nil {
 			t.Errorf("#%d: err=%v, want nil for in=%q", i, err, in)
 		}

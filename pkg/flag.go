@@ -2,8 +2,13 @@ package pkg
 
 import (
 	"flag"
+	"fmt"
+	"net/url"
 	"os"
 	"strings"
+
+	"github.com/marsevilspirit/deimos/pkg/flags"
+	"github.com/marsevilspirit/deimos/pkg/transport"
 )
 
 // SetFlagsFromEnv parses all registered flags in the given flagset,
@@ -25,4 +30,29 @@ func SetFlagsFromEnv(fs *flag.FlagSet) {
 			}
 		}
 	})
+}
+
+func URLsFromFlags(fs *flag.FlagSet, urlsFlagName string, addrFlagName string, tlsInfo transport.TLSInfo) ([]url.URL, error) {
+	visited := make(map[string]struct{})
+	fs.Visit(func(f *flag.Flag) {
+		visited[f.Name] = struct{}{}
+	})
+
+	_, urlsFlagIsSet := visited[urlsFlagName]
+	_, addrFlagIsSet := visited[addrFlagName]
+
+	if addrFlagIsSet {
+		if urlsFlagIsSet {
+			return nil, fmt.Errorf("Set only one of flags -%s and -%s", urlsFlagName, addrFlagName)
+		}
+
+		addr := *fs.Lookup(addrFlagName).Value.(*flags.IPAddressPort)
+		addrURL := url.URL{Scheme: "http", Host: addr.String()}
+		if !tlsInfo.Empty() {
+			addrURL.Scheme = "https"
+		}
+		return []url.URL{addrURL}, nil
+	}
+
+	return []url.URL(*fs.Lookup(urlsFlagName).Value.(*flags.URLsValue)), nil
 }

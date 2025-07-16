@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/marsevilspirit/deimos/pkg/types"
 	"github.com/marsevilspirit/deimos/raft"
 	"github.com/marsevilspirit/deimos/raft/raftpb"
 	pb "github.com/marsevilspirit/deimos/server/serverpb"
@@ -19,6 +20,8 @@ import (
 const (
 	defaultSyncTimeout = time.Second
 	DefaultSnapCount   = 10000
+	// TODO: calculated based on heartbeat interval
+	defaultPublishRetryInterval = 5 * time.Second
 )
 
 var (
@@ -77,6 +80,9 @@ type DeimosServer struct {
 	w    wait.Wait
 	done chan struct{}
 
+	Name       string
+	ClientURLs types.URLs
+
 	Node  raft.Node
 	Store store.Store
 
@@ -103,7 +109,16 @@ type DeimosServer struct {
 
 // Start prepares and starts server in a new goroutine. It is no longer safe to
 // modify a servers fields after it has been sent to Start.
+// It also a goroutine to publish its server infomation.
 func (s *DeimosServer) Start() {
+	s.start()
+
+	m := *s.ClusterStore.Get().FindName(s.Name)
+	m.ClientURLs = s.ClientURLs.StringSlice()
+	go s.publish(defaultPublishRetryInterval)
+}
+
+func (s *DeimosServer) start() {
 	if s.SnapCount == 0 {
 		log.Printf("server: set snapshot count to default %d", DefaultSnapCount)
 		s.SnapCount = DefaultSnapCount
@@ -324,10 +339,14 @@ func (s *DeimosServer) sync(timeout time.Duration) {
 }
 
 // publish registers server information into the cluster. The information
-// is the json format of the given member.
+// is the json format of its self member struct, whose ClientURLs may be
+// updated.
 // The function keeps attempting to register until it succeeds,
 // or its server is stopped.
-func (s *DeimosServer) publish(m Member, retryInterval time.Duration) {
+// TODO: take care of info fetched from cluster store after having reconfig.
+func (s *DeimosServer) publish(retryInterval time.Duration) {
+	m := *s.ClusterStore.Get().FindName(s.Name)
+	m.ClientURLs = s.ClientURLs.StringSlice()
 	b, err := json.Marshal(m)
 	if err != nil {
 		log.Printf("Deimosserver: json marshal error: %v", err)
