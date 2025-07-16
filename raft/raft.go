@@ -114,6 +114,9 @@ type raft struct {
 	// if there exists configuration unapplied Configuration.
 	pendingConf bool
 
+	// TODO: need GC and recovry from snapshot
+	removed map[int64]bool
+
 	// number of ticks since the last msg
 	elapsed          int
 	heartbeatTimeout int
@@ -132,6 +135,7 @@ func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
 		lead:             None,
 		raftLog:          newLog(),
 		prs:              make(map[int64]*progress),
+		removed:          make(map[int64]bool),
 		electionTimeout:  election,
 		heartbeatTimeout: heartbeat,
 	}
@@ -146,8 +150,12 @@ func (r *raft) hasLeader() bool {
 	return r.lead != None
 }
 
+func (r *raft) shouldStop() bool {
+	return r.removed[r.id]
+}
+
 func (r *raft) softState() *SoftState {
-	return &SoftState{Lead: r.lead, RaftState: r.state}
+	return &SoftState{Lead: r.lead, RaftState: r.state, ShouldStop: r.shouldStop()}
 }
 
 func (r *raft) String() string {
@@ -356,6 +364,20 @@ func (r *raft) Step(m pb.Message) error {
 	// TODO: this likely allocs - prevent that.
 	defer func() { r.Commit = r.raftLog.committed }()
 
+	if r.removed[m.From] {
+		if m.From != r.id {
+			r.send(pb.Message{To: m.From, Type: msgDenied})
+		}
+		// TODO: return an error?
+		return nil
+	}
+
+	if m.Type == msgDenied {
+		r.removed[r.id] = true
+		// TODO: return an error?
+		return nil
+	}
+
 	if m.Type == msgHup {
 		r.campaign()
 	}
@@ -402,6 +424,7 @@ func (r *raft) addNode(id int64) {
 func (r *raft) removeNode(id int64) {
 	r.delProgress(id)
 	r.pendingConf = false
+	r.removed[id] = true
 }
 
 type stepFunc func(r *raft, m pb.Message)

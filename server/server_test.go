@@ -1122,3 +1122,23 @@ func (n *nodeConfChangeCommitterRecorder) Ready() <-chan raft.Ready {
 func (n *nodeConfChangeCommitterRecorder) ApplyConfChange(conf raftpb.ConfChange) {
 	n.record(action{name: "ApplyConfChange:" + conf.Type.String()})
 }
+
+// TestServerStopItself tests that if node sends out Ready with ShouldStop,
+// server will stop.
+func TestServerStopItself(t *testing.T) {
+	n := newReadyNode()
+	s := &DeimosServer{
+		Node:    n,
+		Store:   &storeRecorder{},
+		Send:    func(_ []raftpb.Message) {},
+		Storage: &storageRecorder{},
+	}
+	s.start()
+	n.readyc <- raft.Ready{SoftState: &raft.SoftState{ShouldStop: true}}
+
+	select {
+	case <-s.done:
+	case <-time.After(time.Millisecond):
+		t.Errorf("did not receive from closed done channel as expected")
+	}
+}

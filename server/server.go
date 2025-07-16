@@ -201,6 +201,10 @@ func (s *DeimosServer) run() {
 				} else {
 					syncC = nil
 				}
+				if rd.SoftState.ShouldStop {
+					s.Stop()
+					return
+				}
 			}
 		case <-syncC:
 			s.sync(defaultSyncTimeout)
