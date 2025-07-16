@@ -50,6 +50,7 @@ func (l *raftLog) String() string {
 }
 
 func (l *raftLog) maybeAppend(index, logTerm, committed int64, ents ...pb.Entry) bool {
+	lastnewi := index + int64(len(ents))
 	if l.matchTerm(index, logTerm) {
 		from := index + 1
 		ci := l.findConflict(from, ents)
@@ -60,8 +61,10 @@ func (l *raftLog) maybeAppend(index, logTerm, committed int64, ents ...pb.Entry)
 		default:
 			l.append(ci-1, ents[ci-from:]...)
 		}
-		if l.committed < committed {
-			l.committed = min(committed, l.lastIndex())
+		tocommit := min(committed, lastnewi)
+		// if toCommit > commitIndex, set commitIndex = toCommit
+		if l.committed < tocommit {
+			l.committed = tocommit
 		}
 		return true
 	}

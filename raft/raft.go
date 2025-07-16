@@ -198,15 +198,11 @@ func (r *raft) sendAppend(to int64) {
 	r.send(m)
 }
 
+// sendHeartbeat sends an empty msgApp
 func (r *raft) sendHeartbeat(to int64) {
-	pr := r.prs[to]
-	index := max(pr.next-1, r.raftLog.offset)
 	m := pb.Message{
-		To:      to,
-		Type:    msgApp,
-		Index:   index,
-		LogTerm: r.raftLog.term(index),
-		Commit:  r.raftLog.committed,
+		To:   to,
+		Type: msgApp,
 	}
 	r.send(m)
 }
