@@ -1,6 +1,6 @@
 module github.com/marsevilspirit/deimos
 
-go 1.24.0
+go 1.24.5
 
 require (
 	github.com/gogo/protobuf v1.3.2
