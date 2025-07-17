@@ -25,7 +25,7 @@ message Entry {
 }
 
 message Snapshot {
-	required bytes data  = 1;
+	optional bytes data  = 1;
 	repeated int64 nodes = 2;
 	required int64 index = 3 [(gogoproto.nullable) = false];
 	required int64 term  = 4 [(gogoproto.nullable) = false];
