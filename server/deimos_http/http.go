@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -127,19 +128,19 @@ func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
 
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		log.Println("deimos_http: error reading raft message:", err)
+		slog.Error("deimos_http: error reading raft message:", "err", err)
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
 		return
 	}
 	var m raftpb.Message
 	if err := m.Unmarshal(b); err != nil {
-		log.Println("deimos_http: error unmarshaling raft message:", err)
+		slog.Error("deimos_http: error unmarshaling raft message:", "err", err)
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
 		return
 	}
-	log.Printf("marshttp: raft recv message from %#x: %+v", m.From, m)
+	slog.Debug("marshttp: raft recv message from", "m.From", m.From, "m", m)
 	if err := h.server.Process(context.TODO(), m); err != nil {
-		log.Println("deimos_http: error processing raft message:", err)
+		slog.Error("deimos_http: error processing raft message:", "err", err)
 		writeError(w, err)
 		return
 	}
