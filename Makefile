@@ -15,6 +15,7 @@ help:
 	@echo "  build     Build deimos"
 	@echo "  run       Run deimos"
 	@echo "  clean     Remove generated wal"
+	@echo "  generate  Generate proto files"
 	@echo "  help      Show this help message"
 
 .PHONY: build
@@ -32,3 +33,7 @@ clean:
 	@echo "Cleaning up..."
 	rm -rf *data
 
+.PHONY: generate
+generate:
+	@echo "Generate proto files"
+	sh scripts/genproto.sh
