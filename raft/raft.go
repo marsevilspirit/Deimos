@@ -3,6 +3,8 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
 	"sort"
 
 	pb "github.com/marsevilspirit/deimos/raft/raftpb"
@@ -275,6 +277,7 @@ func (r *raft) appendEntry(e pb.Entry) {
 // tickElection is ran by followers and candidates
 // after r.electionTimeout.
 func (r *raft) tickElection() {
+	slog.Debug("tick Election🗳️")
 	// promotable indicates whether state machine can be promoted to leader,
 	// which is true when its own id is in progress list.
 	if _, promotable := r.prs[r.id]; !promotable {
@@ -299,6 +302,7 @@ func (r *raft) tickHeartbeat() {
 }
 
 func (r *raft) becomeFollower(term int64, lead int64) {
+	log.Println("becomeFollower")
 	r.step = stepFollower
 	r.reset(term)
 	r.tick = r.tickElection
@@ -307,6 +311,7 @@ func (r *raft) becomeFollower(term int64, lead int64) {
 }
 
 func (r *raft) becomeCandidate() {
+	log.Println("becomeCandidate")
 	// TODO: remove the panic when the raft implementation is stable
 	if r.state == StateLeader {
 		panic("invalid transition [leader -> candidate]")
@@ -319,6 +324,7 @@ func (r *raft) becomeCandidate() {
 }
 
 func (r *raft) becomeLeader() {
+	log.Println("becomeLeader")
 	// TODO: remove the panic when the raft implementation is stable
 	if r.state == StateFollower {
 		panic("invalid transition [follower -> leader]")

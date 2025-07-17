@@ -4,11 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/lmittmann/tint"
 
 	"github.com/marsevilspirit/deimos/pkg"
 	flagtypes "github.com/marsevilspirit/deimos/pkg/flags"
@@ -82,6 +85,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	slog.SetDefault(slog.New(
+		tint.NewHandler(os.Stderr, &tint.Options{
+			Level:     slog.LevelDebug,
+			AddSource: true,
+		}),
+	))
+
 	pkg.SetFlagsFromEnv(flag.CommandLine)
 
 	if string(*proxyFlag) == flagtypes.ProxyValueOff {
@@ -142,7 +152,7 @@ func startDeimos() {
 			log.Fatal(err)
 		}
 		if snapshot != nil {
-			log.Printf("deimos: restart from snapshot at index %d", snapshot.Index)
+			slog.Info("deimos: restart from snapshot at", "index", snapshot.Index)
 			st.Recovery(snapshot.Data)
 			index = snapshot.Index
 		}

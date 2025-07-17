@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 
 	pb "github.com/marsevilspirit/deimos/raft/raftpb"
 )
@@ -169,6 +170,7 @@ func (n *node) run(r *raft) {
 
 	for {
 		rd := newReady(r, prevSoftSt, prevHardSt, prevSnapi)
+		slog.Debug("newReady", "rd", rd)
 		if rd.containsUpdates() {
 			readyc = n.readyc
 		} else {
@@ -192,13 +194,17 @@ func (n *node) run(r *raft) {
 		// described in raft dissertation)
 		// Currently it is dropped in Step silently.
 		case m := <-propc:
+			log.Println("<-propc")
 			m.From = r.id
 			r.Step(m)
 		case m := <-n.recvc:
+			log.Println("<-recvc")
 			r.Step(m) // raft never returns an error
 		case d := <-n.compactc:
+			log.Println("<-compactc")
 			r.compact(d)
 		case cc := <-n.confc:
+			log.Println("<-confc")
 			switch cc.Type {
 			case pb.ConfChangeAddNode:
 				r.addNode(cc.NodeID)
@@ -208,8 +214,10 @@ func (n *node) run(r *raft) {
 				panic("unexpected conf type")
 			}
 		case <-n.tickc:
+			log.Println("<-tickc")
 			r.tick()
 		case readyc <- rd:
+			log.Println("readyc <- rd")
 			if rd.SoftState != nil {
 				prevSoftSt = rd.SoftState
 			}
@@ -227,6 +235,7 @@ func (n *node) run(r *raft) {
 			r.raftLog.resetUnstable()
 			r.msgs = nil
 		case <-n.done:
+			log.Println("<-done")
 			return
 		}
 	}

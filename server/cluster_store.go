@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/marsevilspirit/deimos/raft/raftpb"
@@ -100,6 +101,8 @@ func send(c *http.Client, cls ClusterStore, m raftpb.Message) {
 		}
 
 		u = fmt.Sprintf("%s%s", u, raftPrefix)
+
+		slog.Info("send", "m", m)
 
 		// TODO: don't block. we should be able to have 1000s
 		// of messages out at a time.
