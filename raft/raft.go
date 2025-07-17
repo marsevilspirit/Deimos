@@ -274,13 +274,10 @@ func (r *raft) appendEntry(e pb.Entry) {
 	r.maybeCommit()
 }
 
-// tickElection is ran by followers and candidates
-// after r.electionTimeout.
+// tickElection is ran by followers and candidates after r.electionTimeout.
 func (r *raft) tickElection() {
-	slog.Debug("tick Election🗳️")
-	// promotable indicates whether state machine can be promoted to leader,
-	// which is true when its own id is in progress list.
 	if _, promotable := r.prs[r.id]; !promotable {
+		slog.Error("can't election❌")
 		r.elapsed = 0
 		return
 	}
@@ -288,6 +285,7 @@ func (r *raft) tickElection() {
 	// TODO: elctionTimeout should be randomized.
 	if r.elapsed > r.electionTimeout {
 		r.elapsed = 0
+		slog.Info("send election 🗳️")
 		r.Step(pb.Message{From: r.id, Type: msgHup})
 	}
 }
@@ -302,7 +300,7 @@ func (r *raft) tickHeartbeat() {
 }
 
 func (r *raft) becomeFollower(term int64, lead int64) {
-	log.Println("becomeFollower")
+	slog.Debug("becomeFollower", "term", term, "lead", lead)
 	r.step = stepFollower
 	r.reset(term)
 	r.tick = r.tickElection

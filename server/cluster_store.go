@@ -102,13 +102,13 @@ func send(c *http.Client, cls ClusterStore, m raftpb.Message) {
 
 		u = fmt.Sprintf("%s%s", u, raftPrefix)
 
-		slog.Info("send", "m", m)
+		slog.Debug("send", "m", m)
 
 		// TODO: don't block. we should be able to have 1000s
 		// of messages out at a time.
 		data, err := m.Marshal()
 		if err != nil {
-			log.Println("deimos http: dropping message:", err)
+			slog.Error("deimos http: dropping message:", "err", err)
 			return // drop bad message
 		}
 		if httpPost(c, u, data) {

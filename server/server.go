@@ -113,9 +113,6 @@ type DeimosServer struct {
 // It also a goroutine to publish its server infomation.
 func (s *DeimosServer) Start() {
 	s.start()
-
-	m := *s.ClusterStore.Get().FindName(s.Name)
-	m.ClientURLs = s.ClientURLs.StringSlice()
 	go s.publish(defaultPublishRetryInterval)
 }
 

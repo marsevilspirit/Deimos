@@ -70,7 +70,6 @@ func init() {
 	flag.StringVar(&peerTLSInfo.CertFile, "peer-cert-file", "", "Path to the peer server TLS cert file.")
 	flag.StringVar(&peerTLSInfo.KeyFile, "peer-key-file", "", "Path to the peer server TLS key file.")
 
-	// backwards-compatibility with v0.4.6
 	flag.Var(&flagtypes.IPAddressPort{}, "addr", "DEPRECATED: Use -advertise-client-urls instead.")
 	flag.Var(&flagtypes.IPAddressPort{}, "bind-addr", "DEPRECATED: Use -listen-client-urls instead.")
 	flag.Var(&flagtypes.IPAddressPort{}, "peer-addr", "DEPRECATED: Use -advertise-peer-urls instead.")
@@ -140,12 +139,14 @@ func startDeimos() {
 	st := store.New()
 
 	if !wal.Exist(waldir) {
+		slog.Debug("wal isn't exist")
 		w, err = wal.Create(waldir)
 		if err != nil {
 			log.Fatal(err)
 		}
 		n = raft.StartNode(self.ID, cluster.IDs(), 10, 1)
 	} else {
+		slog.Debug("wal exist")
 		var index int64
 		snapshot, err := snapshotter.Load()
 		if err != nil && err != snap.ErrNoSnapshot {
