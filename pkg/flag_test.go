@@ -78,7 +78,7 @@ func TestURLsFromFlags(t *testing.T) {
 			tlsInfo: transport.TLSInfo{},
 			wantURLs: []url.URL{
 				url.URL{Scheme: "http", Host: "127.0.0.1:1024"},
-				url.URL{Scheme: "https", Host: "192.0.3.17:2930"},
+				url.URL{Scheme: "https", Host: "192.0.3.17:2930"}, //NOSONAR
 			},
 			wantFail: false,
 		},

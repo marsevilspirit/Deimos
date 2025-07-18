@@ -6,8 +6,8 @@ import (
 
 func TestIPAddressPortSet(t *testing.T) {
 	pass := []string{
-		"1.2.3.4:8080",
-		"10.1.1.1:80",
+		"1.2.3.4:8080", //NOSONAR
+		"10.1.1.1:80",  //NOSONAR
 	}
 
 	fail := []string{
