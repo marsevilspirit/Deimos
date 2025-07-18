@@ -166,7 +166,7 @@ func startDeimos() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		// TODO(xiangli): save/recovery nodeID?
+		// TODO: save/recovery nodeID?
 		if wid != 0 {
 			log.Fatalf("unexpected nodeid %d: nodeid should always be zero until we save nodeid into wal", wid)
 		}
