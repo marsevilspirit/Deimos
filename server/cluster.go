@@ -55,7 +55,7 @@ func (c Cluster) Pick(id int64) string {
 		if len(urls) == 0 {
 			return ""
 		}
-		return urls[rand.Intn(len(urls))]
+		return urls[rand.Intn(len(urls))] //NOSONAR
 	}
 
 	return ""
