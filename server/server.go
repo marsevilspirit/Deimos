@@ -152,7 +152,7 @@ func (s *DeimosServer) run() {
 			// TODO: apply configuration change into ClusterStore.
 			for _, e := range rd.CommittedEntries {
 				if e.Data == nil {
-					log.Printf("Server: TODO e.Data is nil")
+					slog.Debug("Server: TODO e.Data is nil")
 					continue
 				}
 				switch e.Type {
