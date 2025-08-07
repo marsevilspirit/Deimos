@@ -2,4 +2,5 @@
 *.log
 deimos
 *_deimos_data/
+.vscode/
 bin/
