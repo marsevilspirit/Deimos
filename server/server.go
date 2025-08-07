@@ -142,7 +142,6 @@ func (s *DeimosServer) run() {
 			s.Node.Tick()
 		case rd := <-s.Node.Ready():
 			s.Storage.Save(rd.HardState, rd.Entries)
-			slog.Debug("ready", "rd.snapshot", rd.Snapshot)
 			s.Storage.SaveSnap(rd.Snapshot)
 			s.Send(rd.Messages)
 

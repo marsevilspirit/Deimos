@@ -33,7 +33,7 @@ const (
 	defaultWatchTimeout = 5 * time.Minute
 )
 
-var errClosed = errors.New("marshttp: client closed connection")
+var errClosed = errors.New("deimos_http: client closed connection")
 
 // NewClientHandler generates a muxed http.Handler with the given parameters to serve deimos client requests.
 func NewClientHandler(server *server.DeimosServer, clusterStore server.ClusterStore, timeout time.Duration) http.Handler {
@@ -138,7 +138,7 @@ func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
 		return
 	}
-	slog.Debug("marshttp: raft recv message from", "m.From", m.From, "m", m)
+	// slog.Debug("deimos_http: raft recv message from", "m.From", m.From, "m", m)
 	if err := h.server.Process(context.TODO(), m); err != nil {
 		slog.Error("deimos_http: error processing raft message:", "err", err)
 		writeError(w, err)

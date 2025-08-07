@@ -82,7 +82,7 @@ func main() {
 	slog.SetDefault(slog.New(
 		tint.NewHandler(os.Stderr, &tint.Options{
 			Level:     slog.LevelInfo,
-			AddSource: false,
+			AddSource: true,
 		}),
 	))
 
