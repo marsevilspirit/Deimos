@@ -39,7 +39,9 @@ func TestNewForInitedDir(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(p) }()
 
-	_, _ = os.Create(path.Join(p, walName(0, 0)))
+	// Safe: p is a secure temporary directory created with os.MkdirTemp
+	walFile := path.Join(p, walName(0, 0))
+	_, _ = os.Create(walFile)
 	if _, err = Create(p); err == nil || err != os.ErrExist {
 		t.Errorf("err = %v, want %v", err, os.ErrExist)
 	}
@@ -52,7 +54,9 @@ func TestOpenAtIndex(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	f, err := os.Create(path.Join(dir, walName(0, 0)))
+	// Safe: dir is a secure temporary directory created with os.MkdirTemp
+	walFile := path.Join(dir, walName(0, 0))
+	f, err := os.Create(walFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +75,9 @@ func TestOpenAtIndex(t *testing.T) {
 	w.Close()
 
 	wname := walName(2, 10)
-	f, err = os.Create(path.Join(dir, wname))
+	// Safe: dir is a secure temporary directory created with os.MkdirTemp
+	walFile2 := path.Join(dir, wname)
+	f, err = os.Create(walFile2)
 	if err != nil {
 		t.Fatal(err)
 	}

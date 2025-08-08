@@ -102,7 +102,9 @@ func TestSnapNames(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	for i := 1; i <= 5; i++ {
-		if f, err := os.Create(path.Join(dir, fmt.Sprintf("%d.snap", i))); err != nil {
+		// Safe: dir is a secure temporary directory created with os.MkdirTemp
+		snapFile := path.Join(dir, fmt.Sprintf("%d.snap", i))
+		if f, err := os.Create(snapFile); err != nil {
 			t.Fatal(err)
 		} else {
 			_ = f.Close()
