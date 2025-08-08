@@ -19,13 +19,13 @@ var testSnap = &raftpb.Snapshot{
 }
 
 func TestSaveAndLoad(t *testing.T) {
-	dir := path.Join(os.TempDir(), "snapshot")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	dir, err := os.MkdirTemp("", "snapshot-test-*")
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	ss := New(dir)
-	err := ss.save(testSnap)
+	err = ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,13 +40,13 @@ func TestSaveAndLoad(t *testing.T) {
 }
 
 func TestBadCRC(t *testing.T) {
-	dir := path.Join(os.TempDir(), "snapshot")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	dir, err := os.MkdirTemp("", "snapshot-test-*")
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	ss := New(dir)
-	err := ss.save(testSnap)
+	err = ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,14 +62,14 @@ func TestBadCRC(t *testing.T) {
 }
 
 func TestFailback(t *testing.T) {
-	dir := path.Join(os.TempDir(), "snapshot")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	dir, err := os.MkdirTemp("", "snapshot")
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	large := fmt.Sprintf("%016x-%016x-%016x.snap", 0xFFFF, 0xFFFF, 0xFFFF)
-	err := os.WriteFile(path.Join(dir, large), []byte("bad data"), 0666)
+	err = os.WriteFile(path.Join(dir, large), []byte("bad data"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +96,8 @@ func TestFailback(t *testing.T) {
 }
 
 func TestSnapNames(t *testing.T) {
-	dir := path.Join(os.TempDir(), "snapshot")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	dir, err := os.MkdirTemp("", "snapshot")
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
@@ -123,13 +123,13 @@ func TestSnapNames(t *testing.T) {
 }
 
 func TestLoadNewestSnap(t *testing.T) {
-	dir := path.Join(os.TempDir(), "snapshot")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	dir, err := os.MkdirTemp("", "snapshot")
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	ss := New(dir)
-	err := ss.save(testSnap)
+	err = ss.save(testSnap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,13 +151,13 @@ func TestLoadNewestSnap(t *testing.T) {
 }
 
 func TestNoSnapshot(t *testing.T) {
-	dir := path.Join(os.TempDir(), "snapshot")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	dir, err := os.MkdirTemp("", "snapshot")
+	if err != nil {
 		t.Fatalf("Failed to create test directory: %v", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	ss := New(dir)
-	_, err := ss.Load()
+	_, err = ss.Load()
 	if err == nil || err != ErrNoSnapshot {
 		t.Errorf("err = %v, want %v", err, ErrNoSnapshot)
 	}

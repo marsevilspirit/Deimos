@@ -59,7 +59,7 @@ func (s *Snapshotter) save(snapshot *raftpb.Snapshot) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path.Join(s.dir, fname), d, 0666)
+	return os.WriteFile(path.Join(s.dir, fname), d, 0644)
 }
 
 func (s *Snapshotter) Load() (*raftpb.Snapshot, error) {
