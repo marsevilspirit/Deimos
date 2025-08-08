@@ -48,7 +48,7 @@ func TestClusterFind(t *testing.T) {
 		if m == nil && tt.match {
 			t.Errorf("#%d: expected match got empty", i)
 		}
-		if m.Name != tt.name && tt.match {
+		if m != nil && m.Name != tt.name && tt.match {
 			t.Errorf("#%d: got = %v, want %v", i, m.Name, tt.name)
 		}
 	}
@@ -64,7 +64,7 @@ func TestClusterFind(t *testing.T) {
 		if m == nil && tt.match {
 			t.Errorf("#%d: expected match got empty", i)
 		}
-		if m.ID != tt.id && tt.match {
+		if m != nil && m.ID != tt.id && tt.match {
 			t.Errorf("#%d: got = %v, want %v", i, m.Name, tt.id)
 		}
 	}

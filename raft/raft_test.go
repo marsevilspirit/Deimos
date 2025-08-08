@@ -44,7 +44,7 @@ func TestLeaderElection(t *testing.T) {
 
 	for i, tt := range tests {
 		tt.send(pb.Message{From: 1, To: 1, Type: msgHup})
-		sm := tt.network.peers[1].(*raft)
+		sm := tt.peers[1].(*raft)
 		if sm.state != tt.state {
 			t.Errorf("#%d: state = %s, want %s", i, sm.state, tt.state)
 		}
@@ -86,7 +86,7 @@ func TestLogReplication(t *testing.T) {
 			tt.send(m)
 		}
 
-		for j, x := range tt.network.peers {
+		for j, x := range tt.peers {
 			sm := x.(*raft)
 
 			if sm.raftLog.committed != tt.wcommitted {
@@ -369,7 +369,7 @@ func TestProposal(t *testing.T) {
 				t.Logf("#%d: empty log", i)
 			}
 		}
-		sm := tt.network.peers[1].(*raft)
+		sm := tt.peers[1].(*raft)
 		if g := sm.Term; g != 1 {
 			t.Errorf("#%d: term = %d, want %d", i, g, 1)
 		}

@@ -370,10 +370,6 @@ func writeEvent(w http.ResponseWriter, ev *store.Event, rt server.RaftTimer) err
 func handleWatch(ctx context.Context, w http.ResponseWriter, wa store.Watcher, stream bool, rt server.RaftTimer) {
 	defer wa.Remove()
 	ech := wa.EventChan()
-	var nch <-chan bool
-	if x, ok := w.(http.CloseNotifier); ok {
-		nch = x.CloseNotify()
-	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Raft-Index", fmt.Sprint(rt.Index()))
@@ -385,12 +381,8 @@ func handleWatch(ctx context.Context, w http.ResponseWriter, wa store.Watcher, s
 
 	for {
 		select {
-		case <-nch:
-			// Client closed connection. Nothing to do.
-			return
 		case <-ctx.Done():
-			// Timed out. net/http will close the connection for use,
-			// so nothing to do.
+			// Context cancelled, client disconnected, or timed out. Nothing to do.
 			return
 		case ev, ok := <-ech:
 			if !ok {

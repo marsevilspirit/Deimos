@@ -1050,24 +1050,17 @@ func TestHandleWatchNoEvent(t *testing.T) {
 	}
 }
 
-type recordingCloseNotifier struct {
-	*httptest.ResponseRecorder
-	cn chan bool
-}
 
-func (rcn *recordingCloseNotifier) CloseNotify() <-chan bool {
-	return rcn.cn
-}
 
 func TestHandleWatchCloseNotified(t *testing.T) {
-	rw := &recordingCloseNotifier{
-		ResponseRecorder: httptest.NewRecorder(),
-		cn:               make(chan bool, 1),
-	}
-	rw.cn <- true
+	rw := httptest.NewRecorder()
 	wa := &dummyWatcher{}
 
-	handleWatch(context.Background(), rw, wa, false, dummyRaftTimer{})
+	// Create a context that is already cancelled to simulate client disconnection
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately to simulate client disconnect
+
+	handleWatch(ctx, rw, wa, false, dummyRaftTimer{})
 
 	wcode := http.StatusOK
 	wct := "application/json"

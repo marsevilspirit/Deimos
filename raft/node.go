@@ -179,7 +179,7 @@ func (n *node) run(r *raft) {
 			readyc = nil
 		}
 
-		if rd.SoftState != nil && lead != rd.SoftState.Lead {
+		if rd.SoftState != nil && lead != rd.Lead {
 			log.Printf("raft: leader changed from %#x to %#x", lead, r.lead)
 			lead = r.softState().Lead
 			// block proposal when don't have a leader.

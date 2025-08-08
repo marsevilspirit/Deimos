@@ -198,7 +198,7 @@ func (s *DeimosServer) run() {
 				} else {
 					syncC = nil
 				}
-				if rd.SoftState.ShouldStop {
+				if rd.ShouldStop {
 					s.Stop()
 					return
 				}

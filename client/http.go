@@ -154,7 +154,7 @@ type httpWatcher struct {
 }
 
 func (hw *httpWatcher) Next() (*Response, error) {
-	httpresp, body, err := hw.httpClient.do(context.Background(), &hw.nextWait)
+	httpresp, body, err := hw.do(context.Background(), &hw.nextWait)
 	if err != nil {
 		return nil, err
 	}
