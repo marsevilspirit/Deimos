@@ -351,6 +351,8 @@ func (s *DeimosServer) configure(ctx context.Context, cc raftpb.ConfChange) erro
 // The request will be cancelled after the given timeout.
 func (s *DeimosServer) sync(timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel() // Ensure cancel is always called
+	
 	req := pb.Request{
 		Method: "SYNC",
 		ID:     GenID(),
@@ -365,7 +367,6 @@ func (s *DeimosServer) sync(timeout time.Duration) {
 	// so it uses goroutine to propose.
 	go func() {
 		s.Node.Propose(ctx, data)
-		cancel()
 	}()
 }
 

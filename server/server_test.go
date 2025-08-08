@@ -455,7 +455,8 @@ func TestDoProposal(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		ctx, _ := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel() // Ensure cancel is called to avoid context leak
 		n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
 		st := &storeRecorder{}
 		tk := make(chan time.Time)
