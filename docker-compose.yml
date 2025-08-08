@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  deimos1:
+    build: .
+    container_name: deimos-node1
+    hostname: deimos1
+    ports:
+      - "4001:4001"
+      - "7001:7001"
+    volumes:
+      - deimos1_data:/var/lib/deimos
+    environment:
+      - DEIMOS_NAME=node1
+    command: [
+      "deimos",
+      "-name", "node1",
+      "-listen-client-urls", "http://0.0.0.0:4001",
+      "-advertise-client-urls", "http://deimos1:4001",
+      "-listen-peer-urls", "http://0.0.0.0:7001", 
+      "-advertise-peer-urls", "http://deimos1:7001",
+      "-bootstrap-config", "node1=http://deimos1:7001,node2=http://deimos2:7002,node3=http://deimos3:7003"
+    ]
+    networks:
+      - deimos-cluster
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://deimos1:4001/machines"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  deimos2:
+    build: .
+    container_name: deimos-node2
+    hostname: deimos2
+    ports:
+      - "4002:4002"
+      - "7002:7002"
+    volumes:
+      - deimos2_data:/var/lib/deimos
+    environment:
+      - DEIMOS_NAME=node2
+    command: [
+      "deimos",
+      "-name", "node2",
+      "-listen-client-urls", "http://0.0.0.0:4002",
+      "-advertise-client-urls", "http://deimos2:4002",
+      "-listen-peer-urls", "http://0.0.0.0:7002",
+      "-advertise-peer-urls", "http://deimos2:7002", 
+      "-bootstrap-config", "node1=http://deimos1:7001,node2=http://deimos2:7002,node3=http://deimos3:7003"
+    ]
+    networks:
+      - deimos-cluster
+    restart: unless-stopped
+    depends_on:
+      - deimos1
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://deimos2:4002/machines"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  deimos3:
+    build: .
+    container_name: deimos-node3
+    hostname: deimos3
+    ports:
+      - "4003:4003"
+      - "7003:7003"
+    volumes:
+      - deimos3_data:/var/lib/deimos
+    environment:
+      - DEIMOS_NAME=node3
+    command: [
+      "deimos",
+      "-name", "node3",
+      "-listen-client-urls", "http://0.0.0.0:4003",
+      "-advertise-client-urls", "http://deimos3:4003",
+      "-listen-peer-urls", "http://0.0.0.0:7003",
+      "-advertise-peer-urls", "http://deimos3:7003",
+      "-bootstrap-config", "node1=http://deimos1:7001,node2=http://deimos2:7002,node3=http://deimos3:7003"
+    ]
+    networks:
+      - deimos-cluster
+    restart: unless-stopped
+    depends_on:
+      - deimos1
+      - deimos2
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://deimos3:4003/machines"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  deimos1_data:
+    driver: local
+  deimos2_data:
+    driver: local
+  deimos3_data:
+    driver: local
+
+networks:
+  deimos-cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

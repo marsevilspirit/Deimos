@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Development files
+.vscode/
+.idea/
+Session.vim
+todo.txt
+
+# Test files
+*_test.go
+test.sh
+
+# Build artifacts
+bin/
+*_data/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Docker files (avoid recursive copy)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
