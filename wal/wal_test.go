@@ -41,7 +41,7 @@ func TestNewForInitedDir(t *testing.T) {
 
 	// Safe: p is a secure temporary directory created with os.MkdirTemp
 	walFile := path.Join(p, walName(0, 0))
-	_, _ = os.Create(walFile)
+	_, _ = os.Create(walFile) //NOSONAR
 	if _, err = Create(p); err == nil || err != os.ErrExist {
 		t.Errorf("err = %v, want %v", err, os.ErrExist)
 	}
