@@ -33,7 +33,6 @@ jobs:
         GOOS=linux GOARCH=arm64 go build -o deimos-linux-arm64 ./main.go
         GOOS=darwin GOARCH=amd64 go build -o deimos-darwin-amd64 ./main.go
         GOOS=darwin GOARCH=arm64 go build -o deimos-darwin-arm64 ./main.go
-        GOOS=windows GOARCH=amd64 go build -o deimos-windows-amd64.exe ./main.go
     
     - name: Create checksums
       run: |
