@@ -42,8 +42,4 @@ jobs:
       
     - name: Check formatting
       run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "The following files are not formatted:"
-          gofmt -s -l .
-          exit 1
-        fi
+        go fmt ./... && git status && [[ -z `git status -s` ]]
