@@ -31,6 +31,6 @@ func (us *URLsValue) String() string {
 
 func NewURLsValue(init string) *URLsValue {
 	v := &URLsValue{}
-	v.Set(init)
+	_ = v.Set(init)
 	return v
 }

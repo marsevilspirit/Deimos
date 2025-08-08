@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -12,8 +11,6 @@ import (
 )
 
 const None int64 = 0
-
-type messageType int64
 
 const (
 	msgHup int64 = iota
@@ -39,12 +36,6 @@ var mtmap = [...]string{
 	msgSnap:     "msgSnap",
 	msgDenied:   "msgDenied",
 }
-
-func (mt messageType) String() string {
-	return mtmap[int64(mt)]
-}
-
-var errNoLeader = errors.New("no leader")
 
 type StateType int64
 
@@ -97,8 +88,6 @@ type raft struct {
 	pb.HardState
 
 	id int64
-
-	index int64
 
 	raftLog *raftLog
 
@@ -312,7 +301,7 @@ func (r *raft) tickElection() {
 	if r.elapsed > r.electionTimeout {
 		r.elapsed = 0
 		slog.Info("send election 🗳️")
-		r.Step(pb.Message{From: r.id, Type: msgHup})
+		_ = r.Step(pb.Message{From: r.id, Type: msgHup})
 	}
 }
 
@@ -321,7 +310,7 @@ func (r *raft) tickHeartbeat() {
 	r.elapsed++
 	if r.elapsed > r.heartbeatTimeout {
 		r.elapsed = 0
-		r.Step(pb.Message{From: r.id, Type: msgBeat})
+		_ = r.Step(pb.Message{From: r.id, Type: msgBeat})
 
 		// Renew lease if needed
 		if r.lease != nil && r.lease.ShouldRenew() {

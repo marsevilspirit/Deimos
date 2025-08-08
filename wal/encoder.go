@@ -40,10 +40,6 @@ func (e *encoder) flush() error {
 	return e.bw.Flush()
 }
 
-func (e *encoder) close() error {
-	return e.bw.Flush()
-}
-
 func writeInt64(w io.Writer, n int64) error {
 	return binary.Write(w, binary.LittleEndian, n)
 }

@@ -55,7 +55,7 @@ func BenchmarkStoreDelete(b *testing.B) {
 	b.StartTimer()
 
 	for i := range kvs {
-		s.Delete(kvs[i][0], false, false)
+		_, _ = s.Delete(kvs[i][0], false, false)
 	}
 
 	b.StopTimer()
@@ -118,7 +118,7 @@ func BenchmarkWatchWithSet(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		w, _ := s.Watch(kvs[i][0], false, false, 0)
 
-		s.Set(kvs[i][0], false, "test", Permanent)
+		_, _ = s.Set(kvs[i][0], false, "test", Permanent)
 		<-w.EventChan()
 	}
 }
@@ -136,7 +136,7 @@ func BenchmarkWatchWithSetBatch(b *testing.B) {
 	}
 
 	for i := 0; i < b.N; i++ {
-		s.Set(kvs[i][0], false, "test", Permanent)
+		_, _ = s.Set(kvs[i][0], false, "test", Permanent)
 	}
 
 	for i := 0; i < b.N; i++ {
@@ -153,7 +153,7 @@ func BenchmarkWatchOneKey(b *testing.B) {
 		watchers[i], _ = s.Watch("/foo", false, false, 0)
 	}
 
-	s.Set("/foo", false, "", Permanent)
+	_, _ = s.Set("/foo", false, "", Permanent)
 
 	for i := 0; i < b.N; i++ {
 		<-watchers[i].EventChan()
@@ -180,7 +180,7 @@ func benchStoreSet(b *testing.B, valueSize int, process func(interface{}) ([]byt
 		}
 	}
 
-	kvs = nil
+	_ = kvs // kvs is no longer needed
 	b.StopTimer()
 	memStats := new(runtime.MemStats)
 	runtime.GC()

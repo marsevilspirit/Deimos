@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -32,8 +32,6 @@ const (
 	// time to wait for a Watch request
 	defaultWatchTimeout = 5 * time.Minute
 )
-
-var errClosed = errors.New("deimos_http: client closed connection")
 
 // Peers represents a collection of peer nodes in the cluster
 type Peers map[string]string
@@ -142,7 +140,7 @@ func (h serverHandler) serveMachines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	endpoints := h.clusterStore.Get().ClientURLs()
-	w.Write([]byte(strings.Join(endpoints, ", ")))
+	_, _ = w.Write([]byte(strings.Join(endpoints, ", ")))
 }
 
 func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +148,7 @@ func (h *serverHandler) serveRaft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := ioutil.ReadAll(r.Body)
+	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		slog.Error("deimos_http: error reading raft message:", "err", err)
 		http.Error(w, "error reading raft message", http.StatusBadRequest)
@@ -355,7 +353,7 @@ func writeError(w http.ResponseWriter, err error) {
 // headers
 func writeEvent(w http.ResponseWriter, ev *store.Event, rt server.RaftTimer) error {
 	if ev == nil {
-		return errors.New("cannot write empty Event!")
+		return errors.New("cannot write empty Event")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Deimos-Index", fmt.Sprint(ev.DeimosIndex))

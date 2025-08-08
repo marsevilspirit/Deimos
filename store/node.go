@@ -91,7 +91,7 @@ func (n *node) IsPermanent() bool {
 // If the node is a directory, the function will return true.
 // Otherwise the function will return false.
 func (n *node) IsDir() bool {
-	return !(n.Children == nil)
+	return n.Children != nil
 }
 
 // Get function gets the value of the node.
@@ -126,7 +126,7 @@ func (n *node) ExpirationAndTTL() (*time.Time, int64) {
 		   ( (expireTime - timeNow) / nanosecondsPerSecond ) + 1
 		   which ranges 1..n+1
 		*/
-		ttlN := n.ExpireTime.Sub(time.Now())
+		ttlN := time.Until(n.ExpireTime)
 		ttl := ttlN / time.Second
 		if (ttlN % time.Second) > 0 {
 			ttl++
@@ -233,7 +233,7 @@ func (n *node) Remove(dir, recursive bool, callback func(path string)) *Err.Erro
 
 	// delete all children
 	for _, child := range n.Children {
-		child.Remove(true, true, callback)
+		_ = child.Remove(true, true, callback)
 	}
 
 	// delete self

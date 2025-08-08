@@ -378,7 +378,7 @@ func testServer(t *testing.T, ns int64) {
 	send := func(msgs []raftpb.Message) {
 		for _, m := range msgs {
 			t.Logf("m = %+v\n", m)
-			ss[m.To-1].Node.Step(ctx, m)
+			_ = ss[m.To-1].Node.Step(ctx, m)
 		}
 	}
 
@@ -699,7 +699,7 @@ func TestSnapshot(t *testing.T) {
 func TestTriggerSnap(t *testing.T) {
 	ctx := context.Background()
 	n := raft.StartNode(0xBAD0, []int64{0xBAD0}, 10, 1)
-	n.Campaign(ctx)
+	_ = n.Campaign(ctx)
 	st := &storeRecorder{}
 	p := &storageRecorder{}
 	s := &DeimosServer{
@@ -712,7 +712,7 @@ func TestTriggerSnap(t *testing.T) {
 
 	s.start()
 	for i := 0; int64(i) < s.SnapCount; i++ {
-		s.Do(ctx, pb.Request{Method: "PUT", ID: 1})
+		_, _ = s.Do(ctx, pb.Request{Method: "PUT", ID: 1})
 	}
 	time.Sleep(time.Millisecond)
 	s.Stop()
@@ -795,7 +795,7 @@ func TestAddNode(t *testing.T) {
 		Storage: &storageRecorder{},
 	}
 	s.start()
-	s.AddNode(context.TODO(), 1, []byte("foo"))
+	_ = s.AddNode(context.TODO(), 1, []byte("foo"))
 	gaction := n.Action()
 	s.Stop()
 
@@ -815,7 +815,7 @@ func TestRemoveNode(t *testing.T) {
 		Storage: &storageRecorder{},
 	}
 	s.start()
-	s.RemoveNode(context.TODO(), 1)
+	_ = s.RemoveNode(context.TODO(), 1)
 	gaction := n.Action()
 	s.Stop()
 
@@ -1091,7 +1091,7 @@ func (n *nodeProposeDataRecorder) data() [][]byte {
 	return d
 }
 func (n *nodeProposeDataRecorder) Propose(ctx context.Context, data []byte) error {
-	n.nodeRecorder.Propose(ctx, data)
+	_ = n.nodeRecorder.Propose(ctx, data)
 	n.Lock()
 	n.d = append(n.d, data)
 	n.Unlock()

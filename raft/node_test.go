@@ -19,7 +19,7 @@ func TestNodeStep(t *testing.T) {
 			recvc: make(chan raftpb.Message, 1),
 		}
 		msgt := int64(i)
-		n.Step(context.TODO(), raftpb.Message{Type: msgt})
+		_ = n.Step(context.TODO(), raftpb.Message{Type: msgt})
 		// Proposal goes to proc chan. Others go to recvc chan.
 		if int64(i) == msgProp {
 			select {
@@ -113,7 +113,7 @@ func TestBlockProposal(t *testing.T) {
 	default:
 	}
 
-	n.Campaign(context.TODO())
+	_ = n.Campaign(context.TODO())
 	pkg.ForceGosched()
 	select {
 	case err := <-errc:
@@ -133,9 +133,9 @@ func TestReadyContainUpdates(t *testing.T) {
 		{Ready{}, false},
 		{Ready{SoftState: &SoftState{Lead: 1}}, true},
 		{Ready{HardState: raftpb.HardState{Vote: 1}}, true},
-		{Ready{Entries: make([]raftpb.Entry, 1, 1)}, true},
-		{Ready{CommittedEntries: make([]raftpb.Entry, 1, 1)}, true},
-		{Ready{Messages: make([]raftpb.Message, 1, 1)}, true},
+		{Ready{Entries: make([]raftpb.Entry, 1)}, true},
+		{Ready{CommittedEntries: make([]raftpb.Entry, 1)}, true},
+		{Ready{Messages: make([]raftpb.Message, 1)}, true},
 		{Ready{Snapshot: raftpb.Snapshot{Index: 1}}, true},
 	}
 
@@ -165,12 +165,12 @@ func TestNode(t *testing.T) {
 	}
 
 	n := StartNode(1, []int64{1}, 0, 0)
-	n.Campaign(ctx)
+	_ = n.Campaign(ctx)
 	if g := <-n.Ready(); !reflect.DeepEqual(g, wants[0]) {
 		t.Errorf("#%d: g = %+v,\n             w   %+v", 1, g, wants[0])
 	}
 
-	n.Propose(ctx, []byte("foo"))
+	_ = n.Propose(ctx, []byte("foo"))
 	if g := <-n.Ready(); !reflect.DeepEqual(g, wants[1]) {
 		t.Errorf("#%d: g = %+v,\n             w   %+v", 2, g, wants[1])
 	}
@@ -213,8 +213,8 @@ func TestCompact(t *testing.T) {
 	r := newRaft(1, []int64{1}, 0, 0)
 	go n.run(r)
 
-	n.Campaign(ctx)
-	n.Propose(ctx, []byte("foo"))
+	_ = n.Campaign(ctx)
+	_ = n.Propose(ctx, []byte("foo"))
 
 	w := raftpb.Snapshot{
 		Term:  1,

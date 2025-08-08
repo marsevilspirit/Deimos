@@ -1,14 +1,5 @@
 package raft
 
-import (
-	pb "github.com/marsevilspirit/deimos/raft/raftpb"
-)
-
-func applyToStore(ents []pb.Entry)    {}
-func sendMessages(msgs []pb.Message)  {}
-func saveStateToDisk(st pb.HardState) {}
-func saveToDisk(ents []pb.Entry)      {}
-
 // func Example_Node() {
 // 	n := Start(0, nil, 0, 0)
 //

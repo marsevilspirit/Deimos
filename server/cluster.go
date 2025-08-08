@@ -65,14 +65,14 @@ func (c Cluster) Pick(id int64) string {
 // mach0=http://1.1.1.1,mach0=http://2.2.2.2,mach0=http://1.1.1.1,mach1=http://2.2.2.2,mach1=http://3.3.3.3
 func (c *Cluster) Set(s string) error {
 	*c = Cluster{}
-	v, err := url.ParseQuery(strings.Replace(s, ",", "&", -1))
+	v, err := url.ParseQuery(strings.ReplaceAll(s, ",", "&"))
 	if err != nil {
 		return err
 	}
 
 	for name, urls := range v {
 		if len(urls) == 0 || urls[0] == "" {
-			return fmt.Errorf("Empty URL given for %q", name)
+			return fmt.Errorf("empty URL given for %q", name)
 		}
 		m := newMember(name, types.URLs(*flags.NewURLsValue(strings.Join(urls, ","))), nil)
 		err := c.Add(*m)
@@ -108,9 +108,7 @@ func (c Cluster) IDs() []int64 {
 func (c Cluster) PeerURLs() []string {
 	endpoints := make([]string, 0)
 	for _, p := range c {
-		for _, addr := range p.PeerURLs {
-			endpoints = append(endpoints, addr)
-		}
+		endpoints = append(endpoints, p.PeerURLs...)
 	}
 	sort.Strings(endpoints)
 	return endpoints
@@ -122,9 +120,7 @@ func (c Cluster) PeerURLs() []string {
 func (c Cluster) ClientURLs() []string {
 	urls := make([]string, 0)
 	for _, p := range c {
-		for _, url := range p.ClientURLs {
-			urls = append(urls, url)
-		}
+		urls = append(urls, p.ClientURLs...)
 	}
 	sort.Strings(urls)
 	return urls

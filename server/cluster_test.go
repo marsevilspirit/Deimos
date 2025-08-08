@@ -39,7 +39,7 @@ func TestClusterFind(t *testing.T) {
 	}
 	for i, tt := range tests {
 		c := Cluster{}
-		c.AddSlice(tt.mems)
+		_ = c.AddSlice(tt.mems)
 
 		m := c.FindName(tt.name)
 		if m == nil && !tt.match {
@@ -55,7 +55,7 @@ func TestClusterFind(t *testing.T) {
 
 	for i, tt := range tests {
 		c := Cluster{}
-		c.AddSlice(tt.mems)
+		_ = c.AddSlice(tt.mems)
 
 		m := c.FindID(tt.id)
 		if m == nil && !tt.match {
@@ -94,7 +94,7 @@ func TestClusterSet(t *testing.T) {
 		}
 
 		g := Cluster{}
-		g.Set(tt.f)
+		_ = g.Set(tt.f)
 
 		if g.String() != c.String() {
 			t.Errorf("#%d: set = %v, want %v", i, g, c)
@@ -131,7 +131,7 @@ func TestClusterAddBad(t *testing.T) {
 	}
 
 	c := &Cluster{}
-	c.Add(Member{ID: 1, Name: "mem1"})
+	_ = c.Add(Member{ID: 1, Name: "mem1"})
 
 	for i, tt := range tests {
 		for _, m := range tt.mems {

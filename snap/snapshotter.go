@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -40,7 +39,9 @@ func (s *Snapshotter) SaveSnap(snapshot raftpb.Snapshot) {
 	if raft.IsEmptySnap(snapshot) {
 		return
 	}
-	s.save(&snapshot)
+	if err := s.save(&snapshot); err != nil {
+		log.Printf("Failed to save snapshot: %v", err)
+	}
 }
 
 func (s *Snapshotter) save(snapshot *raftpb.Snapshot) error {
@@ -58,7 +59,7 @@ func (s *Snapshotter) save(snapshot *raftpb.Snapshot) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(path.Join(s.dir, fname), d, 0666)
+	return os.WriteFile(path.Join(s.dir, fname), d, 0666)
 }
 
 func (s *Snapshotter) Load() (*raftpb.Snapshot, error) {
@@ -86,7 +87,7 @@ func loadSnap(dir, name string) (*raftpb.Snapshot, error) {
 		}
 	}()
 
-	b, err = ioutil.ReadFile(fpath)
+	b, err = os.ReadFile(fpath)
 	if err != nil {
 		log.Printf("Snapshotter cannot read file %v: %v", name, err)
 		return nil, err
@@ -119,7 +120,7 @@ func (s *Snapshotter) snapNames() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	names, err := dir.Readdirnames(-1)
 	if err != nil {
 		return nil, err

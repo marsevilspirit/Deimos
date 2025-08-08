@@ -461,7 +461,7 @@ func TestStepIgnoreOldTermMsg(t *testing.T) {
 	sm := newRaft(1, []int64{1}, 0, 0)
 	sm.step = fakeStep
 	sm.Term = 2
-	sm.Step(pb.Message{Type: msgApp, Term: sm.Term - 1})
+	_ = sm.Step(pb.Message{Type: msgApp, Term: sm.Term - 1})
 	if called {
 		t.Errorf("stepFunc called = %v, want %v", called, false)
 	}
@@ -567,7 +567,7 @@ func TestRecvMsgVote(t *testing.T) {
 		sm.HardState = pb.HardState{Vote: tt.voteFor}
 		sm.raftLog = &raftLog{ents: []pb.Entry{{}, {Term: 2}, {Term: 2}}}
 
-		sm.Step(pb.Message{Type: msgVote, From: 2, Index: tt.i, LogTerm: tt.term})
+		_ = sm.Step(pb.Message{Type: msgVote, From: 2, Index: tt.i, LogTerm: tt.term})
 
 		msgs := sm.ReadMessages()
 		if g := len(msgs); g != 1 {
@@ -662,7 +662,7 @@ func TestAllServerStepdown(t *testing.T) {
 		}
 
 		for j, msgType := range tmsgTypes {
-			sm.Step(pb.Message{From: 2, Type: msgType, Term: tterm, LogTerm: tterm})
+			_ = sm.Step(pb.Message{From: 2, Type: msgType, Term: tterm, LogTerm: tterm})
 
 			if sm.state != tt.wstate {
 				t.Errorf("#%d.%d state = %v , want %v", i, j, sm.state, tt.wstate)
@@ -704,7 +704,7 @@ func TestLeaderAppResp(t *testing.T) {
 		sm.becomeCandidate()
 		sm.becomeLeader()
 		sm.ReadMessages()
-		sm.Step(pb.Message{From: 2, Type: msgAppResp, Index: tt.index, Term: sm.Term, Denied: tt.denied})
+		_ = sm.Step(pb.Message{From: 2, Type: msgAppResp, Index: tt.index, Term: sm.Term, Denied: tt.denied})
 		msgs := sm.ReadMessages()
 
 		if len(msgs) != tt.wmsgNum {
@@ -744,7 +744,7 @@ func TestBcastBeat(t *testing.T) {
 		sm.appendEntry(pb.Entry{})
 	}
 
-	sm.Step(pb.Message{Type: msgBeat})
+	_ = sm.Step(pb.Message{Type: msgBeat})
 	msgs := sm.ReadMessages()
 	if len(msgs) != 2 {
 		t.Fatalf("len(msgs) = %v, want 1", len(msgs))
@@ -795,7 +795,7 @@ func TestRecvMsgBeat(t *testing.T) {
 		case StateLeader:
 			sm.step = stepLeader
 		}
-		sm.Step(pb.Message{From: 1, To: 1, Type: msgBeat})
+		_ = sm.Step(pb.Message{From: 1, To: 1, Type: msgBeat})
 
 		msgs := sm.ReadMessages()
 		if len(msgs) != tt.wMsg {
@@ -861,7 +861,7 @@ func TestProvideSnap(t *testing.T) {
 	// node 1 needs a snapshot
 	sm.prs[2].next = sm.raftLog.offset
 
-	sm.Step(pb.Message{From: 2, To: 1, Type: msgAppResp, Index: -1, Denied: true})
+	_ = sm.Step(pb.Message{From: 2, To: 1, Type: msgAppResp, Index: -1, Denied: true})
 	msgs := sm.ReadMessages()
 	if len(msgs) != 1 {
 		t.Fatalf("len(msgs) = %d, want 1", len(msgs))
@@ -881,7 +881,7 @@ func TestRestoreFromSnapMsg(t *testing.T) {
 	m := pb.Message{Type: msgSnap, From: 1, Term: 2, Snapshot: s}
 
 	sm := newRaft(2, []int64{1, 2}, 0, 0)
-	sm.Step(m)
+	_ = sm.Step(m)
 
 	if !reflect.DeepEqual(sm.raftLog.snapshot, s) {
 		t.Errorf("snapshot = %+v, want %+v", sm.raftLog.snapshot, s)
@@ -925,7 +925,7 @@ func TestStepConfig(t *testing.T) {
 	r.becomeCandidate()
 	r.becomeLeader()
 	index := r.raftLog.lastIndex()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
+	_ = r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
 	if g := r.raftLog.lastIndex(); g != index+1 {
 		t.Errorf("index = %d, want %d", g, index+1)
 	}
@@ -942,10 +942,10 @@ func TestStepIgnoreConfig(t *testing.T) {
 	r := newRaft(1, []int64{1, 2}, 0, 0)
 	r.becomeCandidate()
 	r.becomeLeader()
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
+	_ = r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
 	index := r.raftLog.lastIndex()
 	pendingConf := r.pendingConf
-	r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
+	_ = r.Step(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{Type: pb.EntryConfChange}}})
 	if g := r.raftLog.lastIndex(); g != index {
 		t.Errorf("index = %d, want %d", g, index)
 	}
@@ -1036,7 +1036,7 @@ func TestRecvMsgDenied(t *testing.T) {
 	}
 	r := newRaft(1, []int64{1, 2}, 0, 0)
 	r.step = fakeStep
-	r.Step(pb.Message{From: 2, Type: msgDenied})
+	_ = r.Step(pb.Message{From: 2, Type: msgDenied})
 	if called != false {
 		t.Errorf("stepFunc called = %v , want %v", called, false)
 	}
@@ -1065,7 +1065,7 @@ func TestRecvMsgFromRemovedNode(t *testing.T) {
 		r := newRaft(1, []int64{1}, 0, 0)
 		r.step = fakeStep
 		r.removeNode(tt.from)
-		r.Step(pb.Message{From: tt.from, Type: msgVote})
+		_ = r.Step(pb.Message{From: tt.from, Type: msgVote})
 		if called != false {
 			t.Errorf("#%d: stepFunc called = %v , want %v", i, called, false)
 		}
@@ -1168,7 +1168,7 @@ func (nw *network) send(msgs ...pb.Message) {
 	for len(msgs) > 0 {
 		m := msgs[0]
 		p := nw.peers[m.To]
-		p.Step(m)
+		_ = p.Step(m)
 		msgs = append(msgs[1:], nw.filter(p.ReadMessages())...)
 	}
 }

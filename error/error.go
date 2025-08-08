@@ -134,5 +134,5 @@ func (e Error) Write(w http.ResponseWriter) {
 		}
 	}
 	w.WriteHeader(status)
-	fmt.Fprintln(w, e.toJsonString())
+	_, _ = fmt.Fprintln(w, e.toJsonString())
 }

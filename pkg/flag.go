@@ -3,6 +3,7 @@ package pkg
 import (
 	"flag"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -23,10 +24,12 @@ func SetFlagsFromEnv(fs *flag.FlagSet) {
 	})
 	fs.VisitAll(func(f *flag.Flag) {
 		if !alreadySet[f.Name] {
-			key := "DEIMOS_" + strings.ToUpper(strings.Replace(f.Name, "-", "_", -1))
+			key := "DEIMOS_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 			val := os.Getenv(key)
 			if val != "" {
-				fs.Set(f.Name, val)
+				if err := fs.Set(f.Name, val); err != nil {
+					log.Printf("Failed to set flag %s to %s: %v", f.Name, val, err)
+				}
 			}
 		}
 	})

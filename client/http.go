@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -114,7 +114,7 @@ func (c *httpClient) do(ctx context.Context, act httpAction) (*http.Response, []
 	// race conditions between channels above
 	defer func() {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}()
 
@@ -122,7 +122,7 @@ func (c *httpClient) do(ctx context.Context, act httpAction) (*http.Response, []
 		return nil, nil, err
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	return resp, body, err
 }
 

@@ -26,12 +26,13 @@ const (
 )
 
 var (
-	ErrUnknownMethod = errors.New("Deimos server: unknown method")
-	ErrStopped       = errors.New("Deimos server: server stopped")
+	ErrUnknownMethod = errors.New("deimos server: unknown method")
+	ErrStopped       = errors.New("deimos server: server stopped")
 )
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
+	// rand.Seed is deprecated in Go 1.20+
+	// The global random number generator is automatically seeded
 }
 
 type SendFunc func(m []raftpb.Message)
@@ -86,8 +87,6 @@ type DeimosServer struct {
 
 	Node  raft.Node
 	Store store.Store
-
-	msgsc chan raftpb.Message
 
 	// Send specifies the send function for sending msgs to members. Send
 	// MUST NOT block. It is okay to drop messages, since clients should
@@ -240,7 +239,7 @@ func (s *DeimosServer) Do(ctx context.Context, r pb.Request) (Response, error) {
 			return Response{}, err
 		}
 		ch := s.w.Register(r.ID)
-		s.Node.Propose(ctx, data)
+		_ = s.Node.Propose(ctx, data)
 		select {
 		case x := <-ch:
 			resp := x.(Response)
@@ -283,7 +282,7 @@ func (s *DeimosServer) Do(ctx context.Context, r pb.Request) (Response, error) {
 					return Response{}, err
 				}
 				ch := s.w.Register(r.ID)
-				s.Node.Propose(ctx, data)
+				_ = s.Node.Propose(ctx, data)
 				select {
 				case x := <-ch:
 					resp := x.(Response)
@@ -366,7 +365,7 @@ func (s *DeimosServer) sync(timeout time.Duration) {
 	// There is no promise that node has leader when do SYNC request,
 	// so it uses goroutine to propose.
 	go func() {
-		s.Node.Propose(ctx, data)
+		_ = s.Node.Propose(ctx, data)
 	}()
 }
 
@@ -468,7 +467,7 @@ func (s *DeimosServer) snapshot() {
 		panic("TODO: this is bad, what do we do about it?")
 	}
 	s.Node.Compact(d)
-	s.Storage.Cut()
+	_ = s.Storage.Cut()
 }
 
 // TODO: move the function to /id pkg maybe?

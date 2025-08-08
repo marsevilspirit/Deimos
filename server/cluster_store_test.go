@@ -49,7 +49,7 @@ func TestClusterStoreGet(t *testing.T) {
 func TestClusterStoreDelete(t *testing.T) {
 	st := &storeGetAllDeleteRecorder{}
 	c := Cluster{}
-	c.Add(Member{Name: "node", ID: 1})
+	_ = c.Add(Member{Name: "node", ID: 1})
 	cs := NewClusterStore(st, c)
 	cs.Delete(1)
 
@@ -92,16 +92,6 @@ func (s *getAllStore) Get(_ string, _, _ bool) (*store.Event, error) {
 		nodes = append(nodes, &store.NodeExtern{Key: k, Value: stringp(v)})
 	}
 	return &store.Event{Node: &store.NodeExtern{Nodes: nodes}}, nil
-}
-
-type storeDeleteRecorder struct {
-	storeRecorder
-	deletes []string
-}
-
-func (s *storeDeleteRecorder) Delete(key string, _, _ bool) (*store.Event, error) {
-	s.deletes = append(s.deletes, key)
-	return nil, nil
 }
 
 type storeGetAllDeleteRecorder struct {

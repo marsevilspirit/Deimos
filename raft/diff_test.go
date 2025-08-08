@@ -13,8 +13,8 @@ func diffu(a, b string) string {
 		return ""
 	}
 	aname, bname := mustTemp("base", a), mustTemp("other", b)
-	defer os.Remove(aname)
-	defer os.Remove(bname)
+	defer func() { _ = os.Remove(aname) }()
+	defer func() { _ = os.Remove(bname) }()
 	cmd := exec.Command("diff", "-u", aname, bname)
 	buf, err := cmd.CombinedOutput()
 	if err != nil {
@@ -37,7 +37,7 @@ func mustTemp(pre, body string) string {
 	if err != nil {
 		panic(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	fmt.Println(f.Name())
 

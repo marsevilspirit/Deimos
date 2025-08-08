@@ -122,7 +122,7 @@ func httpPost(c *http.Client, url string, data []byte) bool {
 		// TODO: log the error?
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		// TODO: log the error?
 		return false

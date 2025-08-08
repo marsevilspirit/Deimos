@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -213,7 +213,7 @@ func assertResponse(got http.Request, wantURL *url.URL, wantHeader http.Header, 
 		if wantBody == nil {
 			return fmt.Errorf("want.Body=%v got.Body=%v", wantBody, got.Body)
 		} else {
-			gotBytes, err := ioutil.ReadAll(got.Body)
+			gotBytes, err := io.ReadAll(got.Body)
 			if err != nil {
 				return err
 			}
@@ -387,7 +387,7 @@ func TestHTTPClientDoSuccess(t *testing.T) {
 
 	tr.respchan <- &http.Response{
 		StatusCode: http.StatusTeapot,
-		Body:       ioutil.NopCloser(strings.NewReader("foo")),
+		Body:       io.NopCloser(strings.NewReader("foo")),
 	}
 
 	resp, body, err := c.do(context.Background(), &fakeAction{})
@@ -438,7 +438,7 @@ func TestHTTPClientDoCancelContextWaitForRoundTrip(t *testing.T) {
 	donechan := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		c.do(ctx, &fakeAction{})
+		_, _, _ = c.do(ctx, &fakeAction{})
 		close(donechan)
 	}()
 

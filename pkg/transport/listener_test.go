@@ -3,17 +3,16 @@ package transport
 import (
 	"crypto/tls"
 	"errors"
-	"io/ioutil"
 	"os"
 	"testing"
 )
 
 func createTempFile(b []byte) (string, error) {
-	f, err := ioutil.TempFile("", "deimos-test-tls-")
+	f, err := os.CreateTemp("", "deimos-test-tls-")
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err = f.Write(b); err != nil {
 		return "", err
@@ -33,7 +32,7 @@ func TestNewTransportTLSInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to prepare tmpfile: %v", err)
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	tests := []struct {
 		info                TLSInfo
@@ -102,7 +101,7 @@ func TestTLSInfoMissingFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to prepare tmpfile: %v", err)
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	tests := []TLSInfo{
 		TLSInfo{},
@@ -129,7 +128,7 @@ func TestTLSInfoParseFuncError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to prepare tmpfile: %v", err)
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	info := TLSInfo{CertFile: tmp, KeyFile: tmp, CAFile: tmp}
 	info.parseFunc = fakeCertificateParserFunc(tls.Certificate{}, errors.New("fake"))
@@ -148,7 +147,7 @@ func TestTLSInfoConfigFuncs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to prepare tmpfile: %v", err)
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	tests := []struct {
 		info       TLSInfo

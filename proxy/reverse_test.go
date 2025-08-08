@@ -3,7 +3,7 @@ package proxy
 import (
 	"bytes"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -34,7 +34,7 @@ func TestReverseProxyServe(t *testing.T) {
 			rt: &staticRoundTripper{
 				res: &http.Response{
 					StatusCode: http.StatusCreated,
-					Body:       ioutil.NopCloser(&bytes.Reader{}),
+					Body:       io.NopCloser(&bytes.Reader{}),
 				},
 			},
 			want: http.StatusServiceUnavailable,
@@ -53,7 +53,7 @@ func TestReverseProxyServe(t *testing.T) {
 			rt: &staticRoundTripper{
 				res: &http.Response{
 					StatusCode: http.StatusCreated,
-					Body:       ioutil.NopCloser(&bytes.Reader{}),
+					Body:       io.NopCloser(&bytes.Reader{}),
 				},
 			},
 			want: http.StatusCreated,

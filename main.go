@@ -49,7 +49,7 @@ var (
 
 func init() {
 	flag.Var(cluster, "bootstrap-config", "Initial cluster configuration for bootstrapping")
-	cluster.Set("default=http://localhost:2380,default=http://localhost:7001")
+	_ = cluster.Set("default=http://localhost:2380,default=http://localhost:7001")
 
 	flag.Var(flagtypes.NewURLsValue("http://localhost:2380,http://localhost:7001"), "advertise-peer-urls", "List of this member's peer URLs to advertise to the rest of the cluster")
 	flag.Var(flagtypes.NewURLsValue("http://localhost:2379,http://localhost:4001"), "advertise-client-urls", "List of this member's client URLs to advertise to the rest of the cluster")
@@ -59,7 +59,7 @@ func init() {
 	flag.Var(cors, "cors", "Comma-separated white list of origins for CORS (cross-origin resource sharing).")
 
 	flag.Var(proxyFlag, "proxy", fmt.Sprintf("Valid values include %s", strings.Join(flagtypes.ProxyValues, ", ")))
-	proxyFlag.Set(flagtypes.ProxyValueOff)
+	_ = proxyFlag.Set(flagtypes.ProxyValueOff)
 
 	// tls
 	flag.StringVar(&clientTLSInfo.CAFile, "ca-file", "", "Path to the client server TLS CA file.")
@@ -149,7 +149,7 @@ func startDeimos() {
 		}
 		if snapshot != nil {
 			slog.Info("deimos: restart from snapshot at", "index", snapshot.Index)
-			st.Recovery(snapshot.Data)
+			_ = st.Recovery(snapshot.Data)
 			index = snapshot.Index
 		}
 

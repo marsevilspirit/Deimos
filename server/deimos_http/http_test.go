@@ -436,22 +436,6 @@ func TestGoodParseRequest(t *testing.T) {
 }
 
 // eventingWatcher immediately returns a simple event of the given action on its channel
-type eventingWatcher struct {
-	action string
-}
-
-func (w *eventingWatcher) EventChan() chan *store.Event {
-	ch := make(chan *store.Event)
-	go func() {
-		ch <- &store.Event{
-			Action: w.action,
-			Node:   &store.NodeExtern{},
-		}
-	}()
-	return ch
-}
-
-func (w *eventingWatcher) Remove() {}
 
 func TestWriteError(t *testing.T) {
 	// nil error should not panic
@@ -507,7 +491,7 @@ func (drt dummyRaftTimer) Term() int64  { return int64(5) }
 func TestWriteEvent(t *testing.T) {
 	// nil event should not panic
 	rw := httptest.NewRecorder()
-	writeEvent(rw, nil, dummyRaftTimer{})
+	_ = writeEvent(rw, nil, dummyRaftTimer{})
 	h := rw.Header()
 	if len(h) > 0 {
 		t.Fatalf("unexpected non-empty headers: %#v", h)
@@ -550,7 +534,7 @@ func TestWriteEvent(t *testing.T) {
 
 	for i, tt := range tests {
 		rw := httptest.NewRecorder()
-		writeEvent(rw, tt.ev, dummyRaftTimer{})
+		_ = writeEvent(rw, tt.ev, dummyRaftTimer{})
 		if gct := rw.Header().Get("Content-Type"); gct != "application/json" {
 			t.Errorf("case %d: bad Content-Type: got %q, want application/json", i, gct)
 		}
@@ -1249,8 +1233,8 @@ type fakeCluster struct {
 
 func (c *fakeCluster) Get() server.Cluster {
 	cl := &server.Cluster{}
-	cl.AddSlice(c.members)
+	_ = cl.AddSlice(c.members)
 	return *cl
 }
 
-func (c *fakeCluster) Delete(id int64) { return }
+func (c *fakeCluster) Delete(id int64) {}

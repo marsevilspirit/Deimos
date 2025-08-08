@@ -28,31 +28,6 @@ type discovery struct {
 	c       client.Client
 }
 
-func (d *discovery) discover() (*deimos_http.Peers, error) {
-	// fast path: if the cluster is full, returns the error
-	// do not need to register itself to the cluster in this
-	// case
-	if _, _, err := d.checkCluster(); err != nil {
-		return nil, err
-	}
-
-	if err := d.createSelf(); err != nil {
-		return nil, err
-	}
-
-	nodes, size, err := d.checkCluster()
-	if err != nil {
-		return nil, err
-	}
-
-	all, err := d.waitNodes(nodes, size)
-	if err != nil {
-		return nil, err
-	}
-
-	return nodesToPeers(all)
-}
-
 func (d *discovery) createSelf() error {
 	resp, err := d.c.Create(d.selfKey(), string(d.ctx), 0)
 	if err != nil {

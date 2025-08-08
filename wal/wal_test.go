@@ -2,7 +2,6 @@ package wal
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"path"
 	"reflect"
@@ -17,11 +16,11 @@ var (
 )
 
 func TestNew(t *testing.T) {
-	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	p, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer func() { _ = os.RemoveAll(p) }()
 
 	w, err := Create(p)
 	if err != nil {
@@ -34,30 +33,30 @@ func TestNew(t *testing.T) {
 }
 
 func TestNewForInitedDir(t *testing.T) {
-	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	p, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer func() { _ = os.RemoveAll(p) }()
 
-	os.Create(path.Join(p, walName(0, 0)))
+	_, _ = os.Create(path.Join(p, walName(0, 0)))
 	if _, err = Create(p); err == nil || err != os.ErrExist {
 		t.Errorf("err = %v, want %v", err, os.ErrExist)
 	}
 }
 
 func TestOpenAtIndex(t *testing.T) {
-	dir, err := ioutil.TempDir(os.TempDir(), "waltest")
+	dir, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	f, err := os.Create(path.Join(dir, walName(0, 0)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	w, err := OpenAtIndex(dir, 0)
 	if err != nil {
@@ -76,7 +75,7 @@ func TestOpenAtIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	w, err = OpenAtIndex(dir, 5)
 	if err != nil {
@@ -90,22 +89,22 @@ func TestOpenAtIndex(t *testing.T) {
 	}
 	w.Close()
 
-	emptydir, err := ioutil.TempDir(os.TempDir(), "waltestempty")
+	emptydir, err := os.MkdirTemp(os.TempDir(), "waltestempty")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(emptydir)
+	defer func() { _ = os.RemoveAll(emptydir) }()
 	if _, err = OpenAtIndex(emptydir, 0); err != ErrFileNotFound {
 		t.Errorf("err = %v, want %v", err, ErrFileNotFound)
 	}
 }
 
 func TestCut(t *testing.T) {
-	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	p, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer func() { _ = os.RemoveAll(p) }()
 
 	w, err := Create(p)
 	if err != nil {
@@ -139,11 +138,11 @@ func TestCut(t *testing.T) {
 }
 
 func TestRecover(t *testing.T) {
-	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	p, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer func() { _ = os.RemoveAll(p) }()
 
 	w, err := Create(p)
 	if err != nil {
@@ -256,11 +255,11 @@ func TestScanWalName(t *testing.T) {
 }
 
 func TestRecoverAfterCut(t *testing.T) {
-	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	p, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer func() { _ = os.RemoveAll(p) }()
 
 	w, err := Create(p)
 	if err != nil {
@@ -324,11 +323,11 @@ func TestRecoverAfterCut(t *testing.T) {
 }
 
 func TestOpenAtUncommittedIndex(t *testing.T) {
-	p, err := ioutil.TempDir(os.TempDir(), "waltest")
+	p, err := os.MkdirTemp(os.TempDir(), "waltest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(p)
+	defer func() { _ = os.RemoveAll(p) }()
 
 	w, err := Create(p)
 	if err != nil {

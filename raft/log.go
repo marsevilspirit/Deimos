@@ -36,10 +36,6 @@ func newLog() *raftLog {
 	}
 }
 
-func (l *raftLog) isEmpty() bool {
-	return l.offset == 0 && len(l.ents) == 1
-}
-
 func (l *raftLog) load(ents []pb.Entry) {
 	l.ents = ents
 	l.unstable = l.offset + int64(len(ents))
@@ -179,10 +175,6 @@ func (l *raftLog) snap(d []byte, index, term int64, nodes []int64) {
 		Index: index,
 		Term:  term,
 	}
-}
-
-func (l *raftLog) shouldCompact() bool {
-	return (l.applied - l.offset) > l.compactThreshold
 }
 
 func (l *raftLog) restore(s pb.Snapshot) {

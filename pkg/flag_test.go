@@ -16,17 +16,23 @@ func TestSetFlagsFromEnv(t *testing.T) {
 	fs.String("a", "", "")
 	fs.String("b", "", "")
 	fs.String("c", "", "")
-	fs.Parse([]string{})
+	if err := fs.Parse([]string{}); err != nil {
+		t.Fatalf("Failed to parse flags: %v", err)
+	}
 
 	os.Clearenv()
 	// flags should be settable using env vars
-	os.Setenv("DEIMOS_A", "foo")
+	if err := os.Setenv("DEIMOS_A", "foo"); err != nil {
+		t.Fatal(err)
+	}
 	// and command-line flags
 	if err := fs.Set("b", "bar"); err != nil {
 		t.Fatal(err)
 	}
 	// command-line flags take precedence over env vars
-	os.Setenv("DEIMOS_C", "woof")
+	if err := os.Setenv("DEIMOS_C", "woof"); err != nil {
+		t.Fatal(err)
+	}
 	if err := fs.Set("c", "quack"); err != nil {
 		t.Fatal(err)
 	}

@@ -225,7 +225,7 @@ func TestNodesToPeers(t *testing.T) {
 		{Key: "/1000/3", Value: "3=3.3.3.3", CreatedIndex: 3},
 	}
 	w := &deimos_http.Peers{}
-	w.Set("1=1.1.1.1&2=2.2.2.2&3=3.3.3.3")
+	_ = w.Set("1=1.1.1.1&2=2.2.2.2&3=3.3.3.3")
 
 	badnodes := client.Nodes{{Key: "1000/1", Value: "1=1.1.1.1&???", CreatedIndex: 1}}
 

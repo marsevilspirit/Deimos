@@ -94,7 +94,7 @@ func OpenAtIndex(dirpath string, index int64) (*WAL, error) {
 		return nil, ErrFileNotFound
 	}
 
-	sort.Sort(sort.StringSlice(names))
+	sort.Strings(names)
 
 	nameIndex, ok := searchIndex(names, index)
 	if !ok || !isValidSeq(names[nameIndex:]) {
@@ -115,13 +115,13 @@ func OpenAtIndex(dirpath string, index int64) (*WAL, error) {
 	// open the lastest wal file for appending
 	seq, _, err := parseWalName(names[len(names)-1])
 	if err != nil {
-		rc.Close()
+		_ = rc.Close()
 		return nil, err
 	}
 	last := path.Join(dirpath, names[len(names)-1])
 	f, err := os.OpenFile(last, os.O_WRONLY|os.O_APPEND, 0)
 	if err != nil {
-		rc.Close()
+		_ = rc.Close()
 		return nil, err
 	}
 
@@ -186,7 +186,7 @@ func (w *WAL) ReadAll() (id int64, state raftpb.HardState, ents []raftpb.Entry, 
 	}
 
 	// close decoder, disable reading
-	w.decoder.close()
+	_ = w.decoder.close()
 	w.ri = 0
 
 	// create encoder (chain crc with the decoder), enable appending
@@ -203,8 +203,8 @@ func (w *WAL) Cut() error {
 	if err != nil {
 		return err
 	}
-	w.Sync()
-	w.f.Close()
+	_ = w.Sync()
+	_ = w.f.Close()
 
 	// update writer and save the previous crc
 	w.f = f
@@ -225,8 +225,8 @@ func (w *WAL) Sync() error {
 
 func (w *WAL) Close() {
 	if w.f != nil {
-		w.Sync()
-		w.f.Close()
+		_ = w.Sync()
+		_ = w.f.Close()
 	}
 }
 
@@ -266,11 +266,11 @@ func (w *WAL) SaveState(s *raftpb.HardState) error {
 
 func (w *WAL) Save(st raftpb.HardState, ents []raftpb.Entry) {
 	// TODO: no more reference operator
-	w.SaveState(&st)
+	_ = w.SaveState(&st)
 	for i := range ents {
-		w.SaveEntry(&ents[i])
+		_ = w.SaveEntry(&ents[i])
 	}
-	w.Sync()
+	_ = w.Sync()
 }
 
 func (w *WAL) saveCrc(prevCrc uint32) error {

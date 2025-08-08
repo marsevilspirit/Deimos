@@ -54,7 +54,7 @@ func readDir(dirpath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	names, err := dir.Readdirnames(-1)
 	if err != nil {
 		return nil, err
@@ -85,11 +85,4 @@ func parseWalName(str string) (seq, index int64, err error) {
 
 func walName(seq, index int64) string {
 	return fmt.Sprintf("%016x-%016x.wal", seq, index)
-}
-
-func max(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }

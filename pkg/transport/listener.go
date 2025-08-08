@@ -5,9 +5,9 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -68,12 +68,12 @@ func (info TLSInfo) baseConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("KeyFile and CertFile must both be present[key: %v, cert: %v]", info.KeyFile, info.CertFile)
 	}
 
-	cert, err := ioutil.ReadFile(info.CertFile)
+	cert, err := os.ReadFile(info.CertFile)
 	if err != nil {
 		return nil, err
 	}
 
-	key, err := ioutil.ReadFile(info.KeyFile)
+	key, err := os.ReadFile(info.KeyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (info TLSInfo) ClientConfig() (*tls.Config, error) {
 // newCertPool creates x509 certPool with provided CA file
 func newCertPool(CAFile string) (*x509.CertPool, error) {
 	certPool := x509.NewCertPool()
-	pemByte, err := ioutil.ReadFile(CAFile)
+	pemByte, err := os.ReadFile(CAFile)
 	if err != nil {
 		return nil, err
 	}

@@ -75,13 +75,13 @@ func (p *reverseProxy) ServeHTTP(rw http.ResponseWriter, clientreq *http.Request
 		return
 	}
 
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	removeSingleHopHeaders(&res.Header)
 	copyHeader(rw.Header(), res.Header)
 
 	rw.WriteHeader(res.StatusCode)
-	io.Copy(rw, res.Body)
+	_, _ = io.Copy(rw, res.Body)
 }
 
 func copyHeader(dst, src http.Header) {

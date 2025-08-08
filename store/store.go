@@ -217,7 +217,7 @@ func (s *store) CompareAndSwap(nodePath string, prevValue string,
 	eNode := e.Node
 
 	// if test succeed, write the value
-	n.Write(value, s.CurrentIndex)
+	_ = n.Write(value, s.CurrentIndex)
 
 	n.UpdateTTL(expireTime)
 
@@ -245,7 +245,7 @@ func (s *store) Delete(nodePath string, dir, recursive bool) (*Event, error) {
 	}
 
 	// recursive implies dir
-	if recursive == true {
+	if recursive {
 		dir = true
 	}
 
@@ -325,7 +325,7 @@ func (s *store) CompareAndDelete(nodePath string, prevValue string, prevIndex ui
 	}
 
 	// delete a key-value pair, no error should happen
-	n.Remove(false, false, callback)
+	_ = n.Remove(false, false, callback)
 
 	s.WatcherHub.notify(e)
 	s.Stats.Inc(CompareAndDeleteSuccess)
@@ -404,7 +404,7 @@ func (s *store) Update(nodePath string, newValue string, expireTime time.Time) (
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, currIndex)
 	}
 
-	n.Write(newValue, nextIndex)
+	_ = n.Write(newValue, nextIndex)
 
 	if n.IsDir() {
 		eNode.Dir = true
@@ -471,7 +471,7 @@ func (s *store) internalCreate(nodePath string, dir bool, value string, unique,
 			}
 			e.PrevNode = n.Repr(false, false)
 
-			n.Remove(false, false, nil)
+			_ = n.Remove(false, false, nil)
 		} else {
 			return nil, Err.NewError(Err.EcodeNodeExist, nodePath, currIndex)
 		}
@@ -489,7 +489,7 @@ func (s *store) internalCreate(nodePath string, dir bool, value string, unique,
 	}
 
 	// we are sure d is a directory and does not have the children with name n.Name
-	d.Add(n)
+	_ = d.Add(n)
 
 	// Node with TTL
 	if !n.IsPermanent() {
@@ -550,7 +550,7 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 		}
 
 		s.ttlKeyHeap.pop()
-		node.Remove(true, true, callback)
+		_ = node.Remove(true, true, callback)
 
 		s.Stats.Inc(ExpireCount)
 

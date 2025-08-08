@@ -197,9 +197,9 @@ func (n *node) run(r *raft) {
 		// Currently it is dropped in Step silently.
 		case m := <-propc:
 			m.From = r.id
-			r.Step(m)
+			_ = r.Step(m)
 		case m := <-n.recvc:
-			r.Step(m) // raft never returns an error
+			_ = r.Step(m) // raft never returns an error
 		case d := <-n.compactc:
 			r.compact(d)
 		case cc := <-n.confc:

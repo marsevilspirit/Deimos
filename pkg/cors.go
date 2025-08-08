@@ -19,7 +19,7 @@ func (ci *CORSInfo) Set(s string) error {
 		}
 		if v != "*" {
 			if _, err := url.Parse(v); err != nil {
-				return fmt.Errorf("Invalid CORS origin: %s", err)
+				return fmt.Errorf("invalid CORS origin: %s", err)
 			}
 		}
 		m[v] = true
@@ -31,7 +31,7 @@ func (ci *CORSInfo) Set(s string) error {
 
 func (ci *CORSInfo) String() string {
 	o := make([]string, 0)
-	for k, _ := range *ci {
+	for k := range *ci {
 		o = append(o, k)
 	}
 	return strings.Join(o, ",")
