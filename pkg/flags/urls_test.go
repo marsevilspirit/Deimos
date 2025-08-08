@@ -34,7 +34,7 @@ func TestValidateURLsValueBad(t *testing.T) {
 func TestValidateURLsValueGood(t *testing.T) {
 	tests := []string{
 		"https://1.2.3.4:8080", //NOSONAR
-		"http://10.1.1.1:80", //NOSONAR
+		"http://10.1.1.1:80",   //NOSONAR
 		"http://localhost:80",
 		"http://:80",
 	}

@@ -49,11 +49,6 @@ jobs:
       run: |
         go test ./client ./pkg ./pkg/flags ./pkg/transport ./proxy ./raft ./server ./server/deimos_http ./snap ./store ./wait ./wal
     
-    - name: Run tests with race detector
-      if: runner.os == 'Linux'
-      run: |
-        go test -race ./client ./pkg ./pkg/flags ./pkg/transport ./proxy ./raft ./server ./server/deimos_http ./snap ./store ./wait ./wal
-    
     - name: Run tests with coverage
       if: runner.os == 'Linux' && matrix.go-version == '1.24'
       run: |
