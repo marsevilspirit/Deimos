@@ -14,6 +14,7 @@ help:
 	@echo "Targets:"
 	@echo "  build     Build deimos"
 	@echo "  run       Run deimos"
+	@echo "  test      Run test"
 	@echo "  clean     Remove generated wal"
 	@echo "  generate  Generate proto files"
 	@echo "  help      Show this help message"
@@ -27,6 +28,11 @@ build:
 run: build
 	@echo "Run Deimos Cluster"
 	goreman start
+
+.PHONY: test
+test:
+	@echo "Run test..."
+	sh test.sh
 
 .PHONY: clean
 clean:
