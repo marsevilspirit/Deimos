@@ -1050,8 +1050,6 @@ func TestHandleWatchNoEvent(t *testing.T) {
 	}
 }
 
-
-
 func TestHandleWatchCloseNotified(t *testing.T) {
 	rw := httptest.NewRecorder()
 	wa := &dummyWatcher{}
