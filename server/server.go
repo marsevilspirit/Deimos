@@ -260,11 +260,41 @@ func (s *DeimosServer) Do(ctx context.Context, r pb.Request) (Response, error) {
 			}
 			return Response{Watcher: wc}, nil
 		default:
-			ev, err := s.Store.Get(r.Path, r.Recursive, r.Sorted)
-			if err != nil {
-				return Response{}, err
+			// Check if we can serve this read with lease
+			if s.CanReadWithLease() {
+				// Serve read directly with lease guarantee
+				ev, err := s.Store.Get(r.Path, r.Recursive, r.Sorted)
+				if err != nil {
+					return Response{}, err
+				}
+				return Response{Event: ev}, nil
+			} else if s.Node == nil || s.w == nil {
+				// Server not fully initialized, serve directly from store
+				ev, err := s.Store.Get(r.Path, r.Recursive, r.Sorted)
+				if err != nil {
+					return Response{}, err
+				}
+				return Response{Event: ev}, nil
+			} else {
+				// Fallback to consensus-based read (convert to QGET)
+				r.Method = "QGET"
+				data, err := r.Marshal()
+				if err != nil {
+					return Response{}, err
+				}
+				ch := s.w.Register(r.ID)
+				s.Node.Propose(ctx, data)
+				select {
+				case x := <-ch:
+					resp := x.(Response)
+					return resp, resp.err
+				case <-ctx.Done():
+					s.w.Trigger(r.ID, nil) // GC wait
+					return Response{}, ctx.Err()
+				case <-s.done:
+					return Response{}, ErrStopped
+				}
 			}
-			return Response{Event: ev}, nil
 		}
 	default:
 		return Response{}, ErrUnknownMethod
@@ -314,7 +344,6 @@ func (s *DeimosServer) configure(ctx context.Context, cc raftpb.ConfChange) erro
 		s.w.Trigger(cc.ID, nil) // GC wait
 		return ctx.Err()
 	}
-	return nil
 }
 
 // sync proposes a SYNC request and is non-blocking.
@@ -455,4 +484,20 @@ func getBool(v *bool) (vv bool, set bool) {
 		return false, false
 	}
 	return *v, true
+}
+
+// CanReadWithLease implements LeaseReader interface
+func (s *DeimosServer) CanReadWithLease() bool {
+	if s.Node == nil {
+		return false
+	}
+	return s.Node.CanReadWithLease()
+}
+
+// HasValidLease implements LeaseReader interface
+func (s *DeimosServer) HasValidLease() bool {
+	if s.Node == nil {
+		return false
+	}
+	return s.Node.HasValidLease()
 }

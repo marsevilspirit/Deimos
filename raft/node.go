@@ -104,6 +104,10 @@ type Node interface {
 	Stop()
 	// Compact triggers a compaction of the log.
 	Compact(d []byte)
+	// CanReadWithLease checks if reads can be served with lease
+	CanReadWithLease() bool
+	// HasValidLease checks if this node has a valid leader lease
+	HasValidLease() bool
 }
 
 // StartNode returns a new Node given a unique raft id,

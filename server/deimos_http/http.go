@@ -35,6 +35,30 @@ const (
 
 var errClosed = errors.New("deimos_http: client closed connection")
 
+// Peers represents a collection of peer nodes in the cluster
+type Peers map[string]string
+
+// Set parses a string of peer mappings in the format "id1=addr1&id2=addr2&..."
+func (p *Peers) Set(s string) error {
+	if *p == nil {
+		*p = make(map[string]string)
+	}
+
+	if s == "" {
+		return nil
+	}
+
+	pairs := strings.Split(s, "&")
+	for _, pair := range pairs {
+		parts := strings.Split(pair, "=")
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid peer format: %s", pair)
+		}
+		(*p)[parts[0]] = parts[1]
+	}
+	return nil
+}
+
 // NewClientHandler generates a muxed http.Handler with the given parameters to serve deimos client requests.
 func NewClientHandler(server *server.DeimosServer, clusterStore server.ClusterStore, timeout time.Duration) http.Handler {
 	sh := &serverHandler{

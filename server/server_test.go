@@ -1032,6 +1032,8 @@ func (n *readyNode) Ready() <-chan raft.Ready                           { return
 func (n *readyNode) ApplyConfChange(conf raftpb.ConfChange)             {}
 func (n *readyNode) Stop()                                              {}
 func (n *readyNode) Compact(d []byte)                                   {}
+func (n *readyNode) CanReadWithLease() bool                             { return false }
+func (n *readyNode) HasValidLease() bool                                { return false }
 
 type nodeRecorder struct {
 	recorder
@@ -1065,6 +1067,14 @@ func (n *nodeRecorder) Stop() {
 }
 func (n *nodeRecorder) Compact(d []byte) {
 	n.record(action{name: "Compact"})
+}
+func (n *nodeRecorder) CanReadWithLease() bool {
+	n.record(action{name: "CanReadWithLease"})
+	return false
+}
+func (n *nodeRecorder) HasValidLease() bool {
+	n.record(action{name: "HasValidLease"})
+	return false
 }
 
 type nodeProposeDataRecorder struct {
@@ -1112,8 +1122,8 @@ func (n *nodeConfChangeCommitterRecorder) ProposeConfChange(ctx context.Context,
 	if err != nil {
 		return err
 	}
-	n.readyc <- raft.Ready{CommittedEntries: []raftpb.Entry{{Type: raftpb.EntryConfChange, Data: data}}}
 	n.record(action{name: "ProposeConfChange:" + conf.Type.String()})
+	n.readyc <- raft.Ready{CommittedEntries: []raftpb.Entry{{Type: raftpb.EntryConfChange, Data: data}}}
 	return nil
 }
 func (n *nodeConfChangeCommitterRecorder) Ready() <-chan raft.Ready {

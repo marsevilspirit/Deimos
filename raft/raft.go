@@ -6,6 +6,7 @@ import (
 	"log"
 	"log/slog"
 	"sort"
+	"time"
 
 	pb "github.com/marsevilspirit/deimos/raft/raftpb"
 )
@@ -125,12 +126,19 @@ type raft struct {
 	electionTimeout  int
 	tick             func()
 	step             stepFunc
+
+	// Leader lease mechanism
+	lease *LeaderLease
 }
 
 func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
 	if id == None {
 		panic("cannot use none id")
 	}
+
+	// Lease duration should be longer than heartbeat interval
+	// Typically 3-5 times the heartbeat timeout
+	leaseDuration := time.Duration(heartbeat*3) * time.Millisecond
 
 	r := &raft{
 		id:               id,
@@ -140,6 +148,7 @@ func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
 		removed:          make(map[int64]bool),
 		electionTimeout:  election,
 		heartbeatTimeout: heartbeat,
+		lease:            NewLeaderLease(leaseDuration),
 	}
 	for _, p := range peers {
 		r.prs[p] = &progress{}
@@ -150,6 +159,23 @@ func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
 
 func (r *raft) hasLeader() bool {
 	return r.lead != None
+}
+
+// hasValidLease checks if this node has a valid leader lease
+func (r *raft) hasValidLease() bool {
+	return r.state == StateLeader && r.lease != nil && r.lease.IsValid()
+}
+
+// canReadWithLease checks if reads can be served with lease
+func (r *raft) canReadWithLease() bool {
+	return r.hasValidLease()
+}
+
+// renewLease renews the leader lease
+func (r *raft) renewLease() {
+	if r.state == StateLeader && r.lease != nil {
+		r.lease.Renew()
+	}
 }
 
 func (r *raft) shouldStop() bool {
@@ -296,6 +322,11 @@ func (r *raft) tickHeartbeat() {
 	if r.elapsed > r.heartbeatTimeout {
 		r.elapsed = 0
 		r.Step(pb.Message{From: r.id, Type: msgBeat})
+
+		// Renew lease if needed
+		if r.lease != nil && r.lease.ShouldRenew() {
+			r.lease.Renew()
+		}
 	}
 }
 
@@ -306,6 +337,11 @@ func (r *raft) becomeFollower(term int64, lead int64) {
 	r.tick = r.tickElection
 	r.lead = lead
 	r.state = StateFollower
+
+	// Revoke leader lease when becoming follower
+	if r.lease != nil {
+		r.lease.Revoke()
+	}
 }
 
 func (r *raft) becomeCandidate() {
@@ -332,6 +368,12 @@ func (r *raft) becomeLeader() {
 	r.tick = r.tickHeartbeat
 	r.lead = r.id
 	r.state = StateLeader
+
+	// Acquire leader lease
+	if r.lease != nil {
+		r.lease.Renew()
+	}
+
 	for _, e := range r.raftLog.entries(r.raftLog.committed + 1) {
 		if e.Type != pb.EntryConfChange {
 			continue
