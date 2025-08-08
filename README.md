@@ -1,5 +1,10 @@
 # Deimos & Phobos: The Twin Moons of Mars
 
+[![CI](https://github.com/marsevilspirit/deimos/actions/workflows/ci.yml/badge.svg)](https://github.com/marsevilspirit/deimos/actions/workflows/ci.yml)
+[![Test](https://github.com/marsevilspirit/deimos/actions/workflows/test.yml/badge.svg)](https://github.com/marsevilspirit/deimos/actions/workflows/test.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/marsevilspirit/deimos)](https://goreportcard.com/report/github.com/marsevilspirit/deimos)
+[![codecov](https://codecov.io/gh/marsevilspirit/deimos/branch/main/graph/badge.svg)](https://codecov.io/gh/marsevilspirit/deimos)
+
 <div align="center">
   <pre>
   ██████╗ ███████╗██╗███╗   ███╗ ██████╗ ███████╗

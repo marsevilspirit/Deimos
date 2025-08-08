@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go-version: ['1.23', '1.24']
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+    
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Verify dependencies
+      run: go mod verify
+    
+    - name: Run tests (Unix)
+      if: runner.os != 'Windows'
+      run: sh test.sh
+      
+    - name: Run tests (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        go test ./client ./pkg ./pkg/flags ./pkg/transport ./proxy ./raft ./server ./server/deimos_http ./snap ./store ./wait ./wal
+    
+    - name: Run tests with race detector
+      if: runner.os == 'Linux'
+      run: |
+        go test -race ./client ./pkg ./pkg/flags ./pkg/transport ./proxy ./raft ./server ./server/deimos_http ./snap ./store ./wait ./wal
+    
+    - name: Run tests with coverage
+      if: runner.os == 'Linux' && matrix.go-version == '1.24'
+      run: |
+        go test -coverprofile=coverage.out ./client ./pkg ./pkg/flags ./pkg/transport ./proxy ./raft ./server ./server/deimos_http ./snap ./store ./wait ./wal
+        go tool cover -html=coverage.out -o coverage.html
+    
+    - name: Upload coverage to Codecov
+      if: runner.os == 'Linux' && matrix.go-version == '1.24'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+    
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=5m
+    
+    - name: Check formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "The following files are not formatted:"
+          gofmt -s -l .
+          echo "Please run 'go fmt ./...' to fix formatting issues."
+          exit 1
+        fi
+    
+    - name: Run go vet
+      run: go vet ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+    
+    - name: Build binary
+      run: go build -v ./...
+    
+    - name: Build main binary
+      run: go build -o deimos ./main.go
+    
+    - name: Test binary execution
+      run: ./deimos --help || true
