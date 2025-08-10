@@ -16,11 +16,23 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download
 
-# Copy source code
-COPY . .
+# Copy only required source to minimize context
+COPY Makefile ./
+COPY main.go ./
+COPY client/ client/
+COPY discovery/ discovery/
+COPY error/ error/
+COPY pkg/ pkg/
+COPY proxy/ proxy/
+COPY raft/ raft/
+COPY server/ server/
+COPY snap/ snap/
+COPY store/ store/
+COPY wait/ wait/
+COPY wal/ wal/
 
 # Build the binary
-RUN make build
+RUN mkdir -p bin && make build
 
 # Runtime stage
 FROM alpine:latest
