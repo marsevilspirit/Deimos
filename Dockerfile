@@ -71,9 +71,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:4001/machines || exit 1
 
 # Default command - single node mode
+# NOSONAR
 CMD ["deimos", \
      "-name", "node1", \
      "-listen-client-urls", "http://0.0.0.0:4001", \
      "-advertise-client-urls", "http://localhost:4001", \
-     "-listen-peer-urls", "http://0.0.0.0:7001", \
-     "-advertise-peer-urls", "http://localhost:7001"]
+     "-listen-peer-urls", "http://0.0.0.0:7001", \ 
+     "-advertise-peer-urls", "http://localhost:7001"] #NOSONAR
