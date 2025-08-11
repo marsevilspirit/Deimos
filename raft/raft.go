@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -297,8 +298,10 @@ func (r *raft) tickElection() {
 		return
 	}
 	r.elapsed++
-	// TODO: elctionTimeout should be randomized.
-	if r.elapsed > r.electionTimeout {
+	// Add randomization to election timeout to avoid split votes
+	// Randomize election timeout between [electionTimeout, 2*electionTimeout)
+	randomizedElectionTimeout := r.electionTimeout + rand.Intn(r.electionTimeout)
+	if r.elapsed > randomizedElectionTimeout {
 		r.elapsed = 0
 		slog.Info("send election 🗳️")
 		_ = r.Step(pb.Message{From: r.id, Type: msgHup})

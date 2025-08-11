@@ -39,6 +39,11 @@ var (
 	snapCount    = flag.Int64("snapshot-count", server.DefaultSnapCount, "Number of committed transactions to trigger a snapshot")
 	printVersion = flag.Bool("version", false, "Print the version and exit")
 
+	// Raft configuration
+	electionTimeout  = flag.Int("election-timeout", 15, "Election timeout in ticks (default: 15)")
+	heartbeatTimeout = flag.Int("heartbeat-timeout", 1, "Heartbeat timeout in ticks (default: 1)")
+	tickInterval     = flag.Duration("tick-interval", 100*time.Millisecond, "Raft tick interval (default: 100ms)")
+
 	cluster   = &server.Cluster{}
 	cors      = &pkg.CORSInfo{}
 	proxyFlag = new(flagtypes.Proxy)
@@ -139,7 +144,7 @@ func startDeimos() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		n = raft.StartNode(self.ID, cluster.IDs(), 10, 1)
+		n = raft.StartNode(self.ID, cluster.IDs(), *electionTimeout, *heartbeatTimeout)
 	} else {
 		slog.Debug("wal exist")
 		var index int64
@@ -165,7 +170,7 @@ func startDeimos() {
 		if wid != 0 {
 			log.Fatalf("unexpected nodeid %d: nodeid should always be zero until we save nodeid into wal", wid)
 		}
-		n = raft.RestartNode(self.ID, cluster.IDs(), 10, 1, snapshot, st, ents)
+		n = raft.RestartNode(self.ID, cluster.IDs(), *electionTimeout, *heartbeatTimeout, snapshot, st, ents)
 	}
 
 	pt, err := transport.NewTransport(peerTLSInfo)
@@ -190,7 +195,7 @@ func startDeimos() {
 			*snap.Snapshotter
 		}{w, snapshotter},
 		Send:         server.Sender(pt, cls),
-		Ticker:       time.Tick(100 * time.Millisecond),
+		Ticker:       time.Tick(*tickInterval),
 		SyncTicker:   time.Tick(500 * time.Millisecond),
 		SnapCount:    *snapCount,
 		ClusterStore: cls,
