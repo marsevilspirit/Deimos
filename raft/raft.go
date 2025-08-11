@@ -300,7 +300,7 @@ func (r *raft) tickElection() {
 	r.elapsed++
 	// Add randomization to election timeout to avoid split votes
 	// Randomize election timeout between [electionTimeout, 2*electionTimeout)
-	randomizedElectionTimeout := r.electionTimeout + rand.Intn(r.electionTimeout)
+	randomizedElectionTimeout := r.electionTimeout + rand.Intn(r.electionTimeout) //NOSONAR
 	if r.elapsed > randomizedElectionTimeout {
 		r.elapsed = 0
 		slog.Info("send election 🗳️")
