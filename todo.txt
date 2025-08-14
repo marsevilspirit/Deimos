@@ -1,0 +1,2 @@
+raft: msg.Denied -> msg.Reject
+on Oct 3, 2014

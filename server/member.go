@@ -48,10 +48,3 @@ func newMember(name string, peerURLs types.URLs, now *time.Time) *Member {
 func (m Member) storeKey() string {
 	return path.Join(machineKVPrefix, strconv.FormatUint(uint64(m.ID), 16))
 }
-
-// newLearnerMember creates a Member with learner status
-func newLearnerMember(name string, peerURLs types.URLs, now *time.Time) *Member {
-	m := newMember(name, peerURLs, now)
-	m.IsLearner = true
-	return m
-}

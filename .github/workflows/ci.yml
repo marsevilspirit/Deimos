@@ -9,98 +9,109 @@ on:
 jobs:
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        go-version: ['1.23', '1.24']
-    
+        go-version: [1.21, 1.22]
+
     steps:
-    - name: Check out code
+    - name: Checkout code
       uses: actions/checkout@v4
-    
-    - name: Set up Go ${{ matrix.go-version }}
-      uses: actions/setup-go@v5
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
       with:
         go-version: ${{ matrix.go-version }}
-        
+
     - name: Cache Go modules
-      uses: actions/cache@v4
+      uses: actions/cache@v3
       with:
         path: |
           ~/.cache/go-build
           ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
         restore-keys: |
-          ${{ runner.os }}-go-${{ matrix.go-version }}-
-    
-    - name: Download dependencies
+          ${{ runner.os }}-go-
+
+    - name: Install dependencies
       run: go mod download
-      
-    - name: Verify dependencies
-      run: go mod verify
-    
+
     - name: Run tests
-      run: sh test.sh
-    
-    - name: Run tests with coverage
-      if: runner.os == 'Linux' && matrix.go-version == '1.24'
-      run: |
-        go test -coverprofile=coverage.out ./client ./pkg ./pkg/flags ./pkg/transport ./proxy ./raft ./server ./server/deimos_http ./snap ./store ./wait ./wal
-        go tool cover -html=coverage.out -o coverage.html
-    
+      run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
     - name: Upload coverage to Codecov
-      if: runner.os == 'Linux' && matrix.go-version == '1.24'
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v3
       with:
-        file: ./coverage.out
+        file: ./coverage.txt
         flags: unittests
         name: codecov-umbrella
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Check out code
+    - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v4
       with:
-        go-version: '1.24'
-    
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v6
+        go-version: 1.21
+
+    - name: Install golangci-lint
+      uses: golangci/golangci-lint-action@v4
       with:
         version: latest
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
         args: --timeout=5m
-    
-    - name: Check formatting
-      run: |
-        go fmt ./... && git status && [[ -z `git status -s` ]]
-    
-    - name: Run go vet
-      run: go vet ./...
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    
+    strategy:
+      matrix:
+        go-version: [1.21, 1.22]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
     steps:
-    - name: Check out code
+    - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v4
       with:
-        go-version: '1.24'
-    
-    - name: Build binary
+        go-version: ${{ matrix.go-version }}
+
+    - name: Build
       run: go build -v ./...
-    
-    - name: Build main binary
-      run: go build -o deimos ./main.go
-    
-    - name: Test binary execution
-      run: ./deimos --help || true
+
+    - name: Build with race detector
+      run: go build -race -v ./...
+      if: matrix.os == 'ubuntu-latest'
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.21
+
+    - name: Run gosec security scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out results.sarif ./...'
+
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: results.sarif

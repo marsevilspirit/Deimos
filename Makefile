@@ -7,39 +7,57 @@ MAKEFLAGS += --no-builtin-rules
 # Variables
 BINARY_NAME=bin/deimos
 
-.PHONY: help
-help:
-	@echo "Usage: make [target]"
-	@echo ""
-	@echo "Targets:"
-	@echo "  build     Build deimos"
-	@echo "  run       Run deimos"
-	@echo "  test      Run test"
-	@echo "  clean     Remove generated wal"
-	@echo "  generate  Generate proto files"
-	@echo "  help      Show this help message"
+.PHONY: help build run test clean lint generate
 
-.PHONY: build
+# Default target
+help:
+	@echo "Available commands:"
+	@echo "  build      - Build the project"
+	@echo "  run        - Run deimos cluster"
+	@echo "  test       - Run tests"
+	@echo "  clean      - Clean build artifacts"
+	@echo "  lint       - Run golangci-lint"
+	@echo "  generate   - Generate proto files"
+
+# Build the project
 build:
 	@echo "Building $(BINARY_NAME)..."
 	go build -o $(BINARY_NAME) main.go
 
-.PHONY: run
+# Run deimos cluster
 run: build
 	@echo "Run Deimos Cluster"
 	goreman start
 
-.PHONY: test
+# Run tests
 test:
-	@echo "Run test..."
-	sh test.sh
+	go test -v ./...
 
-.PHONY: clean
+# Clean build artifacts
 clean:
-	@echo "Cleaning up..."
-	rm -rf *data
+	go clean
+	rm -f coverage.out coverage.html
+	rm -f deimos
 
-.PHONY: generate
+# Install golangci-lint and run lint
+lint:
+	@echo "Installing golangci-lint..."
+	@if ! command -v golangci-lint &> /dev/null; then \
+		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $$(go env GOPATH)/bin v1.55.2; \
+	else \
+		echo "golangci-lint already installed"; \
+	fi
+	@echo "Running golangci-lint..."
+	golangci-lint run --timeout=5m
+
+# Build main binary
+build-main:
+	go build -o deimos ./main.go
+
+# Generate protobuf files
 generate:
 	@echo "Generate proto files"
 	sh scripts/genproto.sh
+
+# Generate protobuf files (alias)
+proto: generate

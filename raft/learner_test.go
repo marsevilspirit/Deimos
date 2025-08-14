@@ -136,7 +136,9 @@ func TestLearnerStateTransitions(t *testing.T) {
 	r.Vote = None
 	msg := pb.Message{From: 2, Type: msgVote, Term: 2, Index: 1, LogTerm: 1}
 	t.Logf("Sending message: %+v", msg)
-	r.Step(msg)
+	if err := r.Step(msg); err != nil {
+		t.Errorf("Failed to step message: %v", err)
+	}
 
 	msgs := r.ReadMessages()
 	if len(msgs) != 1 {

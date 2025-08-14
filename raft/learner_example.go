@@ -12,9 +12,18 @@ func ExampleLearnerUsage() {
 	r1 := newRaft(1, []int64{1, 2}, 100, 10)
 	r2 := newRaft(2, []int64{1, 2}, 100, 10)
 
+	fmt.Println("1. 创建集群")
+	fmt.Printf("   节点 1: %s\n", r1.String())
+	fmt.Printf("   节点 2: %s\n", r2.String())
+
 	// Start election
-	r1.Step(pb.Message{From: 1, Type: msgHup})
-	r2.Step(pb.Message{From: 2, Type: msgHup})
+	fmt.Println("\n2. 启动领导者选举")
+	if err := r1.Step(pb.Message{From: 1, Type: msgHup}); err != nil {
+		fmt.Printf("Error in r1.Step: %v\n", err)
+	}
+	if err := r2.Step(pb.Message{From: 2, Type: msgHup}); err != nil {
+		fmt.Printf("Error in r2.Step: %v\n", err)
+	}
 
 	// Process messages
 	msgs1 := r1.ReadMessages()
@@ -22,10 +31,14 @@ func ExampleLearnerUsage() {
 
 	// Simulate message exchange
 	for _, msg := range msgs1 {
-		r2.Step(msg)
+		if err := r2.Step(msg); err != nil {
+			fmt.Printf("Error in r2.Step: %v\n", err)
+		}
 	}
 	for _, msg := range msgs2 {
-		r1.Step(msg)
+		if err := r1.Step(msg); err != nil {
+			fmt.Printf("Error in r1.Step: %v\n", err)
+		}
 	}
 
 	// One should become leader
