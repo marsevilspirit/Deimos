@@ -23,21 +23,6 @@ func TestLearnerBasicFunctionality(t *testing.T) {
 		t.Errorf("Expected quorum size 2, got %d", r.q())
 	}
 
-	// Verify learner cannot vote
-	if r.learners[3] {
-		// Force election timeout
-		r.elapsed = 15
-		// Since tick is nil for learner, this should not trigger election
-		if r.tick != nil {
-			r.tick()
-		}
-		// Learner should not send election message
-		msgs := r.ReadMessages()
-		if len(msgs) > 0 {
-			t.Errorf("Learner should not participate in elections, got %d messages", len(msgs))
-		}
-	}
-
 	// Test that learner node itself cannot participate in elections
 	// Create a separate raft instance for node 3
 	r3 := newRaft(3, []int64{1, 2}, 10, 1)
@@ -53,16 +38,26 @@ func TestLearnerBasicFunctionality(t *testing.T) {
 		t.Errorf("Learner should have nil tick function")
 	}
 
-	// Try to trigger election
+	// Try to trigger election - this should not work since tick is nil
 	r3.elapsed = 15
 	if r3.tick != nil {
 		r3.tick()
 	}
 
-	// Should not send any messages
+	// Should not send any messages since tick is nil
 	msgs := r3.ReadMessages()
 	if len(msgs) > 0 {
 		t.Errorf("Learner should not participate in elections, got %d messages", len(msgs))
+	}
+
+	// Test that learner cannot vote by sending a vote request
+	r3.Step(pb.Message{From: 1, To: 3, Type: msgVote, Term: 2, Index: 1, LogTerm: 1})
+	msgs = r3.ReadMessages()
+	if len(msgs) != 1 {
+		t.Errorf("Expected 1 message (vote response), got %d", len(msgs))
+	}
+	if msgs[0].Type != msgVoteResp || !msgs[0].Denied {
+		t.Errorf("Learner should deny vote requests, got %v", msgs[0])
 	}
 }
 
