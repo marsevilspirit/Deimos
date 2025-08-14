@@ -28,6 +28,28 @@ func (c Cluster) FindName(name string) *Member {
 	return nil
 }
 
+// GetVotingMembers returns only voting members (excluding learners)
+func (c Cluster) GetVotingMembers() []*Member {
+	var votingMembers []*Member
+	for _, m := range c {
+		if !m.IsLearner {
+			votingMembers = append(votingMembers, m)
+		}
+	}
+	return votingMembers
+}
+
+// GetLearnerMembers returns only learner members
+func (c Cluster) GetLearnerMembers() []*Member {
+	var learnerMembers []*Member
+	for _, m := range c {
+		if m.IsLearner {
+			learnerMembers = append(learnerMembers, m)
+		}
+	}
+	return learnerMembers
+}
+
 func (c Cluster) Add(m Member) error {
 	if c.FindID(m.ID) != nil {
 		return fmt.Errorf("Member exists with identical ID %v", m)
@@ -98,6 +120,28 @@ func (c Cluster) IDs() []int64 {
 	var ids []int64
 	for _, m := range c {
 		ids = append(ids, m.ID)
+	}
+	return ids
+}
+
+// GetVotingIDs returns IDs of voting members only
+func (c Cluster) GetVotingIDs() []int64 {
+	var ids []int64
+	for _, m := range c {
+		if !m.IsLearner {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids
+}
+
+// GetLearnerIDs returns IDs of learner members only
+func (c Cluster) GetLearnerIDs() []int64 {
+	var ids []int64
+	for _, m := range c {
+		if m.IsLearner {
+			ids = append(ids, m.ID)
+		}
 	}
 	return ids
 }

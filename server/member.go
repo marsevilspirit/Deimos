@@ -19,12 +19,13 @@ type Member struct {
 	// TODO: ensure these are URLs
 	PeerURLs   []string
 	ClientURLs []string
+	IsLearner  bool
 }
 
 // newMember creates a Member without an ID and generates one based on the
 // name, peer URLs. This is used for bootstrapping.
 func newMember(name string, peerURLs types.URLs, now *time.Time) *Member {
-	m := &Member{Name: name, PeerURLs: peerURLs.StringSlice()}
+	m := &Member{Name: name, PeerURLs: peerURLs.StringSlice(), IsLearner: false}
 
 	b := []byte(m.Name)
 	for _, p := range m.PeerURLs {
@@ -46,4 +47,11 @@ func newMember(name string, peerURLs types.URLs, now *time.Time) *Member {
 
 func (m Member) storeKey() string {
 	return path.Join(machineKVPrefix, strconv.FormatUint(uint64(m.ID), 16))
+}
+
+// newLearnerMember creates a Member with learner status
+func newLearnerMember(name string, peerURLs types.URLs, now *time.Time) *Member {
+	m := newMember(name, peerURLs, now)
+	m.IsLearner = true
+	return m
 }

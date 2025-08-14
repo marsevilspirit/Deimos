@@ -44,12 +44,14 @@ const (
 	StateFollower StateType = iota
 	StateCandidate
 	StateLeader
+	StateLearner
 )
 
 var stmap = [...]string{
 	StateFollower:  "StateFollower",
 	StateCandidate: "StateCandidate",
 	StateLeader:    "StateLeader",
+	StateLearner:   "StateLearner",
 }
 
 func (st StateType) String() string {
@@ -98,6 +100,9 @@ type raft struct {
 
 	votes map[int64]bool
 
+	// Track learner nodes (nodes without voting rights)
+	learners map[int64]bool
+
 	msgs []pb.Message
 
 	// the leader id
@@ -135,6 +140,7 @@ func newRaft(id int64, peers []int64, election, heartbeat int) *raft {
 		lead:             None,
 		raftLog:          newLog(),
 		prs:              make(map[int64]*progress),
+		learners:         make(map[int64]bool),
 		removed:          make(map[int64]bool),
 		electionTimeout:  election,
 		heartbeatTimeout: heartbeat,
@@ -185,6 +191,8 @@ func (r *raft) String() string {
 		s += fmt.Sprintf(` votes="%v"`, r.votes)
 	case StateLeader:
 		s += fmt.Sprintf(` ins="%v"`, r.prs)
+	case StateLearner:
+		s += fmt.Sprintf(" lead=%v", r.lead)
 	}
 	return s
 }
@@ -268,6 +276,8 @@ func (r *raft) reset(term int64) {
 	r.Vote = None
 	r.elapsed = 0
 	r.votes = make(map[int64]bool)
+	// Don't reset learners map here, as it should persist across term changes
+	// Don't reset tick function here, as it should be set by the caller
 	for i := range r.prs {
 		r.prs[i] = &progress{next: r.raftLog.lastIndex() + 1}
 		if i == r.id {
@@ -279,7 +289,13 @@ func (r *raft) reset(term int64) {
 
 // calculate the quorum
 func (r *raft) q() int {
-	return len(r.prs)/2 + 1
+	votingNodes := 0
+	for id := range r.prs {
+		if !r.learners[id] {
+			votingNodes++
+		}
+	}
+	return votingNodes/2 + 1
 }
 
 func (r *raft) appendEntry(e pb.Entry) {
@@ -294,6 +310,12 @@ func (r *raft) appendEntry(e pb.Entry) {
 func (r *raft) tickElection() {
 	if _, promotable := r.prs[r.id]; !promotable {
 		slog.Error("can't election❌")
+		r.elapsed = 0
+		return
+	}
+	// Learners cannot participate in elections
+	if r.learners[r.id] {
+		slog.Debug("learner cannot participate in election")
 		r.elapsed = 0
 		return
 	}
@@ -378,6 +400,21 @@ func (r *raft) becomeLeader() {
 	r.appendEntry(pb.Entry{Data: nil})
 }
 
+func (r *raft) becomeLearner(term int64, lead int64) {
+	slog.Debug("becomeLearner", "term", term, "lead", lead)
+	r.step = stepLearner
+	r.reset(term)
+	r.tick = nil // Learners don't participate in elections
+	r.lead = lead
+	r.state = StateLearner
+	r.learners[r.id] = true
+
+	// Revoke leader lease when becoming learner
+	if r.lease != nil {
+		r.lease.Revoke()
+	}
+}
+
 func (r *raft) ReadMessages() []pb.Message {
 	msgs := r.msgs
 	r.msgs = make([]pb.Message, 0)
@@ -428,7 +465,15 @@ func (r *raft) Step(m pb.Message) error {
 		if m.Type == msgVote {
 			lead = None
 		}
-		r.becomeFollower(m.Term, lead)
+		// If current node is a learner, convert to follower
+		// But don't convert if we're already a learner and receiving a vote request
+		if r.state == StateLearner && m.Type == msgVote {
+			// Learner receiving vote request - stay as learner
+		} else if r.state == StateLearner {
+			r.becomeFollower(m.Term, lead)
+		} else {
+			r.becomeFollower(m.Term, lead)
+		}
 	case m.Term < r.Term:
 		// ignore
 		return nil
@@ -459,8 +504,15 @@ func (r *raft) addNode(id int64) {
 	r.pendingConf = false
 }
 
+func (r *raft) addLearner(id int64) {
+	r.setProgress(id, 0, r.raftLog.lastIndex()+1)
+	r.learners[id] = true
+	r.pendingConf = false
+}
+
 func (r *raft) removeNode(id int64) {
 	r.delProgress(id)
+	delete(r.learners, id)
 	r.pendingConf = false
 	r.removed[id] = true
 }
@@ -490,6 +542,10 @@ func stepLeader(r *raft, m pb.Message) {
 			r.sendAppend(m.From)
 		} else {
 			r.prs[m.From].update(m.Index)
+			// Check if learner has caught up and can be promoted
+			if r.learners[m.From] && r.shouldPromoteLearner(m.From) {
+				r.promoteLearner(m.From)
+			}
 			if r.maybeCommit() {
 				r.bcastAppend()
 			}
@@ -549,6 +605,27 @@ func stepFollower(r *raft, m pb.Message) {
 	}
 }
 
+func stepLearner(r *raft, m pb.Message) {
+	switch m.Type {
+	case msgProp:
+		if r.lead == None {
+			panic("[raft.go:447] no leader")
+		}
+		m.To = r.lead
+		r.send(m)
+	case msgApp:
+		r.elapsed = 0
+		r.lead = m.From
+		r.handleAppendEntries(m)
+	case msgSnap:
+		r.elapsed = 0
+		r.handleSnapshot(m)
+	case msgVote:
+		// Learners cannot vote
+		r.send(pb.Message{To: m.From, Type: msgVoteResp, Denied: true})
+	}
+}
+
 func (r *raft) compact(d []byte) {
 	r.raftLog.snap(d, r.raftLog.applied,
 		r.raftLog.term(r.raftLog.applied), r.nodes())
@@ -563,6 +640,7 @@ func (r *raft) restore(s pb.Snapshot) bool {
 	}
 	r.raftLog.restore(s)
 	r.prs = make(map[int64]*progress)
+	r.learners = make(map[int64]bool)
 	for _, n := range s.Nodes {
 		if n == r.id {
 			r.setProgress(n, r.raftLog.lastIndex(), r.raftLog.lastIndex()+1)
@@ -608,4 +686,58 @@ func (r *raft) loadState(state pb.HardState) {
 	r.Term = state.Term
 	r.Vote = state.Vote
 	r.Commit = state.Commit
+}
+
+// isLearner checks if a node is a learner
+func (r *raft) isLearner(id int64) bool {
+	return r.learners[id]
+}
+
+// promoteLearner promotes a learner to a voting member
+func (r *raft) promoteLearner(id int64) {
+	if r.learners[id] {
+		delete(r.learners, id)
+		// Update progress for the newly promoted node
+		if pr, exists := r.prs[id]; exists {
+			pr.next = r.raftLog.lastIndex() + 1
+		}
+	}
+}
+
+// getVotingNodes returns the list of voting nodes (excluding learners)
+func (r *raft) getVotingNodes() []int64 {
+	var votingNodes []int64
+	for id := range r.prs {
+		if !r.learners[id] {
+			votingNodes = append(votingNodes, id)
+		}
+	}
+	return votingNodes
+}
+
+// getLearnerNodes returns the list of learner nodes
+func (r *raft) getLearnerNodes() []int64 {
+	var learnerNodes []int64
+	for id := range r.learners {
+		learnerNodes = append(learnerNodes, id)
+	}
+	return learnerNodes
+}
+
+// shouldPromoteLearner checks if a learner should be promoted to a voting member
+func (r *raft) shouldPromoteLearner(id int64) bool {
+	if !r.learners[id] {
+		return false
+	}
+
+	// Check if learner has caught up with the leader's log
+	pr := r.prs[id]
+	if pr == nil {
+		return false
+	}
+
+	// Learner should have caught up with the committed log
+	// If committed is 0, learner should have match >= 0 (which is always true)
+	// If committed > 0, learner should have match >= committed
+	return pr.match >= r.raftLog.committed
 }

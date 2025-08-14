@@ -15,6 +15,7 @@ message Info {
 enum EntryType {
 	EntryNormal     = 0;
 	EntryConfChange = 1;
+	EntryConfChangeAddLearner = 2;
 }
 
 message Entry {
@@ -53,6 +54,7 @@ message HardState {
 enum ConfChangeType {
 	ConfChangeAddNode    = 0;
 	ConfChangeRemoveNode = 1;
+	ConfChangeAddLearner = 2;
 }
 
 message ConfChange {
