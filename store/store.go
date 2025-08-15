@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"fmt"
 	"path"
 	"strconv"
@@ -9,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	Err "github.com/marsevilspirit/deimos/error"
+	"github.com/marsevilspirit/deimos/store/storepb"
 )
 
 // The default version to set when the store is first initialized.
@@ -585,21 +586,11 @@ func (s *store) checkDir(parent *node, dirName string) (*node, *Err.Error) {
 func (s *store) Save() ([]byte, error) {
 	s.worldLock.Lock()
 
-	clonedStore := newStore()
-	clonedStore.CurrentIndex = s.CurrentIndex
-	clonedStore.Root = s.Root.Clone()
-	clonedStore.WatcherHub = s.WatcherHub.clone()
-	clonedStore.Stats = s.Stats.clone()
-	clonedStore.CurrentVersion = s.CurrentVersion
+	pb := buildSnapshotPB(s)
 
 	s.worldLock.Unlock()
 
-	b, err := json.Marshal(clonedStore)
-	if err != nil {
-		return nil, err
-	}
-
-	return b, nil
+	return proto.Marshal(pb)
 }
 
 // Recovery recovers the store system from a static state
@@ -610,14 +601,11 @@ func (s *store) Recovery(state []byte) error {
 	s.worldLock.Lock()
 	defer s.worldLock.Unlock()
 
-	err := json.Unmarshal(state, s)
-	if err != nil {
+	var snap storepb.StoreSnapshot
+	if err := proto.Unmarshal(state, &snap); err != nil {
 		return err
 	}
-
-	s.ttlKeyHeap = newTtlKeyHeap()
-
-	s.Root.recoverAndclean()
+	applySnapshotPB(s, &snap)
 	return nil
 }
 

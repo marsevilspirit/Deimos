@@ -4,7 +4,7 @@
 # Run from repository root.
 #
 
-DIRS="./wal/walpb ./server/serverpb ./snap/snappb ./raft/raftpb"
+DIRS="./wal/walpb ./server/serverpb ./snap/snappb ./raft/raftpb ./store/storepb"
 
 if ! protoc --version > /dev/null; then
  	echo "could not find protoc, is it installed + in PATH?"

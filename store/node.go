@@ -323,7 +323,7 @@ func (n *node) UpdateTTL(expireTime time.Time) {
 			// from permanent to ttl
 			n.ExpireTime = expireTime
 			// push into ttl heap
-			n.store.ttlKeyHeap.Push(n)
+			n.store.ttlKeyHeap.push(n)
 		}
 	}
 }

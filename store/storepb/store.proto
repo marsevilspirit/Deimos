@@ -1,0 +1,43 @@
+package storepb;
+
+import "gogoproto/gogo.proto";
+
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+option (gogoproto.goproto_enum_prefix_all) = false;
+
+message StoreMetadata {
+    required int32  version            = 1 [(gogoproto.nullable) = false];
+    required uint64 total_transactions = 2 [(gogoproto.nullable) = false];
+    required uint64 watcher_count      = 3 [(gogoproto.nullable) = false];
+}
+
+message NodeData {
+    required string path           = 1 [(gogoproto.nullable) = false];
+    required uint64 created_index  = 2 [(gogoproto.nullable) = false];
+    required uint64 modified_index = 3 [(gogoproto.nullable) = false];
+    optional string value          = 4; // 文件节点使用；目录为空
+    required bool   is_dir         = 5 [(gogoproto.nullable) = false];
+    optional int64  expire_unix    = 6; // 过期时间的Unix秒；永久为未设置
+    required string acl            = 7 [(gogoproto.nullable) = false];
+    repeated NodeData children     = 8 [(gogoproto.nullable) = false];
+}
+
+message StoreSnapshot {
+    required uint64       base_index    = 1 [(gogoproto.nullable) = false];
+    required uint64       current_index = 2 [(gogoproto.nullable) = false];
+    required StoreMetadata metadata     = 5 [(gogoproto.nullable) = false];
+    required NodeData     root_node     = 6 [(gogoproto.nullable) = false];
+}
+
+message CompressedSnapshot {
+    required uint64 base_index       = 1 [(gogoproto.nullable) = false];
+    required uint64 current_index    = 2 [(gogoproto.nullable) = false];
+    required bytes  compressed_data  = 3 [(gogoproto.nullable) = false];
+    required uint32 original_size    = 4 [(gogoproto.nullable) = false];
+    required string compression_type = 5 [(gogoproto.nullable) = false];
+}
+
+
