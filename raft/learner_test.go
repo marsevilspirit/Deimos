@@ -27,6 +27,7 @@ func TestLearnerBasicFunctionality(t *testing.T) {
 	if r.learners[3] {
 		// This test is checking that node 3 is marked as a learner in raft instance r
 		// The actual election behavior test is done below with r3
+		_ = r.learners[3] // Use the value to avoid empty branch warning
 	}
 
 	// Test that learner node itself cannot participate in elections

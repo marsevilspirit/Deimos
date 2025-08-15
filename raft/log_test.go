@@ -206,7 +206,7 @@ func TestLogRestore(t *testing.T) {
 		t.Errorf("applied = %d, want %d", raftLog.applied, index)
 	}
 	if raftLog.committed != index {
-		t.Errorf("comitted = %d, want %d", raftLog.committed, index)
+		t.Errorf("committed = %d, want %d", raftLog.committed, index)
 	}
 	if raftLog.unstable != index+1 {
 		t.Errorf("unstable = %d, want %d", raftLog.unstable, index+1)

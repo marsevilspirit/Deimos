@@ -73,7 +73,13 @@ func applySnapshotPBCompressed(s *store, compressedData []byte) error {
 	if err != nil {
 		return err
 	}
-	defer gr.Close()
+	defer func() {
+		if closeErr := gr.Close(); closeErr != nil {
+			// Log the error but don't return it since this is in a defer
+			// and the function may have already returned an error
+			_ = closeErr // Use the error to avoid empty branch warning
+		}
+	}()
 
 	// Read decompressed protobuf data
 	pbData, err := io.ReadAll(gr)

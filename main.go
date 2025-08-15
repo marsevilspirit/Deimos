@@ -18,6 +18,7 @@ import (
 	"github.com/marsevilspirit/deimos/pkg/transport"
 	"github.com/marsevilspirit/deimos/proxy"
 	"github.com/marsevilspirit/deimos/raft"
+	"github.com/marsevilspirit/deimos/raft/raftpb"
 	"github.com/marsevilspirit/deimos/server"
 	"github.com/marsevilspirit/deimos/server/deimos_http"
 	"github.com/marsevilspirit/deimos/snap"
@@ -148,7 +149,8 @@ func startDeimos() {
 	} else {
 		slog.Debug("wal exist")
 		var index int64
-		snapshot, err := snapshotter.Load()
+		var snapshot *raftpb.Snapshot
+		snapshot, err = snapshotter.Load()
 		if err != nil && err != snap.ErrNoSnapshot {
 			log.Fatal(err)
 		}
@@ -162,7 +164,10 @@ func startDeimos() {
 		if w, err = wal.OpenAtIndex(waldir, index); err != nil {
 			log.Fatal(err)
 		}
-		wid, st, ents, err := w.ReadAll()
+		var wid int64
+		var hardState raftpb.HardState
+		var ents []raftpb.Entry
+		wid, hardState, ents, err = w.ReadAll()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -170,7 +175,7 @@ func startDeimos() {
 		if wid != 0 {
 			log.Fatalf("unexpected nodeid %d: nodeid should always be zero until we save nodeid into wal", wid)
 		}
-		n = raft.RestartNode(self.ID, cluster.IDs(), *electionTimeout, *heartbeatTimeout, snapshot, st, ents)
+		n = raft.RestartNode(self.ID, cluster.IDs(), *electionTimeout, *heartbeatTimeout, snapshot, hardState, ents)
 	}
 
 	pt, err := transport.NewTransport(peerTLSInfo)

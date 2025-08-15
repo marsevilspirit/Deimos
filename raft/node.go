@@ -98,7 +98,7 @@ type Node interface {
 	Ready() <-chan Ready
 	// ApplyConfChange applies config change to the local node.
 	// TODO: reject existing node when add node
-	// TODO: reject non-existant node when remove node
+	// TODO: reject non-existent node when remove node
 	ApplyConfChange(cc pb.ConfChange)
 	// Stop performs any necessary termination of the Node.
 	Stop()

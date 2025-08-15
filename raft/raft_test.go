@@ -912,7 +912,7 @@ func TestSlowNodeRestore(t *testing.T) {
 	// trigger a commit
 	nt.send(pb.Message{From: 1, To: 1, Type: msgProp, Entries: []pb.Entry{{}}})
 	if follower.raftLog.committed != lead.raftLog.committed {
-		t.Errorf("follower.comitted = %d, want %d", follower.raftLog.committed, lead.raftLog.committed)
+		t.Errorf("follower.committed = %d, want %d", follower.raftLog.committed, lead.raftLog.committed)
 	}
 }
 

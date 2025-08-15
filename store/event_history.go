@@ -67,12 +67,12 @@ func (eh *EventHistory) scan(key string, recursive bool, index uint64) (*Event, 
 
 		if recursive {
 			// add tailing slash
-			key := path.Clean(key)
-			if key[len(key)-1] != '/' {
-				key = key + "/"
+			cleanKey := path.Clean(key)
+			if cleanKey[len(cleanKey)-1] != '/' {
+				cleanKey = cleanKey + "/"
 			}
 
-			ok = ok || strings.HasPrefix(e.Node.Key, key)
+			ok = ok || strings.HasPrefix(e.Node.Key, cleanKey)
 		}
 
 		if ok {
@@ -85,25 +85,4 @@ func (eh *EventHistory) scan(key string, recursive bool, index uint64) (*Event, 
 			return nil, nil
 		}
 	}
-}
-
-// clone will be protected by a stop-world lock
-// do not need to obtain internal lock
-func (eh *EventHistory) clone() *EventHistory {
-	clonedQueue := eventQueue{
-		Capacity: eh.Queue.Capacity,
-		Events:   make([]*Event, eh.Queue.Capacity),
-		Size:     eh.Queue.Size,
-		Front:    eh.Queue.Front,
-		Back:     eh.Queue.Back,
-	}
-
-	copy(clonedQueue.Events, eh.Queue.Events)
-
-	return &EventHistory{
-		StartIndex: eh.StartIndex,
-		Queue:      clonedQueue,
-		LastIndex:  eh.LastIndex,
-	}
-
 }

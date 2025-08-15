@@ -68,27 +68,6 @@ func (s *Stats) toJson() []byte {
 	return b
 }
 
-func (s *Stats) clone() *Stats {
-	return &Stats{
-		GetSuccess:              s.GetSuccess,
-		GetFail:                 s.GetFail,
-		SetSuccess:              s.SetSuccess,
-		SetFail:                 s.SetFail,
-		DeleteSuccess:           s.DeleteSuccess,
-		DeleteFail:              s.DeleteFail,
-		UpdateSuccess:           s.UpdateSuccess,
-		UpdateFail:              s.UpdateFail,
-		CreateSuccess:           s.CreateSuccess,
-		CreateFail:              s.CreateFail,
-		CompareAndSwapSuccess:   s.CompareAndSwapSuccess,
-		CompareAndSwapFail:      s.CompareAndSwapFail,
-		CompareAndDeleteSuccess: s.CompareAndDeleteSuccess,
-		CompareAndDeleteFail:    s.CompareAndDeleteFail,
-		ExpireCount:             s.ExpireCount,
-		Watchers:                s.Watchers,
-	}
-}
-
 func (s *Stats) TotalReads() uint64 {
 	return s.GetSuccess + s.GetFail
 }

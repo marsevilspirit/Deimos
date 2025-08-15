@@ -13,10 +13,15 @@ func TestStoreCompression(t *testing.T) {
 	s := newStore()
 
 	// Add some test data
-	s.Set("/test1", false, "value1", time.Now().Add(time.Hour))
-	s.Set("/test2", false, "value2", time.Now().Add(time.Hour))
-	s.Create("/testdir", true, "", false, time.Now().Add(time.Hour))
-	s.Set("/testdir/file1", false, "file1value", time.Now().Add(time.Hour))
+	var err error
+	_, err = s.Set("/test1", false, "value1", time.Now().Add(time.Hour))
+	assert.NoError(t, err)
+	_, err = s.Set("/test2", false, "value2", time.Now().Add(time.Hour))
+	assert.NoError(t, err)
+	_, err = s.Create("/testdir", true, "", false, time.Now().Add(time.Hour))
+	assert.NoError(t, err)
+	_, err = s.Set("/testdir/file1", false, "file1value", time.Now().Add(time.Hour))
+	assert.NoError(t, err)
 
 	// Test normal protobuf serialization
 	normalData, err := s.Save()
@@ -63,7 +68,8 @@ func TestStoreCompressionWithLargeData(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		path := fmt.Sprintf("/test%d", i)
 		value := fmt.Sprintf("value%d", i)
-		s.Set(path, false, value, time.Now().Add(time.Hour))
+		_, err := s.Set(path, false, value, time.Now().Add(time.Hour))
+		assert.NoError(t, err)
 	}
 
 	// Test compression effect
@@ -107,7 +113,10 @@ func BenchmarkStoreSaveNormal(b *testing.B) {
 	for i := 0; i < 100; i++ {
 		path := fmt.Sprintf("/test%d", i)
 		value := fmt.Sprintf("value%d", i)
-		s.Set(path, false, value, time.Now().Add(time.Hour))
+		_, err := s.Set(path, false, value, time.Now().Add(time.Hour))
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	b.ResetTimer()
@@ -126,7 +135,10 @@ func BenchmarkStoreSaveGzip(b *testing.B) {
 	for i := 0; i < 100; i++ {
 		path := fmt.Sprintf("/test%d", i)
 		value := fmt.Sprintf("value%d", i)
-		s.Set(path, false, value, time.Now().Add(time.Hour))
+		_, err := s.Set(path, false, value, time.Now().Add(time.Hour))
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	b.ResetTimer()

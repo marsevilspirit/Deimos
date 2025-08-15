@@ -51,7 +51,7 @@ type Storage interface {
 	// SaveSnap function saves snapshot to the underlying stable storage.
 	SaveSnap(snap raftpb.Snapshot)
 
-	// TODO: WAL should be able to control cut itself. After implement self-controled cut,
+	// TODO: WAL should be able to control cut itself. After implement self-controlled cut,
 	// remove it in this interface.
 	// Cut cuts out a new wal file for saving new state and entries.
 	Cut() error
@@ -109,7 +109,7 @@ type DeimosServer struct {
 
 // Start prepares and starts server in a new goroutine. It is no longer safe to
 // modify a servers fields after it has been sent to Start.
-// It also a goroutine to publish its server infomation.
+// It also a goroutine to publish its server information.
 func (s *DeimosServer) Start() {
 	s.start()
 	go s.publish(defaultPublishRetryInterval)

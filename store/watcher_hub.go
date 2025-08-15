@@ -143,15 +143,6 @@ func (wh *watcherHub) notifyWatchers(e *Event, nodePath string, deleted bool) {
 	}
 }
 
-// clone function clones the watcherHub and return the cloned one.
-// only clone the static content. do not clone the current watchers.
-func (wh *watcherHub) clone() *watcherHub {
-	clonedHistory := wh.EventHistory.clone()
-	return &watcherHub{
-		EventHistory: clonedHistory,
-	}
-}
-
 // isHidden checks to see if key path is considered hidden to watch path i.e. the
 // last element is hidden or it's within a hidden directory
 func isHidden(watchPath, keyPath string) bool {
