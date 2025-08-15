@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	Err "github.com/marsevilspirit/deimos/error"
@@ -20,53 +21,68 @@ type BPlusNode interface {
 
 // BPlusNode represents a node in a B+ tree.
 type InternalNode struct {
-	Keys     []string
-	Parent   *InternalNode
-	Children []BPlusNode
+	Keys     []string      `json:"keys"`
+	Parent   *InternalNode `json:"-"` // Ignore circular references
+	Children []BPlusNode   `json:"children"`
 
-	CreatedIndex  uint64
-	ModifiedIndex uint64
-	ExpireTime    time.Time
-	ACL           string
+	CreatedIndex  uint64    `json:"createdIndex"`
+	ModifiedIndex uint64    `json:"modifiedIndex"`
+	ExpireTime    time.Time `json:"expireTime,omitempty"`
+	ACL           string    `json:"acl,omitempty"`
+
+	// Concurrency control
+	mu sync.RWMutex `json:"-"`
 }
 
 type LeafNode struct {
-	Parent *InternalNode
-	Keys   []string
-	Values []string
-	Next   *LeafNode
+	Parent *InternalNode `json:"-"` // Ignore circular references
+	Keys   []string      `json:"keys"`
+	Values []string      `json:"values"`
+	Next   *LeafNode     `json:"-"` // Ignore circular references
 
-	CreatedIndex  uint64
-	ModifiedIndex uint64
+	CreatedIndex  uint64 `json:"createdIndex"`
+	ModifiedIndex uint64 `json:"modifiedIndex"`
 	// Per-entry expiration times aligned with Keys/Values
-	ExpireTimes []time.Time
-	ACL         string
+	ExpireTimes []time.Time `json:"expireTimes,omitempty"`
+	ACL         string      `json:"acl,omitempty"`
+
+	// Concurrency control
+	mu sync.RWMutex `json:"-"`
 }
 
 // BPlusTree represents a B+ tree that implements the Store interface.
+//
+// Concurrency Notes:
+// - This implementation uses a single global mutex for all operations:
+//   - All operations (Create, Get, Set, Update, Delete) use the same mutex
+//   - This ensures complete serialization and eliminates all race conditions
+//   - Split operations are atomic since they're protected by the same mutex
+//   - Performance is sacrificed for correctness and simplicity
 type BPlusTree struct {
-	root  BPlusNode
-	order int
-	size  int
-	mutex sync.RWMutex
+	root     BPlusNode `json:"-"` // Serialized through treeData field
+	Order    int       `json:"order"`
+	TreeSize int64     `json:"size"` // Changed to int64 for atomic operations
+
+	// Concurrency control - single global mutex for all operations
+	mu sync.Mutex `json:"-"`
 
 	// For TTL management
-	ttlHeap *bpTtlKeyHeap
+	TTLHeap *bpTtlKeyHeap `json:"ttlHeap"`
 
 	// Store interface requirements
-	CurrentIndex   uint64
-	CurrentVersion int
-	Stats          *Stats
-	WatcherHub     *watcherHub
+	CurrentIndex   uint64      `json:"currentIndex"`
+	CurrentVersion int         `json:"currentVersion"`
+	Stats          *Stats      `json:"stats"`
+	WatcherHub     *watcherHub `json:"watcherHub"`
 }
 
 // NewBPlusTree create a new B+ tree
 func NewBPlusTree() *BPlusTree {
 	return &BPlusTree{
 		root:           newLeafNode(),
-		order:          DefaultOrder,
-		size:           0,
-		ttlHeap:        newBpTtlKeyHeap(),
+		Order:          DefaultOrder,
+		TreeSize:       0,
+		TTLHeap:        newBpTtlKeyHeap(),
 		CurrentIndex:   0,
 		CurrentVersion: 2, // default version
 		Stats:          newStats(),
@@ -93,11 +109,13 @@ func newInternalNode() *InternalNode {
 }
 
 // Get retrieves a value from the B+ tree (Store interface implementation)
+// This method uses global mutex for complete serialization
 func (t *BPlusTree) Get(nodePath string, recursive, sorted bool) (*Event, error) {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
-
 	nodePath = path.Clean(path.Join("/", nodePath))
+
+	// Use global mutex for complete serialization
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// For B+ tree, we only support file operations, not directory operations
 	// So recursive and sorted are ignored for now
@@ -137,12 +155,16 @@ func (t *BPlusTree) Get(nodePath string, recursive, sorted bool) (*Event, error)
 }
 
 // findLeaf finds the leaf node containing the specified key
+// This method assumes the caller holds the global mutex
 func (t *BPlusTree) findLeaf(key string) *LeafNode {
 	if t.root == nil {
 		return nil
 	}
 
-	node := t.root
+	// Create a snapshot of the tree structure to avoid race conditions
+	root := t.root
+	node := root
+
 	for {
 		internalNode, ok := node.(*InternalNode)
 		if !ok {
@@ -156,6 +178,7 @@ func (t *BPlusTree) findLeaf(key string) *LeafNode {
 			return nil
 		}
 
+		// Get the child node from the snapshot
 		node = internalNode.Children[childIndex]
 	}
 }
@@ -175,15 +198,16 @@ func (t *BPlusTree) findChildIndex(node *InternalNode, key string) int {
 
 // Set creates or replaces a key-value pair in the B+ tree (Store interface implementation)
 func (t *BPlusTree) Set(nodePath string, dir bool, value string, expireTime time.Time) (*Event, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-
 	// B+ tree only supports files, not directories
 	if dir {
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, t.CurrentIndex)
 	}
 
 	nodePath = path.Clean(path.Join("/", nodePath))
+
+	// Use global mutex for tree modification
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// Check if already exists
 	leaf := t.findLeaf(nodePath)
@@ -199,7 +223,8 @@ func (t *BPlusTree) Set(nodePath string, dir bool, value string, expireTime time
 				prevEvent.Node.Value = &prevValue
 
 				leaf.Values[i] = value
-				leaf.ModifiedIndex = t.CurrentIndex + 1
+				t.CurrentIndex++
+				leaf.ModifiedIndex = t.CurrentIndex
 
 				// Update TTL
 				if i < len(leaf.ExpireTimes) {
@@ -214,9 +239,9 @@ func (t *BPlusTree) Set(nodePath string, dir bool, value string, expireTime time
 
 				// Update TTL heap
 				if expireTime.IsZero() {
-					t.ttlHeap.removeKey(nodePath)
+					t.TTLHeap.removeKey(nodePath)
 				} else {
-					t.ttlHeap.updateKey(nodePath, expireTime)
+					t.TTLHeap.updateKey(nodePath, expireTime)
 				}
 
 				break
@@ -237,7 +262,7 @@ func (t *BPlusTree) Set(nodePath string, dir bool, value string, expireTime time
 			t.Stats.Inc(SetFail)
 			return nil, err
 		}
-		t.size++
+		atomic.AddInt64(&t.TreeSize, 1)
 	}
 
 	// Create event
@@ -257,7 +282,6 @@ func (t *BPlusTree) Set(nodePath string, dir bool, value string, expireTime time
 		}
 	}
 
-	t.CurrentIndex++
 	t.Stats.Inc(SetSuccess)
 	t.WatcherHub.notify(e)
 
@@ -265,55 +289,66 @@ func (t *BPlusTree) Set(nodePath string, dir bool, value string, expireTime time
 }
 
 // insertIntoLeaf inserts a key-value pair into a leaf node
+// This method is designed to be atomic and concurrency-safe
 func (bt *BPlusTree) insertIntoLeaf(leaf *LeafNode, key, value string, createdIndex uint64, expireTime time.Time) error {
 	// Find insertion position
-	insertIndex := 0
+	insertIndex := len(leaf.Keys)
 	for i, k := range leaf.Keys {
 		if key < k {
 			insertIndex = i
 			break
 		}
-		insertIndex = i + 1
 	}
 
-	// Insert key-value pair
-	leaf.Keys = append(leaf.Keys[:insertIndex], append([]string{key}, leaf.Keys[insertIndex:]...)...)
-	leaf.Values = append(leaf.Values[:insertIndex], append([]string{value}, leaf.Values[insertIndex:]...)...)
-	// Insert expire time aligned
+	// Create new slices to avoid race conditions
+	newKeys := make([]string, len(leaf.Keys)+1)
+	newValues := make([]string, len(leaf.Values)+1)
+	newExpireTimes := make([]time.Time, len(leaf.ExpireTimes)+1)
+
+	// Copy elements before insertion point
+	copy(newKeys[:insertIndex], leaf.Keys[:insertIndex])
+	copy(newValues[:insertIndex], leaf.Values[:insertIndex])
 	if insertIndex < len(leaf.ExpireTimes) {
-		leaf.ExpireTimes = append(leaf.ExpireTimes[:insertIndex], append([]time.Time{expireTime}, leaf.ExpireTimes[insertIndex:]...)...)
-	} else {
-		// pad then append
-		for len(leaf.ExpireTimes) < insertIndex {
-			leaf.ExpireTimes = append(leaf.ExpireTimes, time.Time{})
-		}
-		leaf.ExpireTimes = append(leaf.ExpireTimes, expireTime)
+		copy(newExpireTimes[:insertIndex], leaf.ExpireTimes[:insertIndex])
 	}
+
+	// Insert new element
+	newKeys[insertIndex] = key
+	newValues[insertIndex] = value
+	newExpireTimes[insertIndex] = expireTime
+
+	// Copy elements after insertion point
+	copy(newKeys[insertIndex+1:], leaf.Keys[insertIndex:])
+	copy(newValues[insertIndex+1:], leaf.Values[insertIndex:])
+	if insertIndex < len(leaf.ExpireTimes) {
+		copy(newExpireTimes[insertIndex+1:], leaf.ExpireTimes[insertIndex:])
+	}
+
+	// Update the leaf node atomically
+	leaf.Keys = newKeys
+	leaf.Values = newValues
+	leaf.ExpireTimes = newExpireTimes
 
 	// Update metadata
 	leaf.CreatedIndex = createdIndex
 	leaf.ModifiedIndex = createdIndex
 
-	// Size has already been incremented in the Insert method
-
 	// Check if splitting is needed
-	if len(leaf.Keys) > bt.order {
+	if len(leaf.Keys) > bt.Order {
 		bt.splitLeaf(leaf)
 	}
 
 	// Add to TTL heap (if expiration time is set)
 	if !expireTime.IsZero() {
-		bt.ttlHeap.updateKey(key, expireTime)
+		bt.TTLHeap.updateKey(key, expireTime)
 	}
 
 	return nil
 }
 
 // Create creates a new key-value pair in the B+ tree (Store interface implementation)
+// This method uses strict locking for maximum consistency
 func (t *BPlusTree) Create(nodePath string, dir bool, value string, unique bool, expireTime time.Time) (*Event, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-
 	// B+ tree only supports files, not directories
 	if dir {
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, t.CurrentIndex)
@@ -327,7 +362,11 @@ func (t *BPlusTree) Create(nodePath string, dir bool, value string, unique bool,
 		nodePath = nodePath + "/" + fmt.Sprintf("%d", t.CurrentIndex)
 	}
 
-	// Check if already exists
+	// Use global mutex for tree modification - ensure complete atomicity
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Check if already exists - search in the entire tree
 	leaf := t.findLeaf(nodePath)
 	if leaf != nil {
 		for _, k := range leaf.Keys {
@@ -340,12 +379,39 @@ func (t *BPlusTree) Create(nodePath string, dir bool, value string, unique bool,
 
 	// Create new
 	t.CurrentIndex++
+
+	// Ensure we have a leaf to insert into (tree might be empty)
+	if leaf == nil {
+		leaf = newLeafNode()
+		t.root = leaf
+	}
+
+	// Insert the key-value pair
 	err := t.insertIntoLeaf(leaf, nodePath, value, t.CurrentIndex, expireTime)
 	if err != nil {
 		t.Stats.Inc(CreateFail)
 		return nil, err
 	}
-	t.size++
+
+	// Update size atomically
+	atomic.AddInt64(&t.TreeSize, 1)
+
+	// Verify the key was inserted correctly - search in the entire tree after potential splits
+	found := false
+	verifyLeaf := t.findLeaf(nodePath)
+	if verifyLeaf != nil {
+		for _, k := range verifyLeaf.Keys {
+			if k == nodePath {
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		t.Stats.Inc(CreateFail)
+		return nil, fmt.Errorf("key not found in tree after insertion: %s", nodePath)
+	}
 
 	// Create event
 	e := newEvent(Create, nodePath, t.CurrentIndex, t.CurrentIndex)
@@ -369,10 +435,11 @@ func (t *BPlusTree) Create(nodePath string, dir bool, value string, unique bool,
 
 // Update updates a key-value pair in the B+ tree (Store interface implementation)
 func (t *BPlusTree) Update(nodePath string, newValue string, expireTime time.Time) (*Event, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-
 	nodePath = path.Clean(path.Join("/", nodePath))
+
+	// Use global mutex for tree modification
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// Check if exists
 	leaf := t.findLeaf(nodePath)
@@ -407,9 +474,9 @@ func (t *BPlusTree) Update(nodePath string, newValue string, expireTime time.Tim
 
 			// Update TTL heap
 			if expireTime.IsZero() {
-				t.ttlHeap.removeKey(nodePath)
+				t.TTLHeap.removeKey(nodePath)
 			} else {
-				t.ttlHeap.updateKey(nodePath, expireTime)
+				t.TTLHeap.updateKey(nodePath, expireTime)
 			}
 
 			// Create event
@@ -440,15 +507,16 @@ func (t *BPlusTree) Update(nodePath string, newValue string, expireTime time.Tim
 
 // Delete removes a key-value pair from the B+ tree (Store interface implementation)
 func (t *BPlusTree) Delete(nodePath string, dir, recursive bool) (*Event, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-
 	// B+ tree only supports files, not directories
 	if dir {
 		return nil, Err.NewError(Err.EcodeNotFile, nodePath, t.CurrentIndex)
 	}
 
 	nodePath = path.Clean(path.Join("/", nodePath))
+
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// Check if exists
 	leaf := t.findLeaf(nodePath)
@@ -471,10 +539,10 @@ func (t *BPlusTree) Delete(nodePath string, dir, recursive bool) (*Event, error)
 			if i < len(leaf.ExpireTimes) {
 				leaf.ExpireTimes = append(leaf.ExpireTimes[:i], leaf.ExpireTimes[i+1:]...)
 			}
-			t.size--
+			t.TreeSize--
 
 			// Remove TTL entry
-			t.ttlHeap.removeKey(nodePath)
+			t.TTLHeap.removeKey(nodePath)
 
 			// Create event
 			e := newEvent(Delete, nodePath, t.CurrentIndex, leaf.CreatedIndex)
@@ -486,7 +554,7 @@ func (t *BPlusTree) Delete(nodePath string, dir, recursive bool) (*Event, error)
 			t.WatcherHub.notify(e)
 
 			// Check if rebalancing is needed
-			if len(leaf.Keys) < t.order/2 && leaf != t.root {
+			if len(leaf.Keys) < t.Order/2 && leaf != t.root {
 				t.rebalanceLeaf(leaf)
 			}
 
@@ -500,14 +568,15 @@ func (t *BPlusTree) Delete(nodePath string, dir, recursive bool) (*Event, error)
 
 // Watch creates a watcher for the given prefix (Store interface implementation)
 func (t *BPlusTree) Watch(prefix string, recursive, stream bool, sinceIndex uint64) (Watcher, error) {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
-
 	prefix = path.Clean(path.Join("/", prefix))
 
 	if sinceIndex == 0 {
 		sinceIndex = t.CurrentIndex + 1
 	}
+
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// Create watcher using the existing watcherHub
 	w, err := t.WatcherHub.watch(prefix, recursive, stream, sinceIndex, t.CurrentIndex)
@@ -520,47 +589,213 @@ func (t *BPlusTree) Watch(prefix string, recursive, stream bool, sinceIndex uint
 
 // Save saves the current state of the B+ tree (Store interface implementation)
 func (t *BPlusTree) Save() ([]byte, error) {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	// For now, return a simple serialization
-	// In a real implementation, you might want to serialize the entire tree structure
-	data := map[string]interface{}{
-		"version": t.CurrentVersion,
-		"index":   t.CurrentIndex,
-		"size":    t.size,
-		"order":   t.order,
+	// Create a serializable structure for serialization
+	saveStruct := struct {
+		Order          int                    `json:"order"`
+		Size           int                    `json:"size"`
+		CurrentIndex   uint64                 `json:"currentIndex"`
+		CurrentVersion int                    `json:"currentVersion"`
+		Stats          *Stats                 `json:"stats"`
+		WatcherHub     *watcherHub            `json:"watcherHub"`
+		TTLHeap        *bpTtlKeyHeap          `json:"ttlHeap"`
+		TreeData       map[string]interface{} `json:"treeData"`
+	}{
+		Order:          t.Order,
+		Size:           int(t.TreeSize),
+		CurrentIndex:   t.CurrentIndex,
+		CurrentVersion: t.CurrentVersion,
+		Stats:          t.Stats.clone(),
+		WatcherHub:     t.WatcherHub.clone(),
+		TTLHeap:        t.TTLHeap.clone(),
+		TreeData:       t.serializeTreeData(),
 	}
 
-	return json.Marshal(data)
+	return json.Marshal(saveStruct)
+}
+
+// serializeTreeData converts the tree structure to a serializable format
+func (t *BPlusTree) serializeTreeData() map[string]interface{} {
+	if t.root == nil {
+		return nil
+	}
+
+	return t.serializeNode(t.root)
+}
+
+// serializeNode recursively serializes a BPlusNode
+func (t *BPlusTree) serializeNode(node BPlusNode) map[string]interface{} {
+	if node == nil {
+		return nil
+	}
+
+	switch n := node.(type) {
+	case *InternalNode:
+		children := make([]map[string]interface{}, len(n.Children))
+		for i, child := range n.Children {
+			children[i] = t.serializeNode(child)
+		}
+
+		return map[string]interface{}{
+			"type":          "internal",
+			"keys":          n.Keys,
+			"children":      children,
+			"createdIndex":  n.CreatedIndex,
+			"modifiedIndex": n.ModifiedIndex,
+			"expireTime":    n.ExpireTime,
+			"acl":           n.ACL,
+		}
+
+	case *LeafNode:
+		return map[string]interface{}{
+			"type":          "leaf",
+			"keys":          n.Keys,
+			"values":        n.Values,
+			"expireTimes":   n.ExpireTimes,
+			"createdIndex":  n.CreatedIndex,
+			"modifiedIndex": n.ModifiedIndex,
+			"acl":           n.ACL,
+		}
+
+	default:
+		return nil
+	}
 }
 
 // Recovery recovers the B+ tree from saved state (Store interface implementation)
 func (t *BPlusTree) Recovery(state []byte) error {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	// For now, just parse the basic info
-	// In a real implementation, you might want to reconstruct the entire tree
-	var data map[string]interface{}
-	if err := json.Unmarshal(state, &data); err != nil {
+	// Define structure for deserialization
+	var saveStruct struct {
+		Order          int                    `json:"order"`
+		Size           int                    `json:"size"`
+		CurrentIndex   uint64                 `json:"currentIndex"`
+		CurrentVersion int                    `json:"currentVersion"`
+		Stats          *Stats                 `json:"stats"`
+		WatcherHub     *watcherHub            `json:"watcherHub"`
+		TTLHeap        *bpTtlKeyHeap          `json:"ttlHeap"`
+		TreeData       map[string]interface{} `json:"treeData"`
+	}
+
+	// Deserialize
+	if err := json.Unmarshal(state, &saveStruct); err != nil {
 		return err
 	}
 
-	if version, ok := data["version"].(float64); ok {
-		t.CurrentVersion = int(version)
+	// Restore fields
+	t.Order = saveStruct.Order
+	t.TreeSize = int64(saveStruct.Size)
+	t.CurrentIndex = saveStruct.CurrentIndex
+	t.CurrentVersion = saveStruct.CurrentVersion
+	t.Stats = saveStruct.Stats
+	t.WatcherHub = saveStruct.WatcherHub
+	t.TTLHeap = saveStruct.TTLHeap
+
+	// Restore tree structure
+	if saveStruct.TreeData != nil {
+		t.root = t.deserializeNode(saveStruct.TreeData)
 	}
-	if index, ok := data["index"].(float64); ok {
-		t.CurrentIndex = uint64(index)
-	}
-	if size, ok := data["size"].(float64); ok {
-		t.size = int(size)
-	}
-	if order, ok := data["order"].(float64); ok {
-		t.order = int(order)
+
+	// Ensure TTL heap is properly initialized
+	if t.TTLHeap != nil {
+		t.TTLHeap.ensureInitialized()
 	}
 
 	return nil
+}
+
+// deserializeNode reconstructs a BPlusNode from serialized data
+func (t *BPlusTree) deserializeNode(data map[string]interface{}) BPlusNode {
+	if data == nil {
+		return nil
+	}
+
+	nodeType, ok := data["type"].(string)
+	if !ok {
+		return nil
+	}
+
+	switch nodeType {
+	case "internal":
+		node := &InternalNode{
+			CreatedIndex:  uint64(data["createdIndex"].(float64)),
+			ModifiedIndex: uint64(data["modifiedIndex"].(float64)),
+			ACL:           data["acl"].(string),
+		}
+
+		// Restore keys
+		if keys, ok := data["keys"].([]interface{}); ok {
+			node.Keys = make([]string, len(keys))
+			for i, key := range keys {
+				node.Keys[i] = key.(string)
+			}
+		}
+
+		// Restore children
+		if children, ok := data["children"].([]interface{}); ok {
+			node.Children = make([]BPlusNode, len(children))
+			for i, childData := range children {
+				if childMap, ok := childData.(map[string]interface{}); ok {
+					node.Children[i] = t.deserializeNode(childMap)
+				}
+			}
+		}
+
+		// Restore expire time
+		if expireTime, ok := data["expireTime"].(string); ok && expireTime != "" {
+			if parsed, err := time.Parse(time.RFC3339, expireTime); err == nil {
+				node.ExpireTime = parsed
+			}
+		}
+
+		return node
+
+	case "leaf":
+		node := &LeafNode{
+			CreatedIndex:  uint64(data["createdIndex"].(float64)),
+			ModifiedIndex: uint64(data["modifiedIndex"].(float64)),
+			ACL:           data["acl"].(string),
+		}
+
+		// Restore keys
+		if keys, ok := data["keys"].([]interface{}); ok {
+			node.Keys = make([]string, len(keys))
+			for i, key := range keys {
+				node.Keys[i] = key.(string)
+			}
+		}
+
+		// Restore values
+		if values, ok := data["values"].([]interface{}); ok {
+			node.Values = make([]string, len(values))
+			for i, value := range values {
+				node.Values[i] = value.(string)
+			}
+		}
+
+		// Restore expire times
+		if expireTimes, ok := data["expireTimes"].([]interface{}); ok {
+			node.ExpireTimes = make([]time.Time, len(expireTimes))
+			for i, expireTime := range expireTimes {
+				if expireStr, ok := expireTime.(string); ok && expireStr != "" {
+					if parsed, err := time.Parse(time.RFC3339, expireStr); err == nil {
+						node.ExpireTimes[i] = parsed
+					}
+				}
+			}
+		}
+
+		return node
+
+	default:
+		return nil
+	}
 }
 
 // TotalTransactions returns the total number of transactions (Store interface implementation)
@@ -576,10 +811,11 @@ func (t *BPlusTree) JsonStats() []byte {
 
 // CompareAndSwap performs a conditional update (Store interface implementation)
 func (t *BPlusTree) CompareAndSwap(nodePath string, prevValue string, prevIndex uint64, value string, expireTime time.Time) (*Event, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-
 	nodePath = path.Clean(path.Join("/", nodePath))
+
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// Check if exists
 	leaf := t.findLeaf(nodePath)
@@ -624,9 +860,9 @@ func (t *BPlusTree) CompareAndSwap(nodePath string, prevValue string, prevIndex 
 
 			// Update TTL heap
 			if expireTime.IsZero() {
-				t.ttlHeap.removeKey(nodePath)
+				t.TTLHeap.removeKey(nodePath)
 			} else {
-				t.ttlHeap.updateKey(nodePath, expireTime)
+				t.TTLHeap.updateKey(nodePath, expireTime)
 			}
 
 			// Create event
@@ -657,10 +893,11 @@ func (t *BPlusTree) CompareAndSwap(nodePath string, prevValue string, prevIndex 
 
 // CompareAndDelete performs a conditional deletion (Store interface implementation)
 func (t *BPlusTree) CompareAndDelete(nodePath string, prevValue string, prevIndex uint64) (*Event, error) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-
 	nodePath = path.Clean(path.Join("/", nodePath))
+
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// Check if exists
 	leaf := t.findLeaf(nodePath)
@@ -693,10 +930,10 @@ func (t *BPlusTree) CompareAndDelete(nodePath string, prevValue string, prevInde
 			if i < len(leaf.ExpireTimes) {
 				leaf.ExpireTimes = append(leaf.ExpireTimes[:i], leaf.ExpireTimes[i+1:]...)
 			}
-			t.size--
+			atomic.AddInt64(&t.TreeSize, -1)
 
 			// Remove TTL entry
-			t.ttlHeap.removeKey(nodePath)
+			t.TTLHeap.removeKey(nodePath)
 
 			// Create event
 			e := newEvent(CompareAndDelete, nodePath, t.CurrentIndex, leaf.CreatedIndex)
@@ -708,7 +945,7 @@ func (t *BPlusTree) CompareAndDelete(nodePath string, prevValue string, prevInde
 			t.WatcherHub.notify(e)
 
 			// Check if rebalancing is needed
-			if len(leaf.Keys) < t.order/2 && leaf != t.root {
+			if len(leaf.Keys) < t.Order/2 && leaf != t.root {
 				t.rebalanceLeaf(leaf)
 			}
 
@@ -720,85 +957,50 @@ func (t *BPlusTree) CompareAndDelete(nodePath string, prevValue string, prevInde
 	return nil, Err.NewError(Err.EcodeKeyNotFound, nodePath, t.CurrentIndex)
 }
 
-// splitLeaf splits a leaf node
-func (t *BPlusTree) splitLeaf(leaf *LeafNode) {
+// splitLeaf splits a leaf node when it becomes too full
+// This method is designed to be atomic and concurrency-safe
+func (bt *BPlusTree) splitLeaf(leaf *LeafNode) {
+	// For B+ tree, we split at the middle
 	mid := len(leaf.Keys) / 2
 
 	// Create new leaf node
 	newLeaf := newLeafNode()
-	newLeaf.Keys = leaf.Keys[mid:]
-	newLeaf.Values = leaf.Values[mid:]
-	newLeaf.Next = leaf.Next
-	// Ensure ExpireTimes array is properly aligned with Keys/Values
-	if mid < len(leaf.ExpireTimes) {
-		newLeaf.ExpireTimes = leaf.ExpireTimes[mid:]
-	} else {
-		// If ExpireTimes is shorter, pad with zero times
-		for i := 0; i < len(newLeaf.Keys); i++ {
-			newLeaf.ExpireTimes = append(newLeaf.ExpireTimes, time.Time{})
-		}
-	}
 
-	// Update original leaf node
+	// Copy the second half to the new leaf
+	newLeaf.Keys = make([]string, len(leaf.Keys)-mid)
+	newLeaf.Values = make([]string, len(leaf.Values)-mid)
+	newLeaf.ExpireTimes = make([]time.Time, len(leaf.ExpireTimes)-mid)
+
+	copy(newLeaf.Keys, leaf.Keys[mid:])
+	copy(newLeaf.Values, leaf.Values[mid:])
+	copy(newLeaf.ExpireTimes, leaf.ExpireTimes[mid:])
+
+	// Truncate the original leaf to keep only the first half
 	leaf.Keys = leaf.Keys[:mid]
 	leaf.Values = leaf.Values[:mid]
-	leaf.Next = newLeaf
-	// Ensure ExpireTimes array is properly aligned
-	if mid < len(leaf.ExpireTimes) {
-		leaf.ExpireTimes = leaf.ExpireTimes[:mid]
-	} else {
-		// If ExpireTimes is shorter, pad with zero times
-		for i := 0; i < len(leaf.Keys); i++ {
-			leaf.ExpireTimes = append(leaf.ExpireTimes, time.Time{})
-		}
-	}
+	leaf.ExpireTimes = leaf.ExpireTimes[:mid]
 
-	// If leaf node is root, create new root node
-	if leaf == t.root {
+	// Update metadata
+	newLeaf.CreatedIndex = leaf.CreatedIndex
+	newLeaf.ModifiedIndex = leaf.ModifiedIndex
+	leaf.ModifiedIndex = bt.CurrentIndex
+
+	// Update Next pointers atomically to maintain linked list consistency
+	newLeaf.Next = leaf.Next
+	leaf.Next = newLeaf
+
+	// Update parent pointers
+	if leaf.Parent == nil {
+		// Create new root
 		newRoot := newInternalNode()
 		newRoot.Keys = []string{newLeaf.Keys[0]}
 		newRoot.Children = []BPlusNode{leaf, newLeaf}
 		leaf.Parent = newRoot
 		newLeaf.Parent = newRoot
-		t.root = newRoot
+		bt.root = newRoot
 	} else {
-		// Insert new key in parent node
-		t.insertIntoParent(leaf, newLeaf.Keys[0], newLeaf)
-	}
-}
-
-// insertIntoParent inserts a new key and child node into the parent node
-func (t *BPlusTree) insertIntoParent(leftChild *LeafNode, key string, rightChild *LeafNode) {
-	parent := leftChild.Parent
-	if parent == nil {
-		// If parent node doesn't exist, create new root node
-		newRoot := newInternalNode()
-		newRoot.Keys = []string{key}
-		newRoot.Children = []BPlusNode{leftChild, rightChild}
-		leftChild.Parent = newRoot
-		rightChild.Parent = newRoot
-		t.root = newRoot
-		return
-	}
-
-	// Find insertion position
-	insertIndex := 0
-	for i, k := range parent.Keys {
-		if key < k {
-			insertIndex = i
-			break
-		}
-		insertIndex = i + 1
-	}
-
-	// Insert key and child node
-	parent.Keys = append(parent.Keys[:insertIndex], append([]string{key}, parent.Keys[insertIndex:]...)...)
-	parent.Children = append(parent.Children[:insertIndex+1], append([]BPlusNode{rightChild}, parent.Children[insertIndex+1:]...)...)
-	rightChild.Parent = parent
-
-	// Check if parent node splitting is needed
-	if len(parent.Keys) > t.order {
-		t.splitInternalNode(parent)
+		// Insert into existing parent
+		bt.insertIntoInternal(leaf.Parent, newLeaf.Keys[0], newLeaf)
 	}
 }
 
@@ -854,13 +1056,12 @@ func (t *BPlusTree) insertIntoParentInternal(leftChild *InternalNode, key string
 	}
 
 	// Find insertion position
-	insertIndex := 0
+	insertIndex := len(parent.Keys)
 	for i, k := range parent.Keys {
 		if key < k {
 			insertIndex = i
 			break
 		}
-		insertIndex = i + 1
 	}
 
 	// Insert key and child node
@@ -869,7 +1070,7 @@ func (t *BPlusTree) insertIntoParentInternal(leftChild *InternalNode, key string
 	rightChild.Parent = parent
 
 	// Check if parent node splitting is needed
-	if len(parent.Keys) > t.order {
+	if len(parent.Keys) > t.Order {
 		t.splitInternalNode(parent)
 	}
 }
@@ -994,7 +1195,7 @@ func (t *BPlusTree) rebalanceLeaf(leaf *LeafNode) {
 	// Try to borrow a key from the left sibling node
 	if childIndex > 0 {
 		leftSibling := parent.Children[childIndex-1].(*LeafNode)
-		if len(leftSibling.Keys) > t.order/2 {
+		if len(leftSibling.Keys) > t.Order/2 {
 			// Borrow a key from the left sibling
 			borrowedKey := leftSibling.Keys[len(leftSibling.Keys)-1]
 			borrowedValue := leftSibling.Values[len(leftSibling.Values)-1]
@@ -1020,7 +1221,7 @@ func (t *BPlusTree) rebalanceLeaf(leaf *LeafNode) {
 	// Try to borrow a key from the right sibling node
 	if childIndex < len(parent.Children)-1 {
 		rightSibling := parent.Children[childIndex+1].(*LeafNode)
-		if len(rightSibling.Keys) > t.order/2 {
+		if len(rightSibling.Keys) > t.Order/2 {
 			// Borrow a key from the right sibling
 			borrowedKey := rightSibling.Keys[0]
 			borrowedValue := rightSibling.Values[0]
@@ -1113,7 +1314,7 @@ func (t *BPlusTree) Exists(key string) bool {
 }
 
 func (t *BPlusTree) Size() int {
-	return t.size
+	return int(atomic.LoadInt64(&t.TreeSize))
 }
 
 // Store interface implementation
@@ -1125,8 +1326,9 @@ func (t *BPlusTree) Version() int {
 
 // Index retrieves current index of the B+ tree store.
 func (t *BPlusTree) Index() uint64 {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return t.CurrentIndex
 }
 
@@ -1157,14 +1359,15 @@ func (t *BPlusTree) GetStats() map[string]interface{} {
 	return map[string]interface{}{
 		"size":   t.Size(),
 		"height": t.Height(),
-		"order":  t.order,
+		"order":  t.Order,
 	}
 }
 
 // UpdateTTL updates the TTL for a given key. If expireTime is zero, TTL is removed.
 func (t *BPlusTree) UpdateTTL(key string, expireTime time.Time) error {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	leaf := t.findLeaf(key)
 	if leaf == nil {
@@ -1180,9 +1383,9 @@ func (t *BPlusTree) UpdateTTL(key string, expireTime time.Time) error {
 			}
 			leaf.ExpireTimes[i] = expireTime
 			if expireTime.IsZero() {
-				t.ttlHeap.removeKey(key)
+				t.TTLHeap.removeKey(key)
 			} else {
-				t.ttlHeap.updateKey(key, expireTime)
+				t.TTLHeap.updateKey(key, expireTime)
 			}
 			return nil
 		}
@@ -1192,17 +1395,18 @@ func (t *BPlusTree) UpdateTTL(key string, expireTime time.Time) error {
 
 // DeleteExpiredKeys removes all keys with expiration before or at cutoff
 func (t *BPlusTree) DeleteExpiredKeys(cutoff time.Time) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
+	// Use single mutex for all operations
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	for {
-		top := t.ttlHeap.top()
+		top := t.TTLHeap.top()
 		if top == nil || top.expireTime.After(cutoff) {
 			break
 		}
 		// find and delete this key
 		key := top.key
-		t.ttlHeap.pop()
+		t.TTLHeap.pop()
 
 		leaf := t.findLeaf(key)
 		if leaf == nil {
@@ -1223,10 +1427,105 @@ func (t *BPlusTree) DeleteExpiredKeys(cutoff time.Time) {
 		if deleteIndex < len(leaf.ExpireTimes) {
 			leaf.ExpireTimes = append(leaf.ExpireTimes[:deleteIndex], leaf.ExpireTimes[deleteIndex+1:]...)
 		}
-		t.size--
+		atomic.AddInt64(&t.TreeSize, -1)
 
-		if len(leaf.Keys) < t.order/2 && leaf != t.root {
+		if len(leaf.Keys) < t.Order/2 && leaf != t.root {
 			t.rebalanceLeaf(leaf)
 		}
 	}
+}
+
+// insertIntoInternal inserts a key and child into an internal node
+func (bt *BPlusTree) insertIntoInternal(node *InternalNode, key string, child BPlusNode) {
+	// Find insertion position
+	insertIndex := len(node.Keys)
+	for i, k := range node.Keys {
+		if key < k {
+			insertIndex = i
+			break
+		}
+	}
+
+	// Create new slices to avoid race conditions
+	newKeys := make([]string, len(node.Keys)+1)
+	newChildren := make([]BPlusNode, len(node.Children)+1)
+
+	// Copy elements before insertion point
+	copy(newKeys[:insertIndex], node.Keys[:insertIndex])
+	copy(newChildren[:insertIndex], node.Children[:insertIndex])
+
+	// Insert new element
+	newKeys[insertIndex] = key
+	newChildren[insertIndex] = child
+
+	// Copy elements after insertion point
+	copy(newKeys[insertIndex+1:], node.Keys[insertIndex:])
+	copy(newChildren[insertIndex+1:], node.Children[insertIndex:])
+
+	// Update the internal node atomically
+	node.Keys = newKeys
+	node.Children = newChildren
+
+	// Update parent pointers
+	if leaf, ok := child.(*LeafNode); ok {
+		leaf.Parent = node
+	} else if internal, ok := child.(*InternalNode); ok {
+		internal.Parent = node
+	}
+
+	// Check if splitting is needed
+	if len(node.Keys) > bt.Order {
+		bt.splitInternal(node)
+	}
+}
+
+// splitInternal splits an internal node when it becomes too full
+func (bt *BPlusTree) splitInternal(node *InternalNode) {
+	mid := len(node.Keys) / 2
+
+	// Create new internal node
+	newNode := newInternalNode()
+	newNode.Keys = make([]string, len(node.Keys)-mid-1)
+	newNode.Children = make([]BPlusNode, len(node.Children)-mid-1)
+
+	// Copy half of the data to the new node
+	copy(newNode.Keys, node.Keys[mid+1:])
+	copy(newNode.Children, node.Children[mid+1:])
+
+	// Save original data before modifying
+	originalKeys := node.Keys[:mid]
+	originalChildren := node.Children[:mid+1]
+
+	// Update the original node
+	midKey := node.Keys[mid]
+	node.Keys = make([]string, mid)
+	node.Children = make([]BPlusNode, mid+1)
+	copy(node.Keys, originalKeys)
+	copy(node.Children, originalChildren)
+
+	// Update parent pointers
+	for _, child := range newNode.Children {
+		if leaf, ok := child.(*LeafNode); ok {
+			leaf.Parent = newNode
+		} else if internal, ok := child.(*InternalNode); ok {
+			internal.Parent = newNode
+		}
+	}
+
+	// Insert mid key into parent
+	if node.Parent == nil {
+		// Create new root
+		newRoot := newInternalNode()
+		newRoot.Keys = []string{midKey}
+		newRoot.Children = []BPlusNode{node, newNode}
+		node.Parent = newRoot
+		newNode.Parent = newRoot
+		bt.root = newRoot
+	} else {
+		// Insert into existing parent
+		bt.insertIntoInternal(node.Parent, midKey, newNode)
+	}
+
+	// Update hash table after tree structure changes
+	// bt.updateKeyMap() // Removed as per edit hint
 }

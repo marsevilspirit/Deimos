@@ -7,14 +7,14 @@ import (
 
 // bpTtlItem represents a TTL entry for a single key in B+ tree
 type bpTtlItem struct {
-	key        string
-	expireTime time.Time
+	key        string    `json:"key"`
+	expireTime time.Time `json:"expireTime"`
 }
 
 // bpTtlKeyHeap is a min-heap ordered by expireTime for B+ tree keys
 type bpTtlKeyHeap struct {
-	array  []*bpTtlItem
-	keyMap map[string]int
+	array  []*bpTtlItem   `json:"array"`
+	keyMap map[string]int `json:"keyMap"`
 }
 
 func newBpTtlKeyHeap() *bpTtlKeyHeap {
@@ -74,5 +74,44 @@ func (h *bpTtlKeyHeap) updateKey(key string, expireTime time.Time) {
 func (h *bpTtlKeyHeap) removeKey(key string) {
 	if idx, ok := h.keyMap[key]; ok {
 		heap.Remove(h, idx)
+	}
+}
+
+// clone creates a deep copy of the TTL heap
+func (h *bpTtlKeyHeap) clone() *bpTtlKeyHeap {
+	cloned := &bpTtlKeyHeap{
+		array:  make([]*bpTtlItem, len(h.array)),
+		keyMap: make(map[string]int, len(h.keyMap)),
+	}
+
+	// Deep copy array items
+	for i, item := range h.array {
+		cloned.array[i] = &bpTtlItem{
+			key:        item.key,
+			expireTime: item.expireTime,
+		}
+	}
+
+	// Copy keyMap
+	for key, idx := range h.keyMap {
+		cloned.keyMap[key] = idx
+	}
+
+	return cloned
+}
+
+// ensureInitialized ensures the TTL heap is properly initialized
+func (h *bpTtlKeyHeap) ensureInitialized() {
+	if h.keyMap == nil {
+		h.keyMap = make(map[string]int)
+	}
+	if h.array == nil {
+		h.array = make([]*bpTtlItem, 0)
+	}
+	// Rebuild keyMap from array if needed
+	if len(h.keyMap) == 0 && len(h.array) > 0 {
+		for i, item := range h.array {
+			h.keyMap[item.key] = i
+		}
 	}
 }

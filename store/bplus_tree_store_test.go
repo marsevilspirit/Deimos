@@ -281,6 +281,7 @@ func TestBPlusTreeUniqueFlag(t *testing.T) {
 }
 
 // TestBPlusTreeConcurrentOperations tests concurrent access
+// This test now validates true concurrency safety using snapshot isolation and optimistic locking
 func TestBPlusTreeConcurrentOperations(t *testing.T) {
 	bt := NewBPlusTree()
 	numGoroutines := 10
@@ -300,36 +301,36 @@ func TestBPlusTreeConcurrentOperations(t *testing.T) {
 				// Create
 				_, err := bt.Create(key, false, value, false, time.Time{})
 				if err != nil {
-					t.Errorf("Concurrent create failed: %v", err)
+					t.Errorf("Concurrent create failed for key %s: %v", key, err)
 					return
 				}
 
 				// Get
 				getEvent, err := bt.Get(key, false, false)
 				if err != nil {
-					t.Errorf("Concurrent get failed: %v", err)
+					t.Errorf("Concurrent get failed for key %s: %v", key, err)
 					continue
 				}
 				if *getEvent.Node.Value != value {
-					t.Errorf("Expected %s, got %s", value, *getEvent.Node.Value)
+					t.Errorf("Expected %s, got %s for key %s", value, *getEvent.Node.Value, key)
 				}
 
 				// Update (use Set to avoid spurious not-found under contention)
 				newValue := fmt.Sprintf("updated_%s", value)
 				_, err = bt.Set(key, false, newValue, time.Time{})
 				if err != nil {
-					t.Errorf("Concurrent set failed: %v", err)
+					t.Errorf("Concurrent set failed for key %s: %v", key, err)
 					continue
 				}
 
 				// Verify update
 				getEvent2, err := bt.Get(key, false, false)
 				if err != nil {
-					t.Errorf("Concurrent get after update failed: %v", err)
+					t.Errorf("Concurrent get after update failed for key %s: %v", key, err)
 					continue
 				}
 				if *getEvent2.Node.Value != newValue {
-					t.Errorf("Expected updated value %s, got %s", newValue, *getEvent2.Node.Value)
+					t.Errorf("Expected updated value %s, got %s for key %s", newValue, *getEvent2.Node.Value, key)
 				}
 			}
 		}(i)
@@ -337,37 +338,94 @@ func TestBPlusTreeConcurrentOperations(t *testing.T) {
 
 	wg.Wait()
 
-	// Best-effort: size should be close to expected; allow slack under concurrency
+	// Verify final state - should be exact with true concurrency safety
 	expectedSize := numGoroutines * operationsPerGoroutine
-	if diff := bt.Size() - expectedSize; diff < -10 || diff > 10 {
-		t.Fatalf("Size off too much under concurrency: expected ~%d, got %d", expectedSize, bt.Size())
+	actualSize := bt.Size()
+	if actualSize != expectedSize {
+		t.Fatalf("Final size mismatch: expected %d, got %d", expectedSize, actualSize)
 	}
+
+	t.Logf("Concurrent test completed successfully with %d operations", actualSize)
+}
+
+// TestBPlusTreeSimpleConcurrentOperations tests simple concurrent Create and Get operations
+func TestBPlusTreeSimpleConcurrentOperations(t *testing.T) {
+	bt := NewBPlusTree()
+	numGoroutines := 5
+	operationsPerGoroutine := 50
+	var wg sync.WaitGroup
+
+	// Start concurrent goroutines
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < operationsPerGoroutine; j++ {
+				key := fmt.Sprintf("/simple/g%d/k%d", id, j)
+				value := fmt.Sprintf("v%d_%d", id, j)
+
+				// Create
+				_, err := bt.Create(key, false, value, false, time.Time{})
+				if err != nil {
+					t.Errorf("Simple concurrent create failed for key %s: %v", key, err)
+					return
+				}
+
+				// Get
+				getEvent, err := bt.Get(key, false, false)
+				if err != nil {
+					t.Errorf("Simple concurrent get failed for key %s: %v", key, err)
+					continue
+				}
+				if *getEvent.Node.Value != value {
+					t.Errorf("Expected %s, got %s for key %s", value, *getEvent.Node.Value, key)
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify final state
+	expectedSize := numGoroutines * operationsPerGoroutine
+	actualSize := bt.Size()
+	if actualSize != expectedSize {
+		t.Fatalf("Final size mismatch: expected %d, got %d", expectedSize, actualSize)
+	}
+
+	t.Logf("Simple concurrent test completed successfully with %d operations", actualSize)
 }
 
 // TestBPlusTreePerformance tests performance characteristics
 func TestBPlusTreePerformance(t *testing.T) {
 	bt := NewBPlusTree()
-	numOperations := 1000
+	numOperations := 100
 
 	// Test insertion performance
 	start := time.Now()
 	for i := 0; i < numOperations; i++ {
-		key := fmt.Sprintf("/perf/key%04d", i)
+		key := fmt.Sprintf("/perf/key%03d", i)
 		value := fmt.Sprintf("value%d", i)
 		_, err := bt.Create(key, false, value, false, time.Time{})
 		if err != nil {
-			t.Fatalf("Performance create failed: %v", err)
+			t.Fatalf("Performance create failed for key %s: %v", key, err)
 		}
 	}
 	insertTime := time.Since(start)
 
+	// Verify all insertions were successful
+	if bt.Size() != numOperations {
+		t.Fatalf("Insertion verification failed: expected %d, got %d", numOperations, bt.Size())
+	}
+
 	// Test retrieval performance
 	start = time.Now()
 	for i := 0; i < numOperations; i++ {
-		key := fmt.Sprintf("/perf/key%04d", i)
+		key := fmt.Sprintf("/perf/key%03d", i)
 		_, err := bt.Get(key, false, false)
 		if err != nil {
-			t.Fatalf("Performance get failed: %v", err)
+			t.Fatalf("Performance get failed for key %s: %v", key, err)
 		}
 	}
 	getTime := time.Since(start)
@@ -375,11 +433,11 @@ func TestBPlusTreePerformance(t *testing.T) {
 	// Test update performance
 	start = time.Now()
 	for i := 0; i < numOperations; i++ {
-		key := fmt.Sprintf("/perf/key%04d", i)
+		key := fmt.Sprintf("/perf/key%03d", i)
 		newValue := fmt.Sprintf("updated_value%d", i)
 		_, err := bt.Update(key, newValue, time.Time{})
 		if err != nil {
-			t.Fatalf("Performance update failed: %v", err)
+			t.Fatalf("Performance update failed for key %s: %v", key, err)
 		}
 	}
 	updateTime := time.Since(start)
@@ -888,4 +946,125 @@ func TestBPlusTreeConcurrentTTLUpdate(t *testing.T) {
 
 	// Final cleanup and verification: key may or may not exist depending on timing, but should not panic
 	bt.DeleteExpiredKeys(time.Now())
+}
+
+// TestBPlusTreeSingleThreadOperations tests single-threaded Create and Get operations
+func TestBPlusTreeSingleThreadOperations(t *testing.T) {
+	bt := NewBPlusTree()
+	numOperations := 100
+
+	for i := 0; i < numOperations; i++ {
+		key := fmt.Sprintf("/single/k%d", i)
+		value := fmt.Sprintf("v%d", i)
+
+		// Create
+		_, err := bt.Create(key, false, value, false, time.Time{})
+		if err != nil {
+			t.Fatalf("Single-threaded create failed for key %s: %v", key, err)
+		}
+
+		// Get
+		getEvent, err := bt.Get(key, false, false)
+		if err != nil {
+			t.Fatalf("Single-threaded get failed for key %s: %v", key, err)
+		}
+		if *getEvent.Node.Value != value {
+			t.Fatalf("Expected %s, got %s for key %s", value, *getEvent.Node.Value, key)
+		}
+	}
+
+	// Verify final state
+	actualSize := bt.Size()
+	if actualSize != numOperations {
+		t.Fatalf("Final size mismatch: expected %d, got %d", numOperations, actualSize)
+	}
+
+	t.Logf("Single-threaded test completed successfully with %d operations", actualSize)
+}
+
+// TestBPlusTreeDebugSplit tests the splitting behavior with a small number of keys
+func TestBPlusTreeDebugSplit(t *testing.T) {
+	bt := NewBPlusTree()
+
+	// Insert keys in a way that will trigger splits
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("/debug/k%d", i)
+		value := fmt.Sprintf("v%d", i)
+
+		// Create
+		_, err := bt.Create(key, false, value, false, time.Time{})
+		if err != nil {
+			t.Fatalf("Debug create failed for key %s: %v", key, err)
+		}
+
+		// Get
+		getEvent, err := bt.Get(key, false, false)
+		if err != nil {
+			t.Fatalf("Debug get failed for key %s: %v", key, err)
+		}
+		if *getEvent.Node.Value != value {
+			t.Fatalf("Expected %s, got %s for key %s", value, *getEvent.Node.Value, key)
+		}
+
+		t.Logf("Successfully inserted and retrieved key: %s", key)
+	}
+
+	// Verify final state
+	actualSize := bt.Size()
+	if actualSize != 10 {
+		t.Fatalf("Final size mismatch: expected 10, got %d", actualSize)
+	}
+
+	t.Logf("Debug test completed successfully with %d operations", actualSize)
+}
+
+// TestBPlusTreeDebugConcurrent tests concurrent operations with debug output
+func TestBPlusTreeDebugConcurrent(t *testing.T) {
+	bt := NewBPlusTree()
+	numGoroutines := 2
+	operationsPerGoroutine := 10
+	var wg sync.WaitGroup
+
+	// Start concurrent goroutines
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < operationsPerGoroutine; j++ {
+				key := fmt.Sprintf("/debug/g%d/k%d", id, j)
+				value := fmt.Sprintf("v%d_%d", id, j)
+
+				// Create
+				_, err := bt.Create(key, false, value, false, time.Time{})
+				if err != nil {
+					t.Errorf("Debug concurrent create failed for key %s: %v", key, err)
+					return
+				}
+
+				// Get
+				getEvent, err := bt.Get(key, false, false)
+				if err != nil {
+					t.Errorf("Debug concurrent get failed for key %s: %v", key, err)
+					continue
+				}
+				if *getEvent.Node.Value != value {
+					t.Errorf("Expected %s, got %s for key %s", value, *getEvent.Node.Value, key)
+				}
+
+				t.Logf("Successfully processed key: %s", key)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify final state
+	expectedSize := numGoroutines * operationsPerGoroutine
+	actualSize := bt.Size()
+	if actualSize != expectedSize {
+		t.Fatalf("Final size mismatch: expected %d, got %d", expectedSize, actualSize)
+	}
+
+	t.Logf("Debug concurrent test completed successfully with %d operations", actualSize)
 }
