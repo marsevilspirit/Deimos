@@ -25,17 +25,8 @@ func TestLearnerBasicFunctionality(t *testing.T) {
 
 	// Verify learner cannot vote
 	if r.learners[3] {
-		// Force election timeout
-		r.elapsed = 15
-		// Since tick is nil for learner, this should not trigger election
-		if r.tick != nil {
-			r.tick()
-		}
-		// Learner should not send election message
-		msgs := r.ReadMessages()
-		if len(msgs) > 0 {
-			t.Errorf("Learner should not participate in elections, got %d messages", len(msgs))
-		}
+		// This test is checking that node 3 is marked as a learner in raft instance r
+		// The actual election behavior test is done below with r3
 	}
 
 	// Test that learner node itself cannot participate in elections
