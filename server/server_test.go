@@ -211,7 +211,7 @@ func TestApply(t *testing.T) {
 			},
 		},
 		// PUT with PrevExist=true *and* PrevIndex set ==> Update
-		// TODO(jonboulle): is this expected?!
+		// TODO: is this expected?!
 		{
 			pb.Request{Method: "PUT", ID: 1, PrevExist: boolp(true), PrevIndex: 1},
 			Response{Event: &store.Event{}},
@@ -223,7 +223,7 @@ func TestApply(t *testing.T) {
 			},
 		},
 		// PUT with PrevExist=false *and* PrevIndex set ==> Create
-		// TODO(jonboulle): is this expected?!
+		// TODO: is this expected?!
 		{
 			pb.Request{Method: "PUT", ID: 1, PrevExist: boolp(false), PrevIndex: 1},
 			Response{Event: &store.Event{}},
@@ -400,7 +400,7 @@ func testServer(t *testing.T, ns int64) {
 			Ticker:  tk.C,
 		}
 		srv.start()
-		// TODO(xiangli): randomize election timeout
+		// TODO: randomize election timeout
 		// then remove this sleep.
 		time.Sleep(1 * time.Millisecond)
 		ss[i] = srv
